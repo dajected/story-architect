@@ -264,6 +264,42 @@ async function waitForImageJob(id: string) {
   throw new Error('Image job did not finish.');
 }
 
+async function waitForChapterBatch(projectId: string) {
+  for (let attempt = 0; attempt < 1200; attempt++) {
+    const { batch } = await request<{
+      batch: {
+        status: string;
+        mode: string;
+        message: string | null;
+        items: Array<{ status: string; chapterId: string; error: string | null }>;
+      };
+    }>('GET', `/projects/${projectId}/chapter-batch`);
+    if (batch.status !== 'running') return batch;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Chapter batch did not finish.');
+}
+
+async function waitForPortraitBatch(characterId: string) {
+  for (let attempt = 0; attempt < 1200; attempt++) {
+    const { batch } = await request<{
+      batch: {
+        status: string;
+        message: string | null;
+        items: Array<{
+          status: string;
+          chapterId: string;
+          assetId: string | null;
+          error: string | null;
+        }>;
+      } | null;
+    }>('GET', `/characters/${characterId}/portrait-batch`);
+    if (batch && batch.status !== 'running') return batch;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Portrait batch did not finish.');
+}
+
 async function waitForMemory(chapterId: string) {
   let lastJob: string | null = null;
   for (let attempt = 0; attempt < 300; attempt++) {
@@ -1810,6 +1846,136 @@ describe('whole-novel drafting and chapter portraits', () => {
     expect(latest?.status).toBe('failed');
     expect(latest?.error).toContain('asked for more details');
   }, 30000);
+
+  it('regenerates every chapter and keeps the replaced drafts in history', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Regeneration Novel',
+      chapterCount: 2,
+      targetChapterWords: 400,
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        { id: manual.revision.chapters[0].id, title: 'First Light', brief: 'Mara climbs the hill.' },
+        { id: 'regeneration-second', title: 'The Door', brief: 'The key turns.' },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+
+    const first = await request<{ batch: { mode: string; status: string } }>(
+      'POST',
+      `/projects/${project.id}/chapter-batch`,
+      {},
+    );
+    expect(first.batch.mode).toBe('draft');
+    expect((await waitForChapterBatch(project.id)).status).toBe('completed');
+
+    const before = await request<{
+      chapters: Array<{ id: string; currentRevisionId: string | null }>;
+    }>('GET', `/projects/${project.id}/chapters`);
+    expect(before.chapters.every((chapter) => Boolean(chapter.currentRevisionId))).toBe(true);
+
+    const regenerated = await request<{
+      batch: { mode: string; status: string; items: Array<{ status: string }> };
+    }>('POST', `/projects/${project.id}/chapter-batch`, { mode: 'regenerate' });
+    expect(regenerated.batch.mode).toBe('regenerate');
+    expect(regenerated.batch.items.map((item) => item.status)).toEqual(['pending', 'pending']);
+
+    const finished = await waitForChapterBatch(project.id);
+    expect(finished.status).toBe('completed');
+    expect(finished.items.map((item) => item.status)).toEqual(['completed', 'completed']);
+
+    const after = await request<{
+      chapters: Array<{ id: string; currentRevisionId: string | null; wordCount: number }>;
+    }>('GET', `/projects/${project.id}/chapters`);
+    expect(after.chapters.every((chapter) => chapter.wordCount > 0)).toBe(true);
+    for (const [index, chapter] of after.chapters.entries()) {
+      expect(chapter.currentRevisionId).not.toBe(before.chapters[index].currentRevisionId);
+      const detail = await request<{ chapter: { revisions: Array<{ source: string }> } }>(
+        'GET',
+        `/chapters/${chapter.id}`,
+      );
+      expect(detail.chapter.revisions.length).toBeGreaterThanOrEqual(2);
+    }
+  }, 60000);
+
+  it('queues one portrait per chapter for a single character', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Timeline Novel',
+      chapterCount: 2,
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        { id: manual.revision.chapters[0].id, title: 'Arrival', brief: 'Mara reaches the coast.' },
+        { id: 'timeline-second', title: 'The Storm', brief: 'The storm breaks over the bay.' },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    for (const chapter of chapters.chapters) {
+      await request('PUT', `/chapters/${chapter.id}/content`, {
+        content: 'Mara pulled her canvas coat tight and watched the grey sea.',
+      });
+    }
+    const { character } = await request<{ character: { id: string; name: string } }>(
+      'POST',
+      `/projects/${project.id}/characters`,
+      { name: 'Mara', appearance: 'Cropped hair and a heavy canvas coat.' },
+    );
+    const mockPort = (globalThis as { __mockPort?: number }).__mockPort;
+    const { connection } = await request<{ connection: { id: string } }>(
+      'POST',
+      '/image-connections',
+      {
+        name: 'Timeline portrait service',
+        kind: 'openai-images',
+        baseUrl: `http://127.0.0.1:${mockPort}/v1`,
+        apiKey: 'image-service-key',
+        settings: { model: 'mock-image', size: '1024x1024' },
+      },
+    );
+    const { template } = await request<{ template: { id: string } }>(
+      'POST',
+      '/image-prompt-templates',
+      {
+        projectId: project.id,
+        name: 'Timeline prompt',
+        content: 'JSON_PROMPT: Create a painterly character portrait prompt.',
+        isDefault: true,
+      },
+    );
+
+    const started = await request<{ batch: { status: string; items: Array<{ status: string }> } }>(
+      'POST',
+      `/characters/${character.id}/portrait-batch`,
+      { connectionId: connection.id, templateId: template.id, skipExisting: false },
+    );
+    expect(started.batch.status).toBe('running');
+    expect(started.batch.items.map((item) => item.status)).toEqual(['pending', 'pending']);
+
+    const finished = await waitForPortraitBatch(character.id);
+    expect(finished.status).toBe('completed');
+    expect(finished.items.map((item) => item.status)).toEqual(['completed', 'completed']);
+    expect(finished.items.every((item) => Boolean(item.assetId))).toBe(true);
+
+    const gallery = await request<{
+      assets: Array<{ characterId: string; chapterId: string | null; selectedForChapter: boolean }>;
+    }>('GET', `/projects/${project.id}/images`);
+    const timeline = gallery.assets.filter((asset) => asset.characterId === character.id);
+    expect(timeline).toHaveLength(2);
+    expect(timeline.every((asset) => asset.selectedForChapter && asset.chapterId)).toBe(true);
+    expect(new Set(timeline.map((asset) => asset.chapterId)).size).toBe(2);
+  }, 60000);
 });
 
 function cryptoId(): string {

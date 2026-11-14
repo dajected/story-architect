@@ -155,12 +155,26 @@ stage 1–4 workflow described in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
   carried into later chapters are real; chapters that already have text are
   skipped. Progress, failures, and the current chapter are visible in the Outline
   tab, and a batch can be stopped at any time.
+- **Regenerate the full story** — **Regenerate full story** in the same panel
+  re-drafts every chapter from the approved outline, including chapters that
+  already have prose. Each new draft becomes the chapter's current text; the
+  replaced draft stays available in the revision history, so nothing is lost.
+  As with drafting, chapters run one at a time and each waits for the previous
+  chapter's summary.
 - **End-of-chapter portraits** — every chapter's editor lists the cast members
   named in that chapter. **Generate portrait** builds a prompt from the chapter's
   closing passage and the continuity facts recorded for that character, then sends
   it to the image service, so the portrait shows how they look *after* the
   chapter's events — clothing, injuries, weariness, and all. Images stay attached
   to the chapter and can be set as the character's portrait.
+- **One character, every chapter** — in the chapter images dialog, choose a
+  single character under **One character, every chapter** and queue one image
+  for every chapter with prose. The batch runs in chapter order, one image at a
+  time, using the selected image service, story moment, scene, and visual style.
+  Finished images are automatically selected as that chapter's image for the
+  character; chapters without prose are skipped, and an optional filter skips
+  chapters that already have an image. Progress and failures are shown in the
+  dialog and stay available after it is reopened.
 
 ## Get the code
 
@@ -401,9 +415,12 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
     result as the character's portrait.
 14. In the Outline tab, use **Generate all chapters** to draft every empty chapter in
     order once the outline is approved. Watch progress there and open any chapter as
-    it lands.
+    it lands. **Regenerate full story** rewrites every chapter instead, keeping the
+    replaced drafts in revision history.
 15. In the chapter editor, use **Generate portrait** beside a named character to
-    create an image of them as they look at the end of that chapter.
+    create an image of them as they look at the end of that chapter. Use
+    **One character, every chapter** in the same dialog to queue that image for the
+    whole story.
 16. Ask the assistant for help. Use **Insert into chapter** only when you want a
     message to become manuscript text.
 17. **Export** downloads the current manuscript as Markdown.

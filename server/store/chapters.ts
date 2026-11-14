@@ -221,6 +221,7 @@ export function createRevisionFromJob(
   content: string,
   jobId: string,
   source: ChapterRevisionSource = 'generated',
+  options: { apply?: boolean } = {},
 ): { revision: ChapterRevision; applied: boolean } {
   const chapter = getChapterRow(chapterId);
   if (!content.trim()) throw badRequest('There is no generated text to save.');
@@ -229,7 +230,9 @@ export function createRevisionFromJob(
     const current = chapter.current_revision_id
       ? dbGet<RevisionRow>('SELECT * FROM chapter_revisions WHERE id = ?', chapter.current_revision_id)
       : undefined;
-    const applied = !current || !current.content.trim();
+    // Regeneration opts into replacing the current draft; normal generation
+    // only applies when the chapter has no prose yet.
+    const applied = options.apply ?? (!current || !current.content.trim());
     const revision = insertRevision({
       chapterId,
       content,

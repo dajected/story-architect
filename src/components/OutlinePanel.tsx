@@ -2,6 +2,7 @@ import { confirmAction } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import type {
   ChapterBatch,
+  ChapterBatchMode,
   GenerationJob,
   OutlineChapter,
   OutlineRevision,
@@ -170,10 +171,13 @@ export function OutlinePanel({
     }
   };
 
-  const startBatch = async () => {
+  const startBatch = async (mode: ChapterBatchMode = 'draft') => {
+    const regenerate = mode === 'regenerate';
     if (
       !await confirmAction(
-        'Generate every chapter in order? Chapters that already have manuscript text are skipped, and each draft waits for the previous chapter’s summary. This can take a long time.',
+        regenerate
+          ? 'Regenerate the entire story? Every chapter is re-drafted from the approved outline and the new draft becomes the chapter text. Previous drafts stay in each chapter’s revision history. This can take a long time and use many tokens.'
+          : 'Generate every chapter in order? Chapters that already have manuscript text are skipped, and each draft waits for the previous chapter’s summary. This can take a long time.',
       )
     ) {
       return;
@@ -182,14 +186,16 @@ export function OutlinePanel({
     setBatchError(null);
     setBatchNotice(null);
     try {
-      const next = await api.startChapterBatch(project.id);
+      const next = await api.startChapterBatch(project.id, mode);
       setBatch(next);
       previousCompleted.current =
         next.items.filter((item) => item.status === 'completed').length;
       previousBatchStatus.current = next.status;
       setBatchNotice(
         next.status === 'running'
-          ? 'Batch started. Chapters are generated one at a time.'
+          ? regenerate
+            ? 'Regeneration started. Chapters are rewritten one at a time.'
+            : 'Batch started. Chapters are generated one at a time.'
           : next.message ?? 'Nothing needed generating.',
       );
     } catch (err) {
@@ -526,7 +532,8 @@ export function OutlinePanel({
           busy={batchBusy}
           error={batchError}
           notice={batchNotice}
-          onStart={() => void startBatch()}
+          onStart={() => void startBatch('draft')}
+          onRegenerate={() => void startBatch('regenerate')}
           onStop={() => void stopBatch()}
           onRefresh={() => void loadBatch()}
           onOpenChapter={onOpenChapter}
@@ -735,6 +742,7 @@ function BatchPanel({
   notice,
   approved,
   onStart,
+  onRegenerate,
   onStop,
   onRefresh,
   onOpenChapter,
@@ -745,6 +753,7 @@ function BatchPanel({
   notice: string | null;
   approved: boolean;
   onStart: () => void;
+  onRegenerate: () => void;
   onStop: () => void;
   onRefresh: () => void;
   onOpenChapter?: (chapterId: string) => void;
@@ -756,6 +765,7 @@ function BatchPanel({
   const skipped = items.filter((item) => item.status === 'skipped').length;
   const settled = completed + failed + skipped;
   const active = batch?.status === 'running';
+  const regenerating = active && batch?.mode === 'regenerate';
   const progress = total > 0 ? Math.round((settled / total) * 100) : 0;
   const running = items.find((item) => item.status === 'running') ?? null;
 
@@ -764,11 +774,18 @@ function BatchPanel({
       <div className="batch-head">
         <div>
           <p className="eyebrow">Whole novel</p>
-          <h3>{active ? 'Drafting all chapters' : 'Generate all chapters'}</h3>
+          <h3>
+            {active
+              ? regenerating
+                ? 'Regenerating the story'
+                : 'Drafting all chapters'
+              : 'Generate or regenerate the story'}
+          </h3>
           <p className="muted small">
-            Runs one chapter at a time, in outline order. Each draft waits for the previous
-            chapter’s summary so the context carries forward. Chapters that already have text are
-            skipped and left untouched.
+            Both run one chapter at a time, in outline order, and wait for the previous
+            chapter’s summary so the context carries forward. <strong>Generate all chapters</strong>{' '}
+            fills empty chapters only. <strong>Regenerate full story</strong> rewrites every chapter
+            and keeps the replaced drafts in revision history.
           </p>
         </div>
         <div className="row-actions">
@@ -778,15 +795,29 @@ function BatchPanel({
               Stop batch
             </button>
           ) : (
-            <button
-              className="button button-primary"
-              onClick={onStart}
-              disabled={busy || !approved}
-              title={approved ? undefined : 'Approve the outline first.'}
-            >
-              {busy ? <Spinner /> : null}
-              Generate all chapters
-            </button>
+            <>
+              <button
+                className="button button-primary"
+                onClick={onStart}
+                disabled={busy || !approved}
+                title={approved ? undefined : 'Approve the outline first.'}
+              >
+                {busy ? <Spinner /> : null}
+                Generate all chapters
+              </button>
+              <button
+                className="button button-danger-ghost"
+                onClick={onRegenerate}
+                disabled={busy || !approved}
+                title={
+                  approved
+                    ? 'Re-draft every chapter from the approved outline.'
+                    : 'Approve the outline first.'
+                }
+              >
+                Regenerate full story
+              </button>
+            </>
           )}
           {batch && !active ? (
             <button className="button button-ghost" onClick={onRefresh} disabled={busy}>
@@ -806,14 +837,17 @@ function BatchPanel({
               <span style={{ width: `${progress}%` }} />
             </div>
             <span className="muted small">
-              {settled} of {total} settled · {completed} drafted
+              {batch.mode === 'regenerate' ? 'Regeneration' : 'Drafting'} · {settled} of {total}{' '}
+              settled · {completed} {batch.mode === 'regenerate' ? 'rewritten' : 'drafted'}
               {failed > 0 ? ` · ${failed} failed` : ''}
               {skipped > 0 ? ` · ${skipped} skipped` : ''}
             </span>
+            {batch.message ? <span className="muted small">{batch.message}</span> : null}
           </div>
           {running ? (
             <p className="muted small batch-running">
-              Now drafting {running.orderIndex + 1}. {running.title}…
+              Now {batch.mode === 'regenerate' ? 'rewriting' : 'drafting'} {running.orderIndex + 1}.{' '}
+              {running.title}…
             </p>
           ) : null}
           <ol className="batch-items">
@@ -841,7 +875,7 @@ function BatchPanel({
         </>
       ) : (
         <p className="muted small">
-          No batch has run yet. The button drafts every chapter that is still empty.
+          No batch has run yet. Draft the empty chapters, or regenerate the whole story.
         </p>
       )}
     </section>

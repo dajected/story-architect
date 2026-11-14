@@ -3,6 +3,7 @@ import type {
   ChapterBatch,
   ChapterBatchItem,
   ChapterBatchItemStatus,
+  ChapterBatchMode,
   ChapterBatchStatus,
 } from '../../shared/types.js';
 import { dbGet, dbRun, timestamp } from '../db.js';
@@ -11,6 +12,7 @@ import { notFound } from '../errors.js';
 interface BatchRow {
   id: string;
   project_id: string;
+  mode: ChapterBatchMode;
   status: ChapterBatchStatus;
   items: string;
   message: string | null;
@@ -52,6 +54,7 @@ function mapBatch(row: BatchRow): ChapterBatch {
   return {
     id: row.id,
     projectId: row.project_id,
+    mode: row.mode === 'regenerate' ? 'regenerate' : 'draft',
     status: row.status,
     items: parseItems(row.items),
     message: row.message,
@@ -85,6 +88,7 @@ export function activeChapterBatch(projectId: string): ChapterBatch | null {
 
 export function createChapterBatch(params: {
   projectId: string;
+  mode?: ChapterBatchMode;
   items: ChapterBatchItem[];
   status: ChapterBatchStatus;
   message?: string | null;
@@ -92,10 +96,11 @@ export function createChapterBatch(params: {
   const id = crypto.randomUUID();
   const at = timestamp();
   dbRun(
-    `INSERT INTO chapter_batches (id, project_id, status, items, message, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chapter_batches (id, project_id, mode, status, items, message, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     params.projectId,
+    params.mode ?? 'draft',
     params.status,
     JSON.stringify(params.items),
     params.message ?? null,

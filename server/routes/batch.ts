@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { getProject } from '../store/projects.js';
 import { latestChapterBatch } from '../store/chapter-batches.js';
 import { startChapterBatch, cancelChapterBatch } from '../chapter-batch.js';
-import { stringParam, wrap } from './helpers.js';
+import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const batchRouter = Router();
 
@@ -18,7 +19,13 @@ batchRouter.get(
 batchRouter.post(
   '/projects/:id/chapter-batch',
   wrap((req, res) => {
-    res.status(202).json({ batch: startChapterBatch(stringParam(req.params.id, 'project id')) });
+    const body = parseBody(
+      z.object({ mode: z.enum(['draft', 'regenerate']).optional() }).default({}),
+      req.body,
+    );
+    res.status(202).json({
+      batch: startChapterBatch(stringParam(req.params.id, 'project id'), { mode: body.mode }),
+    });
   }),
 );
 

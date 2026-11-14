@@ -1,6 +1,7 @@
 import type {
   Chapter,
   ChapterBatch,
+  ChapterBatchMode,
   ChapterDetail,
   ChapterMemory,
   ChapterPortraitOverview,
@@ -32,6 +33,7 @@ import type {
   ModelOption,
   OutlineChapter,
   OutlineRevision,
+  PortraitBatch,
   Project,
   ProjectSettings,
   ProseInstruction,
@@ -170,6 +172,17 @@ export interface ChapterPortraitInput {
   connectionId?: string | null;
   templateId?: string | null;
   instructions?: string;
+}
+
+export interface PortraitBatchInput {
+  moment?: 'start' | 'end' | 'custom';
+  scene?: string;
+  visualStyle?: string;
+  connectionId?: string | null;
+  templateId?: string | null;
+  instructions?: string;
+  skipExisting?: boolean;
+  selectForChapter?: boolean;
 }
 
 export interface ImageTemplateInput {
@@ -350,10 +363,10 @@ export const api = {
       'GET',
       `/projects/${projectId}/chapter-batch`,
     ).then((r) => r.batch),
-  startChapterBatch: (projectId: string) =>
-    request<{ batch: ChapterBatch }>('POST', `/projects/${projectId}/chapter-batch`).then(
-      (r) => r.batch,
-    ),
+  startChapterBatch: (projectId: string, mode: ChapterBatchMode = 'draft') =>
+    request<{ batch: ChapterBatch }>('POST', `/projects/${projectId}/chapter-batch`, {
+      mode,
+    }).then((r) => r.batch),
   cancelChapterBatch: (projectId: string) =>
     request<{ batch: ChapterBatch }>(
       'POST',
@@ -618,6 +631,22 @@ export const api = {
       'POST',
       `/chapter-portrait-requests/${requestId}/cancel`,
     ).then((r) => r.request),
+  getCharacterPortraitBatch: (characterId: string) =>
+    request<{ batch: PortraitBatch | null }>(
+      'GET',
+      `/characters/${characterId}/portrait-batch`,
+    ).then((r) => r.batch),
+  startCharacterPortraitBatch: (characterId: string, input: PortraitBatchInput = {}) =>
+    request<{ batch: PortraitBatch }>(
+      'POST',
+      `/characters/${characterId}/portrait-batch`,
+      input,
+    ).then((r) => r.batch),
+  cancelPortraitBatch: (batchId: string) =>
+    request<{ batch: PortraitBatch }>(
+      'POST',
+      `/portrait-batches/${batchId}/cancel`,
+    ).then((r) => r.batch),
   expandImagePrompt: (characterId: string, input: ImagePromptExpansionInput) =>
     request<{ job: GenerationJob }>('POST', `/characters/${characterId}/images/prompt`, input).then(
       (r) => r.job,

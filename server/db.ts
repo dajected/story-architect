@@ -401,6 +401,25 @@ const migrations: Array<() => void> = [
       CREATE UNIQUE INDEX idx_selected_chapter_image ON image_assets(chapter_id, character_id)
       WHERE selected_for_chapter = 1 AND chapter_id IS NOT NULL;`);
   },
+  () => {
+    db.exec(`
+      ALTER TABLE chapter_batches ADD COLUMN mode TEXT NOT NULL DEFAULT 'draft';
+
+      CREATE TABLE portrait_batches (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        items TEXT NOT NULL,
+        message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_portrait_batches_project ON portrait_batches(project_id, created_at);
+      CREATE INDEX idx_portrait_batches_character ON portrait_batches(character_id, created_at);
+    `);
+  },
 ];
 
 /**
@@ -516,6 +535,16 @@ function seed(): void {
          error = COALESCE(error, 'The server restarted while this portrait was being generated. The saved prompt and images are kept.'),
          updated_at = ?
      WHERE status IN ('prompting', 'imaging')`,
+  ).run(interruptedAt);
+
+  // Portrait batches advance in-process only, so a restart leaves nothing to
+  // resume. Surface them as interrupted instead of "running" forever.
+  db.prepare(
+    `UPDATE portrait_batches
+     SET status = 'interrupted',
+         message = COALESCE(message, 'The server restarted while this portrait batch was running. Finished images are saved; start a new batch to continue.'),
+         updated_at = ?
+     WHERE status = 'running'`,
   ).run(interruptedAt);
 
   // Chat replies have no revision row, so surface any saved partial text as an

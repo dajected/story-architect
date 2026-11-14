@@ -4192,6 +4192,31 @@ textarea:disabled {
   gap: 6px;
 }
 
+.portrait-batch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+}
+
+.portrait-batch-panel p {
+  margin: 0;
+}
+
+.portrait-batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.portrait-batch-progress .batch-items {
+  max-height: 220px;
+}
+
+
 .portrait-cast-row {
   display: flex;
   align-items: center;

@@ -1,4 +1,4 @@
-import type { ChapterBatch, ChapterBatchItem } from '../shared/types.js';
+import type { ChapterBatch, ChapterBatchItem, ChapterBatchMode } from '../shared/types.js';
 import { conflict, errorMessage } from './errors.js';
 import { listChapters } from './store/chapters.js';
 import { getProject } from './store/projects.js';
@@ -51,11 +51,12 @@ async function waitForJob(jobId: string, state: RunnerState): Promise<void> {
   }
 }
 
-function summarise(items: ChapterBatchItem[]): string {
+function summarise(items: ChapterBatchItem[], mode: ChapterBatchMode): string {
   const completed = items.filter((item) => item.status === 'completed').length;
   const failed = items.filter((item) => item.status === 'failed').length;
   const skipped = items.filter((item) => item.status === 'skipped').length;
-  const parts = [`${completed} drafted`];
+  const verb = mode === 'regenerate' ? 'rewritten' : 'drafted';
+  const parts = [`${completed} ${verb}`];
   if (failed > 0) parts.push(`${failed} failed`);
   if (skipped > 0) parts.push(`${skipped} skipped`);
   return `${parts.join(', ')}.`;
@@ -65,13 +66,23 @@ function summarise(items: ChapterBatchItem[]): string {
  * Draft every planned chapter in order. Each chapter is generated only after
  * the previous one has finished and its automatic summary has been built, so
  * the context for later chapters includes the prose that came before it.
+ *
+ * In `regenerate` mode every chapter is re-drafted, including chapters that
+ * already have text. The new draft becomes the current revision and the old
+ * draft stays available in the chapter's revision history.
  */
-export function startChapterBatch(projectId: string): ChapterBatch {
+export function startChapterBatch(
+  projectId: string,
+  options: { mode?: ChapterBatchMode } = {},
+): ChapterBatch {
   getProject(projectId);
   requireLatestApprovedOutline(projectId);
   if (activeChapterBatch(projectId) || runnerProjects.has(projectId)) {
     throw conflict('A chapter batch is already running for this project.');
   }
+
+  const mode: ChapterBatchMode = options.mode === 'regenerate' ? 'regenerate' : 'draft';
+  const regenerate = mode === 'regenerate';
 
   const chapters = listChapters(projectId);
   if (chapters.length === 0) {
@@ -86,37 +97,49 @@ export function startChapterBatch(projectId: string): ChapterBatch {
 
   const items: ChapterBatchItem[] = chapters.map((chapter) => {
     const alreadyWritten = Boolean(chapter.currentRevisionId) && chapter.wordCount > 0;
+    const skipped = alreadyWritten && !regenerate;
     return {
       chapterId: chapter.id,
       orderIndex: chapter.orderIndex,
       title: chapter.title,
-      status: alreadyWritten ? 'skipped' : 'pending',
+      status: skipped ? 'skipped' : 'pending',
       jobId: null,
       revisionId: chapter.currentRevisionId,
-      error: alreadyWritten ? 'Already has manuscript text; left untouched.' : null,
+      error: skipped ? 'Already has manuscript text; left untouched.' : null,
     };
   });
 
   const pending = items.filter((item) => item.status === 'pending');
   const batch = createChapterBatch({
     projectId,
+    mode,
     items,
     status: pending.length === 0 ? 'completed' : 'running',
     message:
       pending.length === 0
         ? 'Every chapter already has manuscript text. Nothing was generated.'
-        : null,
+        : regeneratingMessage(mode, pending.length),
   });
   if (pending.length > 0) {
     const state: RunnerState = { cancelled: false };
     runners.set(batch.id, state);
     runnerProjects.add(projectId);
-    void runBatch(batch.id, projectId, state);
+    void runBatch(batch.id, projectId, state, regenerate);
   }
   return batch;
 }
 
-async function runBatch(batchId: string, projectId: string, state: RunnerState): Promise<void> {
+function regeneratingMessage(mode: ChapterBatchMode, count: number): string | null {
+  if (mode !== 'regenerate') return null;
+  return `Regenerating ${count} chapter${count === 1 ? '' : 's'} from the approved outline. Previous drafts stay in revision history.`;
+}
+
+async function runBatch(
+  batchId: string,
+  projectId: string,
+  state: RunnerState,
+  regenerate: boolean,
+): Promise<void> {
   try {
     const batch = getChapterBatch(batchId);
     const items = batch.items.map((item) => ({ ...item }));
@@ -129,7 +152,10 @@ async function runBatch(batchId: string, projectId: string, state: RunnerState):
       updateChapterBatch(batchId, { items });
 
       try {
-        const job = startChapterGeneration(item.chapterId, {});
+        const job = startChapterGeneration(
+          item.chapterId,
+          regenerate ? { replaceCurrent: true } : {},
+        );
         item.jobId = job.id;
         updateChapterBatch(batchId, { items });
         await waitForJob(job.id, state);
@@ -174,7 +200,7 @@ async function runBatch(batchId: string, projectId: string, state: RunnerState):
     updateChapterBatch(batchId, {
       status: 'completed',
       items,
-      message: summarise(items),
+      message: summarise(items, regenerate ? 'regenerate' : 'draft'),
     });
   } catch (error) {
     updateChapterBatch(batchId, {

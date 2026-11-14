@@ -755,10 +755,18 @@ export interface ChapterBatchItem {
 
 export type ChapterBatchStatus = 'running' | 'completed' | 'cancelled' | 'interrupted';
 
+/**
+ * `draft` fills chapters that are still empty; `regenerate` re-drafts every
+ * chapter and makes each new draft the current one, keeping old drafts in the
+ * revision history.
+ */
+export type ChapterBatchMode = 'draft' | 'regenerate';
+
 /** A sequential "draft every chapter" run for one project. */
 export interface ChapterBatch {
   id: string;
   projectId: string;
+  mode: ChapterBatchMode;
   status: ChapterBatchStatus;
   items: ChapterBatchItem[];
   message: string | null;
@@ -785,6 +793,38 @@ export interface ChapterPortraitRequest {
   imageJobId: string | null;
   prompt: string;
   error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PortraitBatchItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+export interface PortraitBatchItem {
+  chapterId: string;
+  orderIndex: number;
+  title: string;
+  status: PortraitBatchItemStatus;
+  /** The chapter portrait request that produced (or is producing) this image. */
+  requestId: string | null;
+  /** The image asset saved for this chapter, once it finishes. */
+  assetId: string | null;
+  error: string | null;
+}
+
+export type PortraitBatchStatus = ChapterBatchStatus;
+
+/**
+ * A sequential run that draws one named character across every chapter of a
+ * project. Each image is generated from that chapter's own ending, one chapter
+ * at a time, because a character can only have one portrait in flight.
+ */
+export interface PortraitBatch {
+  id: string;
+  projectId: string;
+  characterId: string;
+  status: PortraitBatchStatus;
+  items: PortraitBatchItem[];
+  message: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -38,6 +38,8 @@ import {
   startImagePromptGeneration,
 } from '../image-generation.js';
 import { getImageJob } from '../store/images.js';
+import { latestPortraitBatch } from '../store/portrait-batches.js';
+import { cancelPortraitBatch, startPortraitBatch } from '../portrait-batch.js';
 import { AppError } from '../errors.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
@@ -230,6 +232,45 @@ imagesRouter.post(
     res.json({
       request: cancelChapterPortraitRequest(stringParam(req.params.id, 'portrait request id')),
     });
+  }),
+);
+
+const portraitBatchSchema = z
+  .object({
+    connectionId: z.string().min(1).nullable().optional(),
+    templateId: z.string().min(1).nullable().optional(),
+    instructions: z.string().max(4000).optional(),
+    moment: z.enum(['start', 'end', 'custom']).optional(),
+    scene: z.string().max(8000).optional(),
+    visualStyle: z.string().max(4000).optional(),
+    skipExisting: z.boolean().optional(),
+    selectForChapter: z.boolean().optional(),
+  })
+  .default({});
+
+imagesRouter.get(
+  '/characters/:id/portrait-batch',
+  wrap((req, res) => {
+    const characterId = stringParam(req.params.id, 'character id');
+    getCharacter(characterId);
+    res.json({ batch: latestPortraitBatch(characterId) });
+  }),
+);
+
+imagesRouter.post(
+  '/characters/:id/portrait-batch',
+  wrap((req, res) => {
+    const body = parseBody(portraitBatchSchema, req.body);
+    res.status(202).json({
+      batch: startPortraitBatch(stringParam(req.params.id, 'character id'), body),
+    });
+  }),
+);
+
+imagesRouter.post(
+  '/portrait-batches/:id/cancel',
+  wrap((req, res) => {
+    res.json({ batch: cancelPortraitBatch(stringParam(req.params.id, 'portrait batch id')) });
   }),
 );
 

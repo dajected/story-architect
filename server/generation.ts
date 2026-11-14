@@ -197,6 +197,11 @@ export interface ChapterGenerationOptions {
   instructions?: string;
   contextPreset?: ContextPreset;
   targetWords?: number | null;
+  /**
+   * Replace the current draft with the new revision even when the chapter
+   * already has prose. Used by the "regenerate full story" batch.
+   */
+  replaceCurrent?: boolean;
 }
 
 export function startChapterGeneration(
@@ -340,6 +345,7 @@ export function startChapterGeneration(
         result.content,
         job.id,
         'generated',
+        options.replaceCurrent ? { apply: true } : {},
       );
       finalizeJob(job.id, 'completed', { revisionId: revision.id, usage: result.usage });
       if (applied) autoStartChapterMemory(chapterId);
