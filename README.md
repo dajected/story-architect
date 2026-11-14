@@ -71,7 +71,10 @@ npm start
 
 The interface is then served from `http://localhost:3000`.
 
-## Run on the NAS with Docker
+## Run with Docker
+
+The published image is **`ghcr.io/dajected/story-architect:latest`** for Linux
+amd64. Compose pulls it directly; no local build is required.
 
 1. Copy `.env.example` to `.env` and set the storage path:
 
@@ -82,38 +85,69 @@ The interface is then served from `http://localhost:3000`.
    ```dotenv
    STORY_ARCHITECT_PORT=3000
    STORY_ARCHITECT_DATA_PATH=/mnt/tank/apps/story-architect
+   STORY_ARCHITECT_IMAGE=ghcr.io/dajected/story-architect:latest
    ```
 
-2. Build and start:
+2. Pull and start:
 
    ```bash
-   docker compose up -d --build
+   docker compose pull
+   docker compose up -d
    ```
 
 3. Open `http://<nas-address>:3000`.
 
-The image targets Linux amd64. To build it on another machine:
+Update later with:
 
 ```bash
-docker buildx build --platform linux/amd64 -t story-architect:0.1.0 --load .
+docker compose pull
+docker compose up -d
 ```
 
-If you prefer not to use Compose, build and run directly:
+The image is public, so no registry login is needed. Set
+`STORY_ARCHITECT_IMAGE` to a tag such as `sha-<short>` for a reproducible
+deployment; `latest` follows the `main` branch. `STORY_ARCHITECT_PULL_POLICY`
+controls checking for updates (`missing` by default, or `always`).
+
+### Prefer to build locally?
+
+The Compose file intentionally references the registry image. Use the build
+override when you want to build from source:
 
 ```bash
-docker build -t story-architect:0.1.0 .
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+Or build and run without Compose:
+
+```bash
+docker build -t story-architect:local .
+
 docker run -d \
   --name story-architect \
   --restart unless-stopped \
   -p 3000:3000 \
   -v /mnt/tank/apps/story-architect:/data \
-  story-architect:0.1.0
+  story-architect:local
 ```
 
-On TrueNAS, use a dataset for `STORY_ARCHITECT_DATA_PATH` and make sure the
-container can write to it. The Compose file publishes the application's only
-port and keeps the application container independent of any text model or
-ComfyUI installation; both run elsewhere.
+To build on a machine with a different architecture:
+
+```bash
+docker buildx build --platform linux/amd64 -t story-architect:local --load .
+```
+
+Images are built and pushed by
+[`.github/workflows/docker.yml`](.github/workflows/docker.yml) on every push to
+`main`, every `v*` tag, and by manual dispatch.
+
+### TrueNAS notes
+
+Use a dataset for `STORY_ARCHITECT_DATA_PATH` and make sure the container can
+write to it. For a TrueNAS custom app, use the image
+`ghcr.io/dajected/story-architect:latest`, publish port `3000`, and mount the
+dataset at `/data`. The container is independent of any text model or ComfyUI
+installation; both run elsewhere.
 
 The health endpoint is `GET /api/health`; the Dockerfile and Compose file both
 use it for container health checks. Streaming replies use server-sent events at
@@ -129,6 +163,8 @@ response buffering for `/api/`. There is no built-in login.
 | `DATA_DIR` | `./data` | SQLite database, WAL files, and the encryption key. Mount this persistently. |
 | `STORY_ARCHITECT_ENCRYPTION_KEY` | generated | 32 bytes as base64 or 64 hex characters. If unset, a key is created at `DATA_DIR/secret.key`. |
 | `PUBLIC_URL` | none | Attribution URL for OpenRouter and generated links. |
+| `STORY_ARCHITECT_IMAGE` | `ghcr.io/dajected/story-architect:latest` | Image Compose pulls. Pin a `sha-*` or release tag for reproducibility. |
+| `STORY_ARCHITECT_PULL_POLICY` | `missing` | `missing` pulls only when absent; `always` checks for updates on every start. |
 | `APP_ROOT` | working directory | Location containing `dist/`; normally leave unset. |
 
 ### Backups

@@ -1,9 +1,8 @@
 services:
   story-architect:
-    build:
-      context: .
-    image: story-architect:0.1.0
+    image: ${STORY_ARCHITECT_IMAGE:-ghcr.io/dajected/story-architect:latest}
     platform: linux/amd64
+    pull_policy: ${STORY_ARCHITECT_PULL_POLICY:-missing}
     container_name: story-architect
     restart: unless-stopped
     ports:

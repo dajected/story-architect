@@ -1,0 +1,7 @@
+services:
+  story-architect:
+    image: story-architect:local
+    platform: linux/amd64
+    pull_policy: never
+    build:
+      context: .
