@@ -104,10 +104,11 @@ docker compose pull
 docker compose up -d
 ```
 
-The image is public, so no registry login is needed. Set
-`STORY_ARCHITECT_IMAGE` to a tag such as `sha-<short>` for a reproducible
-deployment; `latest` follows the `main` branch. `STORY_ARCHITECT_PULL_POLICY`
-controls checking for updates (`missing` by default, or `always`).
+The image is public, so no registry login is needed. Available tags include
+`latest`, `v0.1.0`, and `sha-<short>`. Set `STORY_ARCHITECT_IMAGE` to a version
+or SHA tag for a reproducible deployment; `latest` follows the `main` branch.
+`STORY_ARCHITECT_PULL_POLICY` controls checking for updates (`missing` by
+default, or `always`).
 
 ### Prefer to build locally?
 
