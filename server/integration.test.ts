@@ -81,6 +81,7 @@ let tempDir = '';
 let comfyPromptText = '';
 let recoveryHistoryReads = 0;
 let comfySubmissions = 0;
+let lastImagePromptSystem = '';
 
 function json(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -177,21 +178,24 @@ function startMock(): Promise<void> {
           json(res, 500, { error: { message: 'Mock refusal.' } });
           return;
         }
-        const text = system.includes('art director')
-          ? IMAGE_PROMPT
-          : system.includes('chapter-by-chapter outline')
-            ? OUTLINE
-            : system.includes('continuity archivist')
-              ? MEMORY
-              : system.includes('casting editor')
-                ? CAST
-                : system.includes('line editor')
-                  ? REWRITE
-                  : system.includes('continuity editor')
-                    ? REVIEW
-                    : system.includes('drafting prose for a novel')
-                      ? PROSE
-                      : 'A mock assistant reply.';
+        if (system.includes('art director')) lastImagePromptSystem = system;
+        const text = (system + user).includes('REFUSE_PROMPT')
+          ? "I'm sorry, but I need the character's details (name, appearance, clothing, and setting) before I can write the prompt. Please provide that information."
+          : system.includes('art director')
+            ? IMAGE_PROMPT
+            : system.includes('chapter-by-chapter outline')
+              ? OUTLINE
+              : system.includes('continuity archivist')
+                ? MEMORY
+                : system.includes('casting editor')
+                  ? CAST
+                  : system.includes('line editor')
+                    ? REWRITE
+                    : system.includes('continuity editor')
+                      ? REVIEW
+                      : system.includes('drafting prose for a novel')
+                        ? PROSE
+                        : 'A mock assistant reply.';
         const slow = (system + user).includes('SLOW');
         const writeStream = () => {
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -1659,10 +1663,23 @@ describe('whole-novel drafting and chapter portraits', () => {
       },
     );
 
+    // A template with no variables used to leave the prompt model with no
+    // character details. The server now appends a reference block.
+    const { template } = await request<{ template: { id: string } }>(
+      'POST',
+      '/image-prompt-templates',
+      {
+        projectId: project.id,
+        name: 'No variables',
+        content: 'Create a painterly character portrait prompt.',
+        isDefault: true,
+      },
+    );
+
     const startedPortrait = await request<{ request: { id: string; status: string } }>(
       'POST',
       `/chapters/${chapterId}/portraits`,
-      { characterId: character.id, connectionId: connection.id },
+      { characterId: character.id, connectionId: connection.id, templateId: template.id },
     );
     expect(startedPortrait.request.status).toBe('prompting');
 
@@ -1691,7 +1708,88 @@ describe('whole-novel drafting and chapter portraits', () => {
     expect(assets).toHaveLength(1);
     expect(assets[0].characterId).toBe(character.id);
     expect(assets[0].prompt.toLowerCase()).toContain('mara');
+
+    expect(lastImagePromptSystem).toContain('## Character and scene reference');
+    expect(lastImagePromptSystem).toContain('Character name: Mara');
+    expect(lastImagePromptSystem).toContain(
+      'Appearance: Cropped hair, ink-stained hands, a heavy canvas coat.',
+    );
+    expect(lastImagePromptSystem).toContain('Scene: A portrait of Mara at the very end of Chapter 1');
   }, 60000);
+
+  it('rejects a clarification instead of sending it to the image service', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Refusal Novel',
+      chapterCount: 1,
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        {
+          id: manual.revision.chapters[0].id,
+          title: 'The Key',
+          brief: 'Mara finds a key.',
+        },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    const chapterId = chapters.chapters[0].id;
+    await request('PUT', `/chapters/${chapterId}/content`, {
+      content: 'Mara turned the brass key over in her hand and listened to the house.',
+    });
+    const { character } = await request<{ character: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/characters`,
+      { name: 'Mara' },
+    );
+    const { connections } = await request<{ connections: Array<{ id: string }> }>(
+      'GET',
+      '/image-connections',
+    );
+    const { template } = await request<{ template: { id: string } }>(
+      'POST',
+      '/image-prompt-templates',
+      {
+        projectId: project.id,
+        name: 'Refuses',
+        content: 'REFUSE_PROMPT',
+        isDefault: true,
+      },
+    );
+
+    await request('POST', `/chapters/${chapterId}/portraits`, {
+      characterId: character.id,
+      connectionId: connections[0].id,
+      templateId: template.id,
+    });
+
+    let latest: { status: string; error: string | null } | null = null;
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const data = await request<{
+        named: Array<{
+          character: { id: string };
+          latestRequest: { status: string; error: string | null } | null;
+        }>;
+        assets: Array<{ id: string }>;
+      }>('GET', `/chapters/${chapterId}/portraits`);
+      const state = data.named.find((entry) => entry.character.id === character.id)?.latestRequest;
+      if (state && state.status !== 'prompting' && state.status !== 'imaging') {
+        latest = state;
+        expect(data.assets).toHaveLength(0);
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    expect(latest?.status).toBe('failed');
+    expect(latest?.error).toContain('asked for more details');
+  }, 30000);
 });
 
 function cryptoId(): string {

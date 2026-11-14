@@ -78,6 +78,7 @@ Rules:
 - Return only the final prompt as a single paragraph. No headings, labels, quotation marks, code fences, or commentary.
 - Describe the subject, physical features, clothing, expression, pose, setting, lighting, camera framing, and visual style.
 - Use the character's established appearance and the selected scene. Do not invent contradictions or new story events.
+- Treat the supplied character and scene details as authoritative. Never ask for more information and never reply with a question; if a detail is missing, omit the gap and write the best prompt the available details support.
 - Keep the prompt under 180 words and make it usable by a text-to-image model.
 - Do not include negative-prompt text; the author supplies that separately.`;
 

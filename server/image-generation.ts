@@ -120,6 +120,8 @@ export function startImagePromptGeneration(
     .filter(Boolean)
     .join('\n\n');
 
+  const visualStyleValue = visualStyle || project.styleNotes || 'cinematic character portrait';
+  const clothingValue = clothing || '(not specified)';
   const rendered = renderTemplate(
     template.content,
     imagePromptValues({
@@ -131,21 +133,44 @@ export function startImagePromptGeneration(
       characterRole: character.role,
       identity: character.identity,
       appearance: character.appearance,
-      clothing: clothing || '(not specified)',
+      clothing: clothingValue,
       personality: character.personality,
       goals: character.goals,
       notes: character.notes,
       scene: sceneText,
       chapterTitle: chapter?.title ?? '',
       chapterBrief: chapter?.brief ?? '',
-      visualStyle: visualStyle || project.styleNotes || 'cinematic character portrait',
+      visualStyle: visualStyleValue,
       additionalInstructions: instructions || 'None.',
     }),
   );
+  const reference = referenceDetailsBlock(template.content, [
+    { key: 'novel_title', label: 'Novel', value: project.title },
+    { key: 'genre', label: 'Genre', value: project.genre },
+    { key: 'tone', label: 'Tone', value: project.tone },
+    { key: 'project_style', label: 'Story style', value: project.styleNotes },
+    { key: 'character_name', label: 'Character name', value: character.name },
+    { key: 'character_role', label: 'Role', value: character.role },
+    { key: 'identity', label: 'Identity', value: character.identity },
+    { key: 'appearance', label: 'Appearance', value: character.appearance },
+    { key: 'clothing', label: 'Clothing', value: clothingValue },
+    { key: 'personality', label: 'Personality', value: character.personality },
+    { key: 'goals', label: 'Goals', value: character.goals },
+    { key: 'notes', label: 'Notes', value: character.notes },
+    { key: 'scene', label: 'Scene', value: sceneText },
+    { key: 'chapter_title', label: 'Chapter', value: chapter?.title ?? '' },
+    { key: 'chapter_brief', label: 'Chapter brief', value: chapter?.brief ?? '' },
+    { key: 'visual_style', label: 'Visual style', value: visualStyleValue },
+    {
+      key: 'additional_instructions',
+      label: 'Additional instructions',
+      value: instructions || 'None.',
+    },
+  ]);
 
   const model = resolveTaskModel(project.id, 'image_prompt');
   const settings = getProjectGeneration(project.id);
-  const system = `${IMAGE_PROMPT_SYSTEM}\n\n${rendered}`;
+  const system = [IMAGE_PROMPT_SYSTEM, rendered, reference].filter(Boolean).join('\n\n');
 
   const job = createJob({
     projectId: project.id,
@@ -193,6 +218,14 @@ export function startImagePromptGeneration(
       if (!result.content.trim()) {
         finalizeJob(job.id, 'failed', {
           error: 'The image-prompt model returned an empty reply. Try again or write the prompt by hand.',
+          usage: result.usage,
+        });
+        return;
+      }
+      if (looksLikeClarificationRequest(result.content)) {
+        finalizeJob(job.id, 'failed', {
+          error:
+            'The image-prompt model asked for more details instead of writing a prompt. Check that the selected template includes the character variables, then try again.',
           usage: result.usage,
         });
         return;
@@ -251,6 +284,56 @@ function cleanImagePrompt(raw: string): string {
     .replace(/^["'“”]+|["'“”]+$/g, '')
     .trim();
   return cleaned || raw.trim();
+}
+
+interface PromptReferenceDetail {
+  key: string;
+  label: string;
+  value: string | null | undefined;
+}
+
+/**
+ * Custom image templates sometimes omit variables entirely, which leaves the
+ * prompt model with nothing to describe. Append every value the template did
+ * not render, so the model always receives the character and scene facts.
+ */
+function referenceDetailsBlock(
+  templateContent: string,
+  details: PromptReferenceDetail[],
+): string {
+  const used = new Set<string>();
+  for (const match of templateContent.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
+    const key = match[1];
+    if (key) used.add(key);
+  }
+  const missing = details.filter(
+    (detail) => !used.has(detail.key) && (detail.value ?? '').trim().length > 0,
+  );
+  if (missing.length === 0) return '';
+  return [
+    '## Character and scene reference',
+    'These details are authoritative. Use them and write the prompt; never ask the author for more information.',
+    ...missing.map((detail) => `${detail.label}: ${detail.value}`),
+  ].join('\n');
+}
+
+const CLARIFICATION_PATTERNS = [
+  /i(?:'m| am) sorry/i,
+  /\bplease provide\b/i,
+  /\bi need (?:the|more|additional|specific)\b/i,
+  /\bi(?:'d| would) need\b/i,
+  /\bcould you (?:provide|clarify|tell|share)\b/i,
+  /\bnot enough (?:detail|information)\b/i,
+  /\bprovide (?:the|more) (?:character|detail|information)/i,
+  /\bwhat (?:is|are) the character/i,
+];
+
+/** Detect a refusal/clarification instead of the image prompt we asked for. */
+function looksLikeClarificationRequest(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/\?\s*$/.test(trimmed)) return true;
+  return CLARIFICATION_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 /** Keep both the opening and the closing of a chapter, weighted to the ending. */
@@ -324,6 +407,14 @@ export function startChapterPortraitRequest(
     `Show ${character.name} exactly as they appear at this point: the end of the chapter, not the start.`,
   ].join('\n');
 
+  const clothingValue =
+    'As established by the character profile and the chapter. Change, damage or remove clothing only where the chapter supports it.';
+  const visualStyleValue =
+    project.styleNotes || 'cinematic character portrait, painterly book-cover illustration';
+  const additionalInstructionsValue =
+    instructions ||
+    'A solo character portrait with a clear view of the face and upper body. No other people, captions or text. The image must reflect the character’s end-of-chapter state.';
+
   const rendered = renderTemplate(
     template.content,
     imagePromptValues({
@@ -335,22 +426,42 @@ export function startChapterPortraitRequest(
       characterRole: character.role,
       identity: character.identity,
       appearance: character.appearance,
-      clothing:
-        'As established by the character profile and the chapter. Change, damage or remove clothing only where the chapter supports it.',
+      clothing: clothingValue,
       personality: character.personality,
       goals: character.goals,
       notes: character.notes,
       scene: sceneText,
       chapterTitle: chapter.title,
       chapterBrief: chapter.brief,
-      visualStyle: project.styleNotes || 'cinematic character portrait, painterly book-cover illustration',
-      additionalInstructions:
-        instructions ||
-        'A solo character portrait with a clear view of the face and upper body. No other people, captions or text. The image must reflect the character’s end-of-chapter state.',
+      visualStyle: visualStyleValue,
+      additionalInstructions: additionalInstructionsValue,
     }),
   );
+  const reference = referenceDetailsBlock(template.content, [
+    { key: 'novel_title', label: 'Novel', value: project.title },
+    { key: 'genre', label: 'Genre', value: project.genre },
+    { key: 'tone', label: 'Tone', value: project.tone },
+    { key: 'project_style', label: 'Story style', value: project.styleNotes },
+    { key: 'character_name', label: 'Character name', value: character.name },
+    { key: 'character_role', label: 'Role', value: character.role },
+    { key: 'identity', label: 'Identity', value: character.identity },
+    { key: 'appearance', label: 'Appearance', value: character.appearance },
+    { key: 'clothing', label: 'Clothing', value: clothingValue },
+    { key: 'personality', label: 'Personality', value: character.personality },
+    { key: 'goals', label: 'Goals', value: character.goals },
+    { key: 'notes', label: 'Notes', value: character.notes },
+    { key: 'scene', label: 'Scene', value: sceneText },
+    { key: 'chapter_title', label: 'Chapter', value: chapter.title },
+    { key: 'chapter_brief', label: 'Chapter brief', value: chapter.brief },
+    { key: 'visual_style', label: 'Visual style', value: visualStyleValue },
+    {
+      key: 'additional_instructions',
+      label: 'Additional instructions',
+      value: additionalInstructionsValue,
+    },
+  ]);
 
-  const system = `${IMAGE_PROMPT_SYSTEM}\n\n${rendered}`;
+  const system = [IMAGE_PROMPT_SYSTEM, rendered, reference].filter(Boolean).join('\n\n');
   const job = createJob({
     projectId: project.id,
     kind: 'image_prompt',
@@ -438,15 +549,26 @@ async function runChapterPortrait(
       });
       return;
     }
-    finalizeJob(job.id, 'completed', { usage: result.usage });
     const prompt = cleanImagePrompt(result.content);
     if (!prompt) {
+      finalizeJob(job.id, 'failed', {
+        error: 'The expanded prompt was empty. Try again.',
+        usage: result.usage,
+      });
       updatePortraitRequest(request.id, {
         status: 'failed',
         error: 'The expanded prompt was empty. Try again.',
       });
       return;
     }
+    if (looksLikeClarificationRequest(prompt)) {
+      const message =
+        'The image-prompt model asked for more details instead of writing a prompt. Check that the selected template includes the character variables, then try again.';
+      finalizeJob(job.id, 'failed', { error: message, usage: result.usage });
+      updatePortraitRequest(request.id, { status: 'failed', error: message });
+      return;
+    }
+    finalizeJob(job.id, 'completed', { usage: result.usage });
 
     const imageConnection = getImageConnection(options.connectionId);
     const imageJob = createImageJob({
