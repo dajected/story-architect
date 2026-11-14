@@ -1,0 +1,30 @@
+services:
+  story-architect:
+    build:
+      context: .
+    image: story-architect:0.1.0
+    platform: linux/amd64
+    container_name: story-architect
+    restart: unless-stopped
+    ports:
+      - "${STORY_ARCHITECT_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      DATA_DIR: /data
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      STORY_ARCHITECT_ENCRYPTION_KEY: ${STORY_ARCHITECT_ENCRYPTION_KEY:-}
+    volumes:
+      - "${STORY_ARCHITECT_DATA_PATH:-./data}:/data"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 15s

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Story Architect">
+  <rect width="64" height="64" rx="15" fill="#151922"/>
+  <path d="M14 21.5c6-1.8 11.8-.8 18 2.9 6.2-3.7 12-4.7 18-2.9v23c-6-1.6-11.8-.6-18 3.1-6.2-3.7-12-4.7-18-3.1z" fill="none" stroke="#c9a86a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M32 24.4v23.2" stroke="#c9a86a" stroke-width="1.5" opacity="0.85"/>
+  <path d="M42.5 11.5l5.6 1.7-8.7 11.2-4.7 1.8 1.4-4.9z" fill="#e3c48e"/>
+  <path d="M37.2 25.1l2.6 2.5" stroke="#151922" stroke-width="1.1" opacity="0.55"/>
+</svg>
