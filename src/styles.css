@@ -4013,3 +4013,260 @@ textarea:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------- whole-novel batch and end-of-chapter portraits ---------- */
+
+.batch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 0 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.batch-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.batch-head h3 {
+  margin: 2px 0 4px;
+  font-size: 16px;
+}
+
+.batch-head p {
+  margin: 0;
+  max-width: 78ch;
+}
+
+.batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.batch-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+
+.batch-progress-track span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+  transition: width 0.35s ease;
+}
+
+.batch-running {
+  margin: 0;
+  color: var(--accent-soft);
+}
+
+.batch-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 340px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.batch-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+.batch-item.running {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--bg-soft);
+}
+
+.batch-item.completed {
+  background: color-mix(in srgb, var(--success) 6%, transparent);
+}
+
+.batch-item.failed {
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+
+.batch-item-index {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.batch-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-item-error {
+  flex: 0 1 42%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+.batch-item-open {
+  flex: 0 0 auto;
+}
+
+.chapter-portraits {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 28px 0;
+  padding: 14px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.chapter-portraits-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chapter-portraits-head.compact {
+  align-items: baseline;
+}
+
+.chapter-portraits-head h3 {
+  font-size: 14px;
+}
+
+.chapter-portraits-head p {
+  margin: 3px 0 0;
+  max-width: 82ch;
+}
+
+.chapter-portraits .banner {
+  margin: 0;
+}
+
+.centered-block.compact {
+  padding: 20px;
+}
+
+.portrait-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.portrait-controls .field {
+  margin: 0;
+}
+
+.portrait-cast {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.portrait-cast-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+}
+
+.portrait-avatar {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--panel-2);
+}
+
+.portrait-avatar.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-prose);
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.portrait-cast-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.portrait-cast-actions {
+  flex: 0 0 auto;
+}
+
+.portrait-other {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+
+.portrait-other label {
+  font-size: 11.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.portrait-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+@media (max-width: 900px) {
+  .chapter-portraits {
+    margin: 12px 14px 0;
+  }
+
+  .portrait-cast-row {
+    flex-wrap: wrap;
+  }
+
+  .portrait-cast-actions {
+    flex-basis: 100%;
+  }
+}
+.batch-item.skipped .batch-item-error {
+  color: var(--muted);
+}

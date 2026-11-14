@@ -1,7 +1,10 @@
 import type {
   Chapter,
+  ChapterBatch,
   ChapterDetail,
   ChapterMemory,
+  ChapterPortraitOverview,
+  ChapterPortraitRequest,
   ChapterRevision,
   Character,
   CharacterImageOverview,
@@ -150,6 +153,13 @@ export interface ImageGenerationInput {
   templateId?: string | null;
   templateName?: string | null;
   templateContent?: string | null;
+}
+
+export interface ChapterPortraitInput {
+  characterId: string;
+  connectionId?: string | null;
+  templateId?: string | null;
+  instructions?: string;
 }
 
 export interface ImageTemplateInput {
@@ -325,6 +335,20 @@ export const api = {
     request<{ job: GenerationJob }>('POST', `/chapters/${chapterId}/generate`, input).then(
       (r) => r.job,
     ),
+  getChapterBatch: (projectId: string) =>
+    request<{ batch: ChapterBatch | null }>(
+      'GET',
+      `/projects/${projectId}/chapter-batch`,
+    ).then((r) => r.batch),
+  startChapterBatch: (projectId: string) =>
+    request<{ batch: ChapterBatch }>('POST', `/projects/${projectId}/chapter-batch`).then(
+      (r) => r.batch,
+    ),
+  cancelChapterBatch: (projectId: string) =>
+    request<{ batch: ChapterBatch }>(
+      'POST',
+      `/projects/${projectId}/chapter-batch/cancel`,
+    ).then((r) => r.batch),
   getContextInfo: (chapterId: string, preset?: ContextPreset) =>
     request<ContextInfo>(
       'GET',
@@ -566,6 +590,19 @@ export const api = {
   // Character images
   getCharacterImages: (characterId: string) =>
     request<CharacterImageOverview>('GET', `/characters/${characterId}/images`),
+  getChapterPortraits: (chapterId: string) =>
+    request<ChapterPortraitOverview>('GET', `/chapters/${chapterId}/portraits`),
+  startChapterPortrait: (chapterId: string, input: ChapterPortraitInput) =>
+    request<{ request: ChapterPortraitRequest }>(
+      'POST',
+      `/chapters/${chapterId}/portraits`,
+      input,
+    ).then((r) => r.request),
+  cancelChapterPortrait: (requestId: string) =>
+    request<{ request: ChapterPortraitRequest }>(
+      'POST',
+      `/chapter-portrait-requests/${requestId}/cancel`,
+    ).then((r) => r.request),
   expandImagePrompt: (characterId: string, input: ImagePromptExpansionInput) =>
     request<{ job: GenerationJob }>('POST', `/characters/${characterId}/images/prompt`, input).then(
       (r) => r.job,

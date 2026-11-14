@@ -147,6 +147,21 @@ stage 1–4 workflow described in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
 - **Upgrade and recovery documentation** — see [Upgrading](#upgrading) and
   [Recovery](#recovery).
 
+## Batch drafting and chapter portraits
+
+- **Draft the whole novel** — once the outline is approved, **Generate all
+  chapters** drafts every empty chapter in outline order. Each chapter waits for
+  the previous draft and its automatic summary, so the memory and preceding prose
+  carried into later chapters are real; chapters that already have text are
+  skipped. Progress, failures, and the current chapter are visible in the Outline
+  tab, and a batch can be stopped at any time.
+- **End-of-chapter portraits** — every chapter's editor lists the cast members
+  named in that chapter. **Generate portrait** builds a prompt from the chapter's
+  closing passage and the continuity facts recorded for that character, then sends
+  it to the image service, so the portrait shows how they look *after* the
+  chapter's events — clothing, injuries, weariness, and all. Images stay attached
+  to the chapter and can be set as the character's portrait.
+
 ## Get the code
 
 ```bash
@@ -384,15 +399,20 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
 13. Open **Cast**, choose a character, and select **Portrait & gallery**. Pick a
     template and optional chapter, build the prompt, edit it, then generate. Set the
     result as the character's portrait.
-14. Ask the assistant for help. Use **Insert into chapter** only when you want a
+14. In the Outline tab, use **Generate all chapters** to draft every empty chapter in
+    order once the outline is approved. Watch progress there and open any chapter as
+    it lands.
+15. In the chapter editor, use **Generate portrait** beside a named character to
+    create an image of them as they look at the end of that chapter.
+16. Ask the assistant for help. Use **Insert into chapter** only when you want a
     message to become manuscript text.
-15. **Export** downloads the current manuscript as Markdown.
-16. Open **Activity** to review generation jobs, models, sampling settings, token
+17. **Export** downloads the current manuscript as Markdown.
+18. Open **Activity** to review generation jobs, models, sampling settings, token
     usage, and estimated cost.
-17. Use **Backup** in the workspace or **Back up** in the library to download a
+19. Use **Backup** in the workspace or **Back up** in the library to download a
     portable project archive. **Restore backup** in the library imports one into a
     new project.
-18. For NAS maintenance, use `GET /api/health`, the pre-migration copies under
+20. For NAS maintenance, use `GET /api/health`, the pre-migration copies under
     `DATA_DIR/backups/`, and the upgrade and recovery notes above.
 
 ## How generation behaves

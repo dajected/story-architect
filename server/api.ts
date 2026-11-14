@@ -11,6 +11,7 @@ import { memoryRouter } from './routes/memory.js';
 import { loreRouter } from './routes/lore.js';
 import { toolsRouter } from './routes/tools.js';
 import { imagesRouter } from './routes/images.js';
+import { batchRouter } from './routes/batch.js';
 
 export const apiRouter = Router();
 
@@ -47,6 +48,7 @@ apiRouter.use(memoryRouter);
 apiRouter.use(loreRouter);
 apiRouter.use(toolsRouter);
 apiRouter.use(imagesRouter);
+apiRouter.use(batchRouter);
 
 apiRouter.use((_req, res) => {
   res.status(404).json({ error: 'API route not found.' });

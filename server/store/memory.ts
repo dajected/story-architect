@@ -300,8 +300,19 @@ export function updateChapterMemorySummary(chapterId: string, summary: string): 
   return getChapterMemory(chapterId, { chapters, snapshots });
 }
 
-export function listFacts(projectId: string, status?: FactStatus): Fact[] {
-  const rows = status
+/** Statements recorded for one character in one chapter, for a closing-state portrait. */
+export function chapterCharacterFacts(chapterId: string, characterId: string): string[] {
+  const rows = dbAll<{ statement: string }>(
+    `SELECT statement FROM facts
+      WHERE chapter_id = ? AND character_id = ? AND status IN ('proposed', 'established')
+      ORDER BY created_at`,
+    chapterId,
+    characterId,
+  );
+  return rows.map((row) => row.statement);
+}
+
+export function listFacts(projectId: string, status?: FactStatus): Fact[] {  const rows = status
     ? dbAll<FactRow>(
         `${factSelect} WHERE f.project_id = ? AND f.status = ?
          ORDER BY CASE f.status WHEN 'proposed' THEN 0 ELSE 1 END, f.created_at DESC`,

@@ -365,6 +365,37 @@ const migrations: Array<() => void> = [
       ALTER TABLE generation_jobs ADD COLUMN estimated_cost REAL;
     `);
   },
+  () => {
+    db.exec(`
+      CREATE TABLE chapter_batches (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        items TEXT NOT NULL,
+        message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE chapter_portrait_jobs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        prompt_job_id TEXT NOT NULL,
+        image_job_id TEXT,
+        status TEXT NOT NULL,
+        prompt TEXT NOT NULL DEFAULT '',
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_chapter_batches_project ON chapter_batches(project_id, created_at);
+      CREATE INDEX idx_chapter_portrait_jobs_chapter ON chapter_portrait_jobs(chapter_id, created_at);
+      CREATE INDEX idx_chapter_portrait_jobs_character ON chapter_portrait_jobs(character_id, created_at);
+    `);
+  },
 ];
 
 /**
@@ -462,6 +493,24 @@ function seed(): void {
          error = COALESCE(error, 'The server restarted while this image was being generated. The prompt is kept so you can retry.'),
          finished_at = ?
      WHERE status IN ('queued', 'running')`,
+  ).run(interruptedAt);
+
+  // A batch only advances inside this process. After a restart nothing will
+  // resume it, so surface it as interrupted rather than leaving it "running".
+  db.prepare(
+    `UPDATE chapter_batches
+     SET status = 'interrupted',
+         message = COALESCE(message, 'The server restarted while this batch was running. Drafted chapters are saved; start a new batch to continue.'),
+         updated_at = ?
+     WHERE status = 'running'`,
+  ).run(interruptedAt);
+
+  db.prepare(
+    `UPDATE chapter_portrait_jobs
+     SET status = 'interrupted',
+         error = COALESCE(error, 'The server restarted while this portrait was being generated. The saved prompt and images are kept.'),
+         updated_at = ?
+     WHERE status IN ('prompting', 'imaging')`,
   ).run(interruptedAt);
 
   // Chat replies have no revision row, so surface any saved partial text as an

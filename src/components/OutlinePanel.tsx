@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { GenerationJob, OutlineChapter, OutlineRevision, Project } from '@shared/types';
+import type {
+  ChapterBatch,
+  GenerationJob,
+  OutlineChapter,
+  OutlineRevision,
+  Project,
+} from '@shared/types';
 import { countWords } from '@shared/utils';
 import { api, type OutlineResponse } from '../api';
 import { useJobStream } from '../hooks';
@@ -10,10 +16,12 @@ export function OutlinePanel({
   project,
   onProjectChanged,
   onOpenManuscript,
+  onOpenChapter,
 }: {
   project: Project;
   onProjectChanged: () => Promise<void>;
   onOpenManuscript: () => void;
+  onOpenChapter?: (chapterId: string) => void;
 }) {
   const [outline, setOutline] = useState<OutlineResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +34,12 @@ export function OutlinePanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [showGenerator, setShowGenerator] = useState(false);
   const [instructions, setInstructions] = useState('');
+  const [batch, setBatch] = useState<ChapterBatch | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const previousCompleted = useRef(0);
+  const previousBatchStatus = useRef<ChapterBatch['status'] | null>(null);
   const finishedRef = useRef<(job: GenerationJob) => void>(() => {});
   const stream = useJobStream((job) => finishedRef.current(job));
   const outputRef = useRef<HTMLDivElement | null>(null);
@@ -74,6 +88,130 @@ export function OutlinePanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    previousCompleted.current = 0;
+    previousBatchStatus.current = null;
+    (async () => {
+      try {
+        const next = await api.getChapterBatch(project.id);
+        if (cancelled) return;
+        setBatch(next);
+        previousCompleted.current =
+          next?.items.filter((item) => item.status === 'completed').length ?? 0;
+        previousBatchStatus.current = next?.status ?? null;
+      } catch {
+        // A missing batch endpoint is not fatal for the outline view.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id]);
+
+  useEffect(() => {
+    if (batch?.status !== 'running') return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const next = await api.getChapterBatch(project.id);
+          if (!cancelled) setBatch(next);
+        } catch {
+          // Keep the last known progress through transient failures.
+        }
+      })();
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [batch?.status, project.id]);
+
+  const completedItems =
+    batch?.items.filter((item) => item.status === 'completed').length ?? 0;
+
+  useEffect(() => {
+    if (completedItems > previousCompleted.current) {
+      previousCompleted.current = completedItems;
+      void onProjectChanged();
+    }
+  }, [completedItems, onProjectChanged]);
+
+  useEffect(() => {
+    if (!batch) return;
+    const previous = previousBatchStatus.current;
+    previousBatchStatus.current = batch.status;
+    if (previous === 'running' && batch.status !== 'running') {
+      if (batch.status === 'interrupted') {
+        setBatchError(
+          batch.message ?? 'The server restarted during the batch. Drafted chapters are saved.',
+        );
+      } else if (batch.status === 'cancelled') {
+        setBatchNotice(batch.message ?? 'Batch stopped.');
+      } else {
+        setBatchNotice(batch.message ?? 'The chapter batch finished.');
+      }
+      void onProjectChanged();
+    }
+  }, [batch, onProjectChanged]);
+
+  const loadBatch = async (): Promise<ChapterBatch | null> => {
+    try {
+      const next = await api.getChapterBatch(project.id);
+      setBatch(next);
+      setBatchError(null);
+      return next;
+    } catch (err) {
+      setBatchError(errorText(err));
+      return null;
+    }
+  };
+
+  const startBatch = async () => {
+    if (
+      !window.confirm(
+        'Generate every chapter in order? Chapters that already have manuscript text are skipped, and each draft waits for the previous chapter’s summary. This can take a long time.',
+      )
+    ) {
+      return;
+    }
+    setBatchBusy(true);
+    setBatchError(null);
+    setBatchNotice(null);
+    try {
+      const next = await api.startChapterBatch(project.id);
+      setBatch(next);
+      previousCompleted.current =
+        next.items.filter((item) => item.status === 'completed').length;
+      previousBatchStatus.current = next.status;
+      setBatchNotice(
+        next.status === 'running'
+          ? 'Batch started. Chapters are generated one at a time.'
+          : next.message ?? 'Nothing needed generating.',
+      );
+    } catch (err) {
+      setBatchError(errorText(err));
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const stopBatch = async () => {
+    setBatchBusy(true);
+    setBatchError(null);
+    try {
+      const next = await api.cancelChapterBatch(project.id);
+      setBatch(next);
+      setBatchNotice(next.message ?? 'Batch stopped.');
+      await loadBatch();
+    } catch (err) {
+      setBatchError(errorText(err));
+    } finally {
+      setBatchBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (stream.output && outputRef.current) {
@@ -374,6 +512,20 @@ export function OutlinePanel({
         </details>
       ) : null}
 
+      {latest?.status === 'approved' || batch?.status === 'running' ? (
+        <BatchPanel
+          batch={batch}
+          busy={batchBusy}
+          error={batchError}
+          notice={batchNotice}
+          onStart={() => void startBatch()}
+          onStop={() => void stopBatch()}
+          onRefresh={() => void loadBatch()}
+          onOpenChapter={onOpenChapter}
+          approved={latest?.status === 'approved'}
+        />
+      ) : null}
+
       {latest ? (
         <div className="outline-layout">
           <aside className="outline-history">
@@ -551,4 +703,139 @@ export function OutlinePanel({
 
 function oldFailedJob(job: GenerationJob): boolean {
   return ['failed', 'cancelled', 'interrupted'].includes(job.status);
+}
+
+function batchItemLabel(status: ChapterBatch['items'][number]['status']): string {
+  if (status === 'completed') return 'Drafted';
+  if (status === 'failed') return 'Failed';
+  if (status === 'running') return 'Drafting';
+  if (status === 'skipped') return 'Skipped';
+  return 'Waiting';
+}
+
+function batchItemBadge(status: ChapterBatch['items'][number]['status']): string {
+  if (status === 'completed') return 'badge-success';
+  if (status === 'failed') return 'badge-danger';
+  if (status === 'running') return 'badge-accent';
+  return '';
+}
+
+function BatchPanel({
+  batch,
+  busy,
+  error,
+  notice,
+  approved,
+  onStart,
+  onStop,
+  onRefresh,
+  onOpenChapter,
+}: {
+  batch: ChapterBatch | null;
+  busy: boolean;
+  error: string | null;
+  notice: string | null;
+  approved: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  onRefresh: () => void;
+  onOpenChapter?: (chapterId: string) => void;
+}) {
+  const items = batch?.items ?? [];
+  const total = items.length;
+  const completed = items.filter((item) => item.status === 'completed').length;
+  const failed = items.filter((item) => item.status === 'failed').length;
+  const skipped = items.filter((item) => item.status === 'skipped').length;
+  const settled = completed + failed + skipped;
+  const active = batch?.status === 'running';
+  const progress = total > 0 ? Math.round((settled / total) * 100) : 0;
+  const running = items.find((item) => item.status === 'running') ?? null;
+
+  return (
+    <section className="batch-panel">
+      <div className="batch-head">
+        <div>
+          <p className="eyebrow">Whole novel</p>
+          <h3>{active ? 'Drafting all chapters' : 'Generate all chapters'}</h3>
+          <p className="muted small">
+            Runs one chapter at a time, in outline order. Each draft waits for the previous
+            chapter’s summary so the context carries forward. Chapters that already have text are
+            skipped and left untouched.
+          </p>
+        </div>
+        <div className="row-actions">
+          {active ? (
+            <button className="button button-danger-ghost" onClick={onStop} disabled={busy}>
+              {busy ? <Spinner /> : null}
+              Stop batch
+            </button>
+          ) : (
+            <button
+              className="button button-primary"
+              onClick={onStart}
+              disabled={busy || !approved}
+              title={approved ? undefined : 'Approve the outline first.'}
+            >
+              {busy ? <Spinner /> : null}
+              Generate all chapters
+            </button>
+          )}
+          {batch && !active ? (
+            <button className="button button-ghost" onClick={onRefresh} disabled={busy}>
+              Refresh
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? <Banner tone="danger">{error}</Banner> : null}
+      {notice ? <Banner tone="success">{notice}</Banner> : null}
+
+      {batch ? (
+        <>
+          <div className="batch-progress">
+            <div className="batch-progress-track">
+              <span style={{ width: `${progress}%` }} />
+            </div>
+            <span className="muted small">
+              {settled} of {total} settled · {completed} drafted
+              {failed > 0 ? ` · ${failed} failed` : ''}
+              {skipped > 0 ? ` · ${skipped} skipped` : ''}
+            </span>
+          </div>
+          {running ? (
+            <p className="muted small batch-running">
+              Now drafting {running.orderIndex + 1}. {running.title}…
+            </p>
+          ) : null}
+          <ol className="batch-items">
+            {items.map((item) => (
+              <li className={`batch-item ${item.status}`} key={item.chapterId}>
+                <span className="batch-item-index">
+                  {String(item.orderIndex + 1).padStart(2, '0')}
+                </span>
+                <span className="batch-item-title">{item.title}</span>
+                <span className={`badge ${batchItemBadge(item.status)}`}>
+                  {batchItemLabel(item.status)}
+                </span>
+                {item.error ? <span className="batch-item-error">{item.error}</span> : null}
+                {onOpenChapter ? (
+                  <button
+                    className="button button-ghost button-small batch-item-open"
+                    onClick={() => onOpenChapter(item.chapterId)}
+                  >
+                    Open
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : (
+        <p className="muted small">
+          No batch has run yet. The button drafts every chapter that is still empty.
+        </p>
+      )}
+    </section>
+  );
 }

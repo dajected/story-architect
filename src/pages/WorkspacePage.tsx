@@ -331,6 +331,10 @@ export function WorkspacePage({
                 project={project}
                 onProjectChanged={refreshAll}
                 onOpenManuscript={() => setTab('manuscript')}
+                onOpenChapter={(chapterId) => {
+                  setTab('manuscript');
+                  void selectChapter(chapterId);
+                }}
               />
             </div>
           </div>

@@ -25,9 +25,12 @@ import { setCharacterPortrait } from '../store/characters.js';
 import { getProject } from '../store/projects.js';
 import { testImageConnection } from '../image-providers.js';
 import {
+  cancelChapterPortraitRequest,
   cancelImageGeneration,
+  chapterPortraitOverview,
   characterImageOverview,
   retryImageJob,
+  startChapterPortraitRequest,
   startImageGeneration,
   startImagePromptGeneration,
 } from '../image-generation.js';
@@ -169,6 +172,45 @@ imagesRouter.get(
   '/characters/:id/images',
   wrap((req, res) => {
     res.json(characterImageOverview(stringParam(req.params.id, 'character id')));
+  }),
+);
+
+imagesRouter.get(
+  '/chapters/:id/portraits',
+  wrap((req, res) => {
+    res.json(chapterPortraitOverview(stringParam(req.params.id, 'chapter id')));
+  }),
+);
+
+imagesRouter.post(
+  '/chapters/:id/portraits',
+  wrap((req, res) => {
+    const body = parseBody(
+      z.object({
+        characterId: z.string().min(1),
+        connectionId: z.string().min(1).nullable().optional(),
+        templateId: z.string().min(1).nullable().optional(),
+        instructions: z.string().max(4000).optional(),
+      }),
+      req.body,
+    );
+    res.status(202).json({
+      request: startChapterPortraitRequest(stringParam(req.params.id, 'chapter id'), {
+        characterId: body.characterId,
+        connectionId: body.connectionId ?? null,
+        templateId: body.templateId ?? null,
+        instructions: body.instructions,
+      }),
+    });
+  }),
+);
+
+imagesRouter.post(
+  '/chapter-portrait-requests/:id/cancel',
+  wrap((req, res) => {
+    res.json({
+      request: cancelChapterPortraitRequest(stringParam(req.params.id, 'portrait request id')),
+    });
   }),
 );
 

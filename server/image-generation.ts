@@ -2,6 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
+  ChapterPortraitCandidate,
+  ChapterPortraitOverview,
+  ChapterPortraitRequest,
+  Character,
   CharacterImageOverview,
   GenerationJob,
   ImageAsset,
@@ -12,6 +16,7 @@ import { jobSettingsSnapshot } from '../shared/utils.js';
 import { badRequest, conflict, errorMessage } from './errors.js';
 import {
   appendOutput,
+  cancelJob,
   createJob,
   createRuntime,
   finalizeJob,
@@ -25,7 +30,7 @@ import {
 import type { GeneratedImage } from './image-providers.js';
 import { ProviderError } from './providers.js';
 import { IMAGE_PROMPT_SYSTEM, imagePromptValues, renderTemplate } from './prompts.js';
-import { getCharacter, getCharacterRow } from './store/characters.js';
+import { getCharacter, getCharacterRow, listCharacters } from './store/characters.js';
 import { currentChapterText, getChapter } from './store/chapters.js';
 import {
   getImageConnection,
@@ -42,14 +47,24 @@ import {
   createImageJob,
   getImageJob,
   imagesRoot,
+  listChapterImageAssets,
   listCharacterImageAssets,
   listCharacterImageJobs,
   listInterruptedImageJobsWithRemoteId,
   updateImageJob,
 } from './store/images.js';
+import { chapterCharacterFacts } from './store/memory.js';
+import {
+  activePortraitRequestForCharacter,
+  createPortraitRequest,
+  getPortraitRequest,
+  listChapterPortraitRequests,
+  updatePortraitRequest,
+} from './store/portrait-requests.js';
 import { getProject } from './store/projects.js';
 import { getProjectGeneration, resolveRoles, resolveTaskModel } from './store/settings.js';
 import { streamChat } from './providers.js';
+import type { ProviderConnection } from './providers.js';
 
 const imageRuntimes = new Map<string, AbortController>();
 
@@ -206,6 +221,357 @@ export interface ImageGenerationInput {
   templateId?: string | null;
   templateName?: string | null;
   templateContent?: string | null;
+}
+
+export interface ChapterPortraitInput {
+  characterId: string;
+  connectionId?: string | null;
+  templateId?: string | null;
+  instructions?: string;
+}
+
+/** Whole-word, case-insensitive count of a character name in a lowercased text. */
+export function countNameMentions(haystack: string, name: string): number {
+  const needle = name.trim().toLowerCase();
+  if (!needle) return 0;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'gu');
+    return [...haystack.matchAll(pattern)].length;
+  } catch {
+    return haystack.split(needle).length - 1;
+  }
+}
+
+function cleanImagePrompt(raw: string): string {
+  const cleaned = raw
+    .replace(/```[a-z]*\s*/gi, '')
+    .replace(/```/g, '')
+    .replace(/^\s*(image\s+prompt|prompt)\s*:\s*/i, '')
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .trim();
+  return cleaned || raw.trim();
+}
+
+/** Keep both the opening and the closing of a chapter, weighted to the ending. */
+function chapterExcerpt(text: string, limit = 7000): string {
+  if (text.length <= limit) return text.trim();
+  const head = Math.floor(limit * 0.2);
+  const tail = limit - head;
+  return `${text.slice(0, head).trim()}\n\n[Middle of the chapter omitted.]\n\n${text
+    .slice(-tail)
+    .trim()}`;
+}
+
+function chapterEndChanges(chapterId: string, characterId: string): string[] {
+  try {
+    return chapterCharacterFacts(chapterId, characterId);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Build a portrait of one character as they appear at the end of a chapter.
+ * The image-prompt role synthesises the appearance and the image service draws
+ * it; both steps are tracked on one portrait request so the browser can poll.
+ */
+export function startChapterPortraitRequest(
+  chapterId: string,
+  input: ChapterPortraitInput,
+): ChapterPortraitRequest {
+  const chapter = getChapter(chapterId);
+  const project = getProject(chapter.projectId);
+  const character = getCharacter(input.characterId);
+  if (character.projectId !== project.id) {
+    throw badRequest('That character belongs to another novel.');
+  }
+  if (character.status === 'archived') {
+    throw badRequest('Archived characters cannot receive new portraits.');
+  }
+  if (activePortraitRequestForCharacter(character.id) || activeImageJobForCharacter(character.id)) {
+    throw conflict(`A portrait is already being generated for ${character.name}.`);
+  }
+  const text = currentChapterText(chapterId);
+  if (!text.trim()) {
+    throw conflict('Draft this chapter before generating a portrait of its closing state.');
+  }
+
+  const connection = input.connectionId
+    ? getImageConnection(input.connectionId)
+    : listImageConnections()[0];
+  if (!connection) {
+    throw conflict('Add an image connection in Settings before generating portraits.');
+  }
+
+  const model = resolveTaskModel(project.id, 'image_prompt');
+  const settings = getProjectGeneration(project.id);
+  const template = resolveImagePromptTemplate(project.id, input.templateId ?? null);
+  const instructions = textLimit(input.instructions, 4000, 'Instructions');
+  const chapterNumber = chapter.orderIndex + 1;
+  const changes = chapterEndChanges(chapterId, character.id);
+  const sceneText = [
+    `A portrait of ${character.name} at the very end of Chapter ${chapterNumber}, "${chapter.title}", after all of the events in that chapter.`,
+    '',
+    changes.length > 0
+      ? `Physical changes and circumstances established by this chapter:\n${changes
+          .map((change) => `- ${change}`)
+          .join('\n')}`
+      : 'No explicit physical changes were recorded. Use the established appearance, plus anything the closing text clearly shows.',
+    '',
+    `Closing passage of the chapter (for clothing, injuries, condition, setting, mood and lighting):\n${chapterExcerpt(text)}`,
+    '',
+    `Show ${character.name} exactly as they appear at this point: the end of the chapter, not the start.`,
+  ].join('\n');
+
+  const rendered = renderTemplate(
+    template.content,
+    imagePromptValues({
+      novelTitle: project.title,
+      genre: project.genre,
+      tone: project.tone,
+      projectStyle: project.styleNotes,
+      characterName: character.name,
+      characterRole: character.role,
+      identity: character.identity,
+      appearance: character.appearance,
+      clothing:
+        'As established by the character profile and the chapter. Change, damage or remove clothing only where the chapter supports it.',
+      personality: character.personality,
+      goals: character.goals,
+      notes: character.notes,
+      scene: sceneText,
+      chapterTitle: chapter.title,
+      chapterBrief: chapter.brief,
+      visualStyle: project.styleNotes || 'cinematic character portrait, painterly book-cover illustration',
+      additionalInstructions:
+        instructions ||
+        'A solo character portrait with a clear view of the face and upper body. No other people, captions or text. The image must reflect the character’s end-of-chapter state.',
+    }),
+  );
+
+  const system = `${IMAGE_PROMPT_SYSTEM}\n\n${rendered}`;
+  const job = createJob({
+    projectId: project.id,
+    kind: 'image_prompt',
+    chapterId,
+    connectionId: model.connectionId,
+    model: model.model,
+    prompt: system,
+    context: {
+      stage: 'chapter_portrait',
+      characterId: character.id,
+      characterName: character.name,
+      chapterId,
+      chapterNumber,
+      imageConnectionId: connection.id,
+      templateId: template.id,
+      templateName: template.name,
+    },
+    settings: jobSettingsSnapshot({
+      temperature: settings.temperature ?? 0.7,
+      topP: null,
+      maxTokens: 900,
+    }),
+  });
+
+  const request = createPortraitRequest({
+    projectId: project.id,
+    chapterId,
+    characterId: character.id,
+    promptJobId: job.id,
+    status: 'prompting',
+  });
+
+  void runChapterPortrait(job, request, {
+    provider: model.provider,
+    system,
+    connectionId: connection.id,
+    templateId: template.id,
+    templateName: template.name,
+    templateContent: template.content,
+    temperature: settings.temperature ?? 0.7,
+  });
+
+  return request;
+}
+
+async function runChapterPortrait(
+  job: GenerationJob,
+  request: ChapterPortraitRequest,
+  options: {
+    provider: ProviderConnection;
+    system: string;
+    connectionId: string;
+    templateId: string | null;
+    templateName: string;
+    templateContent: string;
+    temperature: number;
+  },
+): Promise<void> {
+  const runtime = createRuntime(job.id);
+  try {
+    const result = await streamChat(options.provider, {
+      model: job.model,
+      messages: [
+        { role: 'system', content: options.system },
+        {
+          role: 'user',
+          content:
+            'Write the final image prompt for this character at the end of the chapter now. Return only the prompt.',
+        },
+      ],
+      temperature: options.temperature,
+      topP: null,
+      maxTokens: 900,
+      signal: runtime.controller.signal,
+      onDelta: (text) => appendOutput(job.id, text),
+    });
+    if (!result.content.trim()) {
+      finalizeJob(job.id, 'failed', {
+        error: 'The image-prompt model returned an empty reply. Try again.',
+        usage: result.usage,
+      });
+      updatePortraitRequest(request.id, {
+        status: 'failed',
+        error: 'The image-prompt model returned an empty reply. Try again.',
+      });
+      return;
+    }
+    finalizeJob(job.id, 'completed', { usage: result.usage });
+    const prompt = cleanImagePrompt(result.content);
+    if (!prompt) {
+      updatePortraitRequest(request.id, {
+        status: 'failed',
+        error: 'The expanded prompt was empty. Try again.',
+      });
+      return;
+    }
+
+    const imageConnection = getImageConnection(options.connectionId);
+    const imageJob = createImageJob({
+      projectId: request.projectId,
+      characterId: request.characterId,
+      chapterId: request.chapterId,
+      connectionId: imageConnection.id,
+      providerKind: imageConnection.kind,
+      prompt,
+      negativePrompt: '',
+      templateId: options.templateId,
+      templateName: options.templateName,
+      templateContent: options.templateContent,
+      settings: imageConnection.settings,
+    });
+    updatePortraitRequest(request.id, {
+      status: 'imaging',
+      imageJobId: imageJob.id,
+      prompt,
+      error: null,
+    });
+
+    await runImageJob(imageJob.id);
+    const finished = getImageJob(imageJob.id);
+    updatePortraitRequest(request.id, {
+      status:
+        finished.status === 'completed'
+          ? 'completed'
+          : finished.status === 'failed'
+            ? 'failed'
+            : finished.status === 'cancelled'
+              ? 'cancelled'
+              : 'interrupted',
+      error: finished.error,
+    });
+  } catch (error) {
+    if (isCancellation(error, runtime.controller.signal)) {
+      finalizeJob(job.id, 'cancelled', { error: 'Portrait prompt generation stopped.' });
+      updatePortraitRequest(request.id, {
+        status: 'cancelled',
+        error: 'Portrait generation stopped.',
+      });
+      return;
+    }
+    const message = error instanceof ProviderError ? error.message : errorMessage(error);
+    finalizeJob(job.id, 'failed', { error: message });
+    updatePortraitRequest(request.id, { status: 'failed', error: message });
+  }
+}
+
+export function cancelChapterPortraitRequest(id: string): ChapterPortraitRequest {
+  const request = getPortraitRequest(id);
+  if (!['prompting', 'imaging'].includes(request.status)) {
+    throw conflict('This portrait has already finished.');
+  }
+  if (request.status === 'prompting') {
+    try {
+      cancelJob(request.promptJobId);
+    } catch {
+      // The prompt job may have just finished.
+    }
+  } else if (request.imageJobId) {
+    try {
+      cancelImageGeneration(request.imageJobId);
+    } catch {
+      // The image job may have just finished.
+    }
+  }
+  return updatePortraitRequest(id, {
+    status: 'cancelled',
+    error: 'Cancelled. Any saved images are kept.',
+  });
+}
+
+export function chapterPortraitOverview(chapterId: string): ChapterPortraitOverview {
+  const chapter = getChapter(chapterId);
+  const text = currentChapterText(chapterId);
+  const lower = text.toLowerCase();
+  const characters = listCharacters(chapter.projectId).filter(
+    (character) => character.status !== 'archived',
+  );
+  const assets = listChapterImageAssets(chapterId);
+  const requests = listChapterPortraitRequests(chapterId);
+  const roles = resolveRoles(chapter.projectId);
+
+  const named: ChapterPortraitCandidate[] = [];
+  const others: Character[] = [];
+  for (const character of characters) {
+    const mentionCount = countNameMentions(lower, character.name);
+    if (mentionCount === 0) {
+      others.push(character);
+      continue;
+    }
+    const ownRequests = requests.filter((request) => request.characterId === character.id);
+    named.push({
+      character,
+      mentionCount,
+      assets: assets.filter((asset) => asset.characterId === character.id),
+      activeRequest:
+        ownRequests.find(
+          (request) => request.status === 'prompting' || request.status === 'imaging',
+        ) ?? null,
+      latestRequest: ownRequests[0] ?? null,
+    });
+  }
+  named.sort(
+    (a, b) =>
+      b.mentionCount - a.mentionCount || a.character.name.localeCompare(b.character.name),
+  );
+
+  return {
+    chapterId,
+    chapterTitle: chapter.title,
+    chapterNumber: chapter.orderIndex + 1,
+    hasText: Boolean(text.trim()),
+    named,
+    others,
+    assets,
+    activeRequests: requests.filter(
+      (request) => request.status === 'prompting' || request.status === 'imaging',
+    ),
+    connections: listImageConnections(),
+    templates: listImagePromptTemplates(chapter.projectId),
+    imagePromptRole: roles.find((role) => role.role === 'image_prompt') ?? null,
+  };
 }
 
 export function startImageGeneration(

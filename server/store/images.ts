@@ -295,6 +295,14 @@ export function listCharacterImageAssets(characterId: string): ImageAsset[] {
   return rows.map(mapAsset);
 }
 
+export function listChapterImageAssets(chapterId: string): ImageAsset[] {
+  const rows = dbAll<ImageAssetRow>(
+    'SELECT * FROM image_assets WHERE chapter_id = ? ORDER BY created_at DESC',
+    chapterId,
+  );
+  return rows.map(mapAsset);
+}
+
 export function deleteImageAsset(id: string): void {
   const row = getImageAssetRow(id);
   dbRun(

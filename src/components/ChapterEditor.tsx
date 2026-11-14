@@ -16,6 +16,7 @@ import { api, type ContextInfo } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate, formatWords } from '../utils';
 import { ContextInspector } from './ContextInspector';
+import { ChapterPortraits } from './ChapterPortraits';
 import { Markdown } from './Markdown';
 import { RevisionHistory } from './RevisionHistory';
 import { Banner, Modal, Spinner } from './ui';
@@ -563,6 +564,8 @@ export function ChapterEditor({
           </div>
         ) : null}
       </div>
+
+      <ChapterPortraits chapterId={chapter.id} revisionKey={chapter.currentRevisionId} />
 
       {showGenerate ? (
         <section className="generate-panel">

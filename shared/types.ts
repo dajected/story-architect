@@ -731,6 +731,82 @@ export interface ContextInfo {
   pendingFacts: number;
 }
 
+export type ChapterBatchItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+export interface ChapterBatchItem {
+  chapterId: string;
+  orderIndex: number;
+  title: string;
+  status: ChapterBatchItemStatus;
+  jobId: string | null;
+  revisionId: string | null;
+  error: string | null;
+}
+
+export type ChapterBatchStatus = 'running' | 'completed' | 'cancelled' | 'interrupted';
+
+/** A sequential "draft every chapter" run for one project. */
+export interface ChapterBatch {
+  id: string;
+  projectId: string;
+  status: ChapterBatchStatus;
+  items: ChapterBatchItem[];
+  message: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChapterPortraitStatus =
+  | 'prompting'
+  | 'imaging'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted';
+
+/** One character portrait generated against a specific chapter's end state. */
+export interface ChapterPortraitRequest {
+  id: string;
+  projectId: string;
+  chapterId: string;
+  characterId: string;
+  status: ChapterPortraitStatus;
+  promptJobId: string;
+  imageJobId: string | null;
+  prompt: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChapterPortraitCandidate {
+  character: Character;
+  /** Whole-word mentions of the character's name in the chapter text. */
+  mentionCount: number;
+  /** Images already generated for this character in this chapter. */
+  assets: ImageAsset[];
+  activeRequest: ChapterPortraitRequest | null;
+  latestRequest: ChapterPortraitRequest | null;
+}
+
+export interface ChapterPortraitOverview {
+  chapterId: string;
+  chapterTitle: string;
+  chapterNumber: number;
+  hasText: boolean;
+  /** Cast members named in the chapter, most-mentioned first. */
+  named: ChapterPortraitCandidate[];
+  /** Other non-archived cast members, for a manual pick. */
+  others: Character[];
+  /** Every image already generated for this chapter. */
+  assets: ImageAsset[];
+  /** Portraits currently building or drawing for this chapter. */
+  activeRequests: ChapterPortraitRequest[];
+  connections: ImageConnectionPublic[];
+  templates: ImagePromptTemplate[];
+  imagePromptRole: ResolvedRole | null;
+}
+
 export interface ProjectDraft {
   title: string;
   premise: string;
