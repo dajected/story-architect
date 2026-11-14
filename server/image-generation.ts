@@ -277,13 +277,37 @@ export function countNameMentions(haystack: string, name: string): number {
 }
 
 function cleanImagePrompt(raw: string): string {
-  const cleaned = raw
+  let text = raw.trim();
+  // Some templates ask the model for a "prompt" field. Accept a JSON object
+  // and keep only that field so the image service never receives JSON.
+  if (text.includes('{')) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (end > start) {
+      try {
+        const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
+        if (parsed && typeof parsed === 'object') {
+          const record = parsed as Record<string, unknown>;
+          const field = ['prompt', 'image_prompt', 'imagePrompt', 'description', 'text']
+            .map((key) => record[key])
+            .find(
+              (value): value is string =>
+                typeof value === 'string' && value.trim().length > 0,
+            );
+          if (field) text = field.trim();
+        }
+      } catch {
+        // Not JSON; keep the original text.
+      }
+    }
+  }
+  const cleaned = text
     .replace(/```[a-z]*\s*/gi, '')
     .replace(/```/g, '')
     .replace(/^\s*(image\s+prompt|prompt)\s*:\s*/i, '')
     .replace(/^["'“”]+|["'“”]+$/g, '')
     .trim();
-  return cleaned || raw.trim();
+  return cleaned || text;
 }
 
 interface PromptReferenceDetail {

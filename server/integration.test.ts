@@ -181,21 +181,23 @@ function startMock(): Promise<void> {
         if (system.includes('art director')) lastImagePromptSystem = system;
         const text = (system + user).includes('REFUSE_PROMPT')
           ? "I'm sorry, but I need the character's details (name, appearance, clothing, and setting) before I can write the prompt. Please provide that information."
-          : system.includes('art director')
-            ? IMAGE_PROMPT
-            : system.includes('chapter-by-chapter outline')
-              ? OUTLINE
-              : system.includes('continuity archivist')
-                ? MEMORY
-                : system.includes('casting editor')
-                  ? CAST
-                  : system.includes('line editor')
-                    ? REWRITE
-                    : system.includes('continuity editor')
-                      ? REVIEW
-                      : system.includes('drafting prose for a novel')
-                        ? PROSE
-                        : 'A mock assistant reply.';
+          : (system + user).includes('JSON_PROMPT')
+            ? JSON.stringify({ prompt: IMAGE_PROMPT })
+            : system.includes('art director')
+              ? IMAGE_PROMPT
+              : system.includes('chapter-by-chapter outline')
+                ? OUTLINE
+                : system.includes('continuity archivist')
+                  ? MEMORY
+                  : system.includes('casting editor')
+                    ? CAST
+                    : system.includes('line editor')
+                      ? REWRITE
+                      : system.includes('continuity editor')
+                        ? REVIEW
+                        : system.includes('drafting prose for a novel')
+                          ? PROSE
+                          : 'A mock assistant reply.';
         const slow = (system + user).includes('SLOW');
         const writeStream = () => {
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -1664,14 +1666,15 @@ describe('whole-novel drafting and chapter portraits', () => {
     );
 
     // A template with no variables used to leave the prompt model with no
-    // character details. The server now appends a reference block.
+    // character details. The server now appends a reference block, and a
+    // JSON "prompt" field is unwrapped before it reaches the image service.
     const { template } = await request<{ template: { id: string } }>(
       'POST',
       '/image-prompt-templates',
       {
         projectId: project.id,
         name: 'No variables',
-        content: 'Create a painterly character portrait prompt.',
+        content: 'JSON_PROMPT: Create a painterly character portrait prompt.',
         isDefault: true,
       },
     );
@@ -1707,7 +1710,7 @@ describe('whole-novel drafting and chapter portraits', () => {
     expect(portraitStatus).toBe('completed');
     expect(assets).toHaveLength(1);
     expect(assets[0].characterId).toBe(character.id);
-    expect(assets[0].prompt.toLowerCase()).toContain('mara');
+    expect(assets[0].prompt).toBe(IMAGE_PROMPT);
 
     expect(lastImagePromptSystem).toContain('## Character and scene reference');
     expect(lastImagePromptSystem).toContain('Character name: Mara');
