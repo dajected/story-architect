@@ -396,6 +396,11 @@ const migrations: Array<() => void> = [
       CREATE INDEX idx_chapter_portrait_jobs_character ON chapter_portrait_jobs(character_id, created_at);
     `);
   },
+  () => {
+    db.exec(`ALTER TABLE image_assets ADD COLUMN selected_for_chapter INTEGER NOT NULL DEFAULT 0;
+      CREATE UNIQUE INDEX idx_selected_chapter_image ON image_assets(chapter_id, character_id)
+      WHERE selected_for_chapter = 1 AND chapter_id IS NOT NULL;`);
+  },
 ];
 
 /**

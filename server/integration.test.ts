@@ -79,6 +79,8 @@ let mockServer: http.Server;
 let baseUrl = '';
 let tempDir = '';
 let comfyPromptText = '';
+let comfyReference = '';
+let referenceUploads = 0;
 let recoveryHistoryReads = 0;
 let comfySubmissions = 0;
 let lastImagePromptSystem = '';
@@ -123,13 +125,16 @@ function startMock(): Promise<void> {
       json(res, 200, { system: { comfyui_version: '0.3.0-test' } });
       return;
     }
+    if (req.method === 'POST' && req.url === '/comfy/upload/image') {
+      referenceUploads++; req.resume(); json(res,200,{name:'reference.png',subfolder:'portraits'}); return;
+    }
     if (req.method === 'POST' && req.url === '/comfy/prompt') {
       comfySubmissions++;
       let body = '';
       req.on('data', (chunk) => (body += chunk));
       req.on('end', () => {
         const parsed = JSON.parse(body) as {
-          prompt?: { '6'?: { inputs?: { text?: string } } };
+          prompt?: { '6'?: { inputs?: { text?: string } }; '4'?: {inputs?: {image?: string}} };
         };
         const text = parsed.prompt?.['6']?.inputs?.text ?? '';
         if (!text) {
@@ -137,6 +142,7 @@ function startMock(): Promise<void> {
           return;
         }
         comfyPromptText = text;
+        comfyReference = parsed.prompt?.['4']?.inputs?.image ?? '';
         json(res, 200, { prompt_id: 'comfy-test-prompt', number: 1, node_errors: {} });
       });
       return;
@@ -927,6 +933,12 @@ describe('stage 3 lore and writing tools', () => {
     const reviewJob = await waitForJob(review.job.id);
     expect(reviewJob.status).toBe('completed');
     expect(String(reviewJob.output)).toContain('Continuity review');
+    const beforeCorrection=await request<{chapter:import('../shared/types.js').ChapterDetail}>('GET',`/chapters/${chapterId}`);
+    const corrected=await request<{chapter:import('../shared/types.js').ChapterDetail}>('POST',`/chapters/${chapterId}/review-correction`,{jobId:review.job.id,expectedContent:beforeCorrection.chapter.content,passage:'The key was warm',replacement:'The brass key was warm'});
+    expect(corrected.chapter.content).toContain('The brass key was warm');
+    expect(corrected.chapter.currentRevisionId).not.toBe(beforeCorrection.chapter.currentRevisionId);
+    const staleCorrection=await fetch(`${baseUrl}/api/chapters/${chapterId}/review-correction`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobId:review.job.id,expectedContent:beforeCorrection.chapter.content,passage:'The key was warm',replacement:'The key was cold'})});
+    expect(staleCorrection.status).toBe(409);
 
     const { instruction } = await request<{ instruction: { id: string; name: string } }>(
       'POST',
@@ -1103,6 +1115,7 @@ describe('stage 4 character image generation', () => {
     );
 
     const workflow = {
+      '4': {class_type:'LoadImage',inputs:{image:''}},
       '6': { class_type: 'CLIPTextEncode', inputs: { text: '' } },
       '9': { class_type: 'SaveImage', inputs: {} },
     };
@@ -1116,6 +1129,7 @@ describe('stage 4 character image generation', () => {
         settings: {
           workflow: JSON.stringify(workflow),
           promptNode: '6',
+          referenceNode: '4',
           promptInput: 'text',
           outputNode: '9',
           timeoutSeconds: 30,
@@ -1134,6 +1148,7 @@ describe('stage 4 character image generation', () => {
       {
         connectionId: comfy.id,
         prompt: 'A ComfyUI portrait of Mara at the observatory door.',
+        referenceAssetId: asset.id,
         negativePrompt: 'blurry',
         chapterId,
       },
@@ -1141,6 +1156,8 @@ describe('stage 4 character image generation', () => {
     const comfyJob = await waitForImageJob(comfyJobStart.job.id);
     expect(comfyJob.status, JSON.stringify(comfyJob)).toBe('completed');
     expect(comfyPromptText).toBe('A ComfyUI portrait of Mara at the observatory door.');
+    expect(referenceUploads).toBe(1);
+    expect(comfyReference).toBe('portraits/reference.png');
 
     const afterComfy = await request<{
       assets: Array<{ jobId: string | null; providerKind: string }>;
@@ -1800,6 +1817,56 @@ function cryptoId(): string {
 }
 
 describe('review regressions', () => {
+  it('keeps chapter selections separate, detects edited sources, and preserves them in portable backups', async () => {
+    const {project} = await request<{project: {id:string}}>('POST','/projects',{title:'Visual <novel>'});
+    const {revision} = await request<{revision:{id:string;chapters:Array<{id:string}>}}>('POST',`/projects/${project.id}/outline/manual`,{});
+    const chapterId=revision.chapters[0].id;
+    await request('PUT',`/projects/${project.id}/outline`,{revisionId:revision.id,chapters:[{id:chapterId,title:'Storm <one>',brief:'Mara reaches the coast.'},{id:'visual-next',title:'Tomorrow',brief:'A new day.'}]});
+    await request('POST',`/projects/${project.id}/outline/${revision.id}/approve`);
+    await request('POST',`/chapters/${chapterId}/append`,{text:'Mara arrives in a navy coat.'});
+    const {character}=await request<{character:{id:string}}>('POST',`/projects/${project.id}/characters`,{name:'Mara <Voss>'});
+    const {connections}=await request<{connections:Array<{id:string;kind:string}>}>('GET','/image-connections');
+    const connection=connections.find(c=>c.kind==='openai-images')!;
+    const makeImage=async()=>{
+      const {job}=await request<{job:{id:string}}>('POST',`/characters/${character.id}/images`,{connectionId:connection.id,chapterId,prompt:'Mara in a navy coat.'});
+      expect((await waitForImageJob(job.id)).status).toBe('completed');
+      const gallery=await request<{assets:import('../shared/types.js').ImageAsset[]}>('GET',`/projects/${project.id}/images`);
+      return gallery.assets.find(a=>a.jobId===job.id)!;
+    };
+    const first=await makeImage(); const second=await makeImage();
+    expect(first.sourceOutdated).toBe(false);
+    await request('POST',`/chapters/${chapterId}/selected-image`,{assetId:first.id});
+    await request('POST',`/chapters/${chapterId}/selected-image`,{assetId:second.id});
+    const selected=await request<{assets:import('../shared/types.js').ImageAsset[]}>('GET',`/projects/${project.id}/images`);
+    expect(selected.assets.filter(a=>a.selectedForChapter).map(a=>a.id)).toEqual([second.id]);
+    const cast=await request<{characters:Array<{portraitAssetId:string|null}>}>('GET',`/projects/${project.id}/characters`);
+    expect(cast.characters[0].portraitAssetId).toBeNull();
+    const invalid=await fetch(`${baseUrl}/api/chapters/visual-next/selected-image`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assetId:second.id})});
+    expect(invalid.status).toBe(400);
+    const exported=await fetch(`${baseUrl}/api/projects/${project.id}/export.html`).then(r=>r.text());
+    expect(exported).toContain('data:image/png;base64,');expect(exported).toContain('Visual &lt;novel&gt;');expect(exported).toContain('Mara &lt;Voss&gt;');
+    const download=await fetch(`${baseUrl}${second.url}?download=1`);expect(download.headers.get('content-disposition')).toContain('mara-voss-storm-one');
+    const backup=await fetch(`${baseUrl}/api/projects/${project.id}/backup`).then(r=>r.arrayBuffer());
+    const restored=await fetch(`${baseUrl}/api/projects/restore`,{method:'POST',headers:{'Content-Type':'application/gzip'},body:backup}).then(r=>r.json()) as {project:{id:string}};
+    const restoredImages=await request<{assets:import('../shared/types.js').ImageAsset[]}>('GET',`/projects/${restored.project.id}/images`);
+    expect(restoredImages.assets.filter(a=>a.selectedForChapter)).toHaveLength(1);
+    expect(restoredImages.assets.every(a=>!a.sourceOutdated)).toBe(true);
+    await request('POST',`/chapters/${chapterId}/append`,{text:'Mara changes into a red coat.'});
+    const stale=await request<{assets:import('../shared/types.js').ImageAsset[]}>('GET',`/projects/${project.id}/images`);expect(stale.assets.every(a=>a.sourceOutdated)).toBe(true);
+    await request('DELETE',`/image-assets/${second.id}`);
+    const remaining=await request<{assets:import('../shared/types.js').ImageAsset[]}>('GET',`/projects/${project.id}/images`);expect(remaining.assets.filter(a=>a.selectedForChapter)).toHaveLength(0);
+  });
+
+  it('resolves project generation overrides and restores inheritance', async () => {
+    const {project}=await request<{project:{id:string}}>('POST','/projects',{title:'Settings sources'});
+    await request('PATCH',`/projects/${project.id}/visual-style`,{visualStyle:'Watercolour on parchment'});
+    await request('PATCH',`/projects/${project.id}/settings`,{generation:{temperature:0.23}});
+    const settings=await request<{generation:{temperature:number};generationSources:Record<string,string>}>('GET',`/projects/${project.id}/settings`);
+    expect(settings.generation.temperature).toBe(0.23);expect(settings.generationSources.temperature).toBe('Project override');
+    await request('DELETE',`/projects/${project.id}/generation-settings`);
+    const inherited=await request<{generationSources:Record<string,string>}>('GET',`/projects/${project.id}/settings`);expect(inherited.generationSources.temperature).toBe('Global default');
+    const {getProjectVisualStyle}=await import('./store/settings.js');expect(getProjectVisualStyle(project.id)).toBe('Watercolour on parchment');
+  });
   it('refuses an incomplete backup when an image file is unreadable', async () => {
     const { project } = await request<{ project: { id: string } }>('POST', '/projects', { title: 'Missing image backup' });
     const { character } = await request<{ character: { id: string } }>('POST', `/projects/${project.id}/characters`, { name: 'Mara' });

@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useMemo, useState } from 'react';
 import type { PromptTemplate, PromptTemplateKind } from '@shared/types';
 import { api } from '../api';
@@ -120,7 +121,7 @@ export function TemplateManager({
   };
 
   const remove = async (template: PromptTemplate) => {
-    if (!window.confirm(`Delete the prompt template "${template.name}"?`)) return;
+    if (!await confirmAction(`Delete the prompt template "${template.name}"?`)) return;
     setError(null);
     try {
       await api.deleteTemplate(template.id);

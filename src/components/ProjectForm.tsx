@@ -171,7 +171,7 @@ export function ProjectForm({
             <SuggestButton field="premise" active={suggesting} onClick={suggest} />
           </div>
         </Field>
-        <div className="form-row">
+        <details className="optional-story"><summary>Genre and tone (optional)</summary><div className="form-row">
           <Field label="Genre" htmlFor="project-genre">
             <div className="with-action">
               <input
@@ -194,11 +194,10 @@ export function ProjectForm({
               <SuggestButton field="tone" active={suggesting} onClick={suggest} />
             </div>
           </Field>
-        </div>
+        </div></details>
       </section>
 
-      <section className="form-section">
-        <h3>Shape and voice</h3>
+      <details className="form-section"><summary>Shape and voice (optional)</summary>
         <div className="form-row">
           <Field label="Point of view" htmlFor="project-pov">
             <div className="with-action">
@@ -296,10 +295,9 @@ export function ProjectForm({
             <SuggestButton field="contentPreferences" active={suggesting} onClick={suggest} />
           </div>
         </Field>
-      </section>
+      </details>
 
-      <section className="form-section">
-        <h3>Standing instructions</h3>
+      <details className="form-section"><summary>Standing instructions (optional)</summary>
         <p className="muted">
           Sent with outlining and prose generation. Use it for rules that should always apply.
         </p>
@@ -315,7 +313,7 @@ export function ProjectForm({
             <SuggestButton field="instructions" active={suggesting} onClick={suggest} />
           </div>
         </Field>
-      </section>
+      </details>
 
       <div className="form-actions">
         <button type="button" className="button button-ghost" onClick={onCancel} disabled={saving}>

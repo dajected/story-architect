@@ -147,6 +147,7 @@ export function RoleEditor({
                 </datalist>
               </div>
               <div className="role-status">
+                {resolved?.model ? <span className="muted small">Effective: {resolved.connectionName} / {resolved.model} · {resolved.source === 'default' ? 'Default model' : resolved.source}</span> : null}
                 {inherited ? (
                   resolved?.connectionId && resolved.model ? (
                     <span className="muted">

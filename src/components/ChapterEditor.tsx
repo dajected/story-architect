@@ -17,6 +17,7 @@ import { useJobStream } from '../hooks';
 import { errorText, formatDate, formatWords } from '../utils';
 import { ContextInspector } from './ContextInspector';
 import { ChapterPortraits } from './ChapterPortraits';
+import { ContinuityReview } from './ContinuityReview';
 import { Markdown } from './Markdown';
 import { RevisionHistory } from './RevisionHistory';
 import { Banner, Modal, Spinner } from './ui';
@@ -76,8 +77,11 @@ export function ChapterEditor({
   const [applyingRewrite, setApplyingRewrite] = useState(false);
   const [savedInstructions, setSavedInstructions] = useState<ProseInstruction[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [imageCount, setImageCount] = useState(0);
+  useEffect(() => {const handler = (event: Event) => setImageCount((event as CustomEvent<number>).detail); window.addEventListener('chapter-image-count',handler);return () => window.removeEventListener('chapter-image-count',handler);}, []);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {const handler = () => setMode(current => current === 'write' ? 'preview' : 'write'); window.addEventListener('toggle-manuscript-preview', handler); return () => window.removeEventListener('toggle-manuscript-preview',handler);}, []);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const initialRevisionRef = useRef(chapter.currentRevisionId);
   const contentRef = useRef(content);
@@ -428,7 +432,7 @@ export function ChapterEditor({
         <div className="editor-title">
           <span className="eyebrow">Chapter {chapter.orderIndex + 1}</span>
           <h1>{chapter.title}</h1>
-          <div className="editor-meta">
+          <div className="editor-meta" role="status" aria-live="polite">
             <span>{formatWords(localWords)} words</span>
             <span>
               {chapter.briefApproved ? 'Brief approved' : 'Brief awaiting approval'}
@@ -438,10 +442,13 @@ export function ChapterEditor({
             {!saving && savedAt && savedContent === content ? (
               <span className="muted">Saved {formatDate(savedAt)}</span>
             ) : null}
+            {!saving && !savedAt && savedContent === content ? <span className="muted">All changes saved</span> : null}
             {!saving && savedContent !== content ? <span className="muted">Unsaved changes</span> : null}
           </div>
         </div>
         <div className="editor-actions">
+          <button className="button button-small" aria-label="Chapter images" onClick={() => window.dispatchEvent(new Event('open-chapter-images'))}>Chapter images · {imageCount}</button>
+          <details className="action-menu"><summary className="button button-small">Chapter tools</summary><div className="action-menu-content">
           {onNavigate ? (
             <>
               <button
@@ -474,6 +481,7 @@ export function ChapterEditor({
           <button className="button button-ghost button-small" onClick={() => setHistoryOpen(true)}>
             History
           </button>
+          </div></details>
           <button className="button button-primary button-small" onClick={() => setShowGenerate((open) => !open)}>
             {showGenerate ? 'Hide generation' : 'Generate chapter'}
           </button>
@@ -538,7 +546,7 @@ export function ChapterEditor({
         </Banner>
       ) : null}
 
-      <div className="brief-card">
+      <details className="brief-card"><summary>Chapter brief and continuity</summary>
         <div className="brief-card-head">
           <span className="eyebrow">Chapter brief</span>
           <span className={`badge ${chapter.briefApproved ? 'badge-success' : 'badge-warning'}`}>
@@ -549,7 +557,7 @@ export function ChapterEditor({
         {memory ? (
           <div className="brief-memory">
             <span className={`badge ${memoryBadgeClass(memory.status)}`}>
-              Memory: {memoryLabel(memory.status)}
+              Continuity: {memoryLabel(memory.status)}
             </span>
             {memory.summary ? (
               <span className="muted small">{clampSummary(memory.summary)}</span>
@@ -563,9 +571,9 @@ export function ChapterEditor({
             </button>
           </div>
         ) : null}
-      </div>
+      </details>
 
-      <ChapterPortraits chapterId={chapter.id} revisionKey={chapter.currentRevisionId} />
+      <ChapterPortraits project={project} chapterId={chapter.id} revisionKey={`${chapter.currentRevisionId}:${chapter.updatedAt}`} />
 
       {showGenerate ? (
         <section className="generate-panel">
@@ -857,12 +865,11 @@ export function ChapterEditor({
             <Banner tone="danger">{reviewStream.job.error}</Banner>
           ) : null}
           <div className="stream-output">
-            {reviewStream.output ||
-              (reviewStream.running ? 'Waiting for the review…' : 'No report yet.')}
+            {reviewStream.running ? (reviewStream.output || 'Waiting for the review…') : reviewStream.output ? <ContinuityReview key={reviewStream.job?.id} jobId={reviewStream.job?.id ?? chapter.id} report={reviewStream.output} content={content} onApply={async (passage,replacement) => {if (content !== savedContent || saving) throw new Error('Wait for the chapter to finish saving before applying a correction.');const updated=await api.applyReviewCorrection(chapter.id,{jobId:reviewStream.job!.id,expectedContent:content,passage,replacement});setContent(updated.content);setSavedContent(updated.content);contentRef.current=updated.content;savedRef.current=updated.content;onChapterUpdated(updated);refreshMemory(true);}} /> : 'No report yet.'}
           </div>
           <div className="stream-foot">
             <span className="muted small">
-              Advisory only. A review never changes the manuscript.
+              Review each suggestion. Only Apply correction changes the manuscript and saves a new revision.
             </span>
           </div>
         </section>
@@ -870,10 +877,10 @@ export function ChapterEditor({
 
       <div className="editor-toolbar">
         <div className="segmented">
-          <button className={mode === 'write' ? 'active' : ''} onClick={() => setMode('write')}>
+          <button aria-pressed={mode === 'write'} className={mode === 'write' ? 'active' : ''} onClick={() => setMode('write')}>
             Write
           </button>
-          <button className={mode === 'preview' ? 'active' : ''} onClick={() => setMode('preview')}>
+          <button aria-pressed={mode === 'preview'} className={mode === 'preview' ? 'active' : ''} onClick={() => setMode('preview')}>
             Preview
           </button>
         </div>
@@ -886,6 +893,7 @@ export function ChapterEditor({
         {mode === 'write' ? (
           <textarea
             ref={textareaRef}
+            aria-label="Chapter manuscript"
             className="manuscript-textarea"
             value={content}
             onChange={(event) => {

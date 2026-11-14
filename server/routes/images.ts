@@ -20,8 +20,11 @@ import {
   deleteImageAsset,
   getImageAssetRow,
   imageFilePath,
+  listProjectImageAssets,
+  selectChapterImage,
 } from '../store/images.js';
-import { setCharacterPortrait } from '../store/characters.js';
+import { setCharacterPortrait, getCharacter } from '../store/characters.js';
+import { getChapter } from '../store/chapters.js';
 import { getProject } from '../store/projects.js';
 import { testImageConnection } from '../image-providers.js';
 import {
@@ -39,6 +42,16 @@ import { AppError } from '../errors.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const imagesRouter = Router();
+
+imagesRouter.get('/projects/:id/images', wrap((req, res) => {
+  const id = stringParam(req.params.id, 'project id');
+  getProject(id);
+  res.json({ assets: listProjectImageAssets(id) });
+}));
+imagesRouter.post('/chapters/:id/selected-image', wrap((req, res) => {
+  const body = parseBody(z.object({assetId: z.string().min(1)}), req.body);
+  res.json({asset: selectChapterImage(stringParam(req.params.id, 'chapter id'), body.assetId)});
+}));
 
 const imageConnectionSchema = z.object({
   name: z.string().min(1, 'Connection name is required.').max(120),
@@ -191,6 +204,9 @@ imagesRouter.post(
         connectionId: z.string().min(1).nullable().optional(),
         templateId: z.string().min(1).nullable().optional(),
         instructions: z.string().max(4000).optional(),
+        moment: z.enum(['start', 'end', 'custom']).optional(),
+        scene: z.string().max(8000).optional(),
+        visualStyle: z.string().max(4000).optional(),
       }),
       req.body,
     );
@@ -200,6 +216,9 @@ imagesRouter.post(
         connectionId: body.connectionId ?? null,
         templateId: body.templateId ?? null,
         instructions: body.instructions,
+        moment: body.moment,
+        scene: body.scene,
+        visualStyle: body.visualStyle,
       }),
     });
   }),
@@ -226,6 +245,7 @@ imagesRouter.post(
           clothing: z.string().max(4000).optional(),
           visualStyle: z.string().max(4000).optional(),
           instructions: z.string().max(4000).optional(),
+          moment: z.enum(['start', 'end', 'custom']).optional(),
         })
         .default({}),
       req.body,
@@ -248,6 +268,10 @@ imagesRouter.post(
         templateId: z.string().nullable().optional(),
         templateName: z.string().max(200).nullable().optional(),
         templateContent: z.string().max(100000).nullable().optional(),
+        moment: z.enum(['start', 'end', 'custom']).optional(),
+        sourceRevisionId: z.string().nullable().optional(),
+        sourceTextHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+        referenceAssetId: z.string().nullable().optional(),
       }),
       req.body,
     );
@@ -300,8 +324,13 @@ imagesRouter.get(
       throw new AppError(404, 'The image file is missing from the data directory.');
     }
     res.setHeader('Content-Type', row.mime_type);
+    if (req.query.download === '1') {
+      const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80);
+      const name = `${slug(getCharacter(row.character_id).name) || 'character'}-${row.chapter_id ? slug(getChapter(row.chapter_id).title) : 'reference'}-${row.id.slice(0,8)}.${row.mime_type.split('/')[1]}`;
+      res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    }
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-    res.sendFile(fileName, (error) => {
+    res.sendFile(fileName, { dotfiles: 'allow' }, (error) => {
       if (error) next(error);
     });
   }),

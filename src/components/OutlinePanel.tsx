@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import type {
   ChapterBatch,
@@ -171,7 +172,7 @@ export function OutlinePanel({
 
   const startBatch = async () => {
     if (
-      !window.confirm(
+      !await confirmAction(
         'Generate every chapter in order? Chapters that already have manuscript text are skipped, and each draft waits for the previous chapter’s summary. This can take a long time.',
       )
     ) {
@@ -263,11 +264,11 @@ export function OutlinePanel({
     setDirty(true);
   };
 
-  const removeChapter = (id: string) => {
+  const removeChapter = async (id: string) => {
     const chapter = chapters.find((entry) => entry.id === id);
     if (!chapter) return;
     if (chapter.brief || chapter.title) {
-      if (!window.confirm(`Remove "${chapter.title}" from the outline?`)) return;
+      if (!await confirmAction(`Remove "${chapter.title}" from the outline?`)) return;
     }
     setChapters((current) => current.filter((entry) => entry.id !== id));
     setDirty(true);
@@ -297,6 +298,13 @@ export function OutlinePanel({
 
   const approve = async () => {
     if (!latest || dirty) return;
+    const existing = await api.listChapters(project.id).catch(() => null);
+    if (!existing) {setError('Could not load existing chapters to preview approval. Try again.'); return;}
+    const added = latest.chapters.filter(c => !existing.some(e => e.id === c.id));
+    const removed = existing.filter(c => !latest.chapters.some(e => e.id === c.id));
+    const moved = latest.chapters.filter((c,i) => existing.some(e => e.id === c.id && e.orderIndex !== i));
+    const changed = latest.chapters.filter(c => existing.some(e => e.id === c.id && (e.brief !== c.brief || e.title !== c.title)));
+    if (!await confirmAction(`Approve ${latest.chapters.length} chapters and unlock AI drafting?\n${added.length} new chapters; ${moved.length} reordered; ${changed.length} titles or briefs changed.\n${removed.length ? `Remove: ${removed.map(c => c.title + (c.wordCount ? ' (contains manuscript text — removal is blocked)' : '')).join(', ')}.` : 'No existing chapters removed.'}\nExisting prose and revision history are retained for chapters that remain.`)) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -328,12 +336,12 @@ export function OutlinePanel({
   };
 
   const startGeneration = async () => {
-    if (dirty && !window.confirm('Generating a new outline will replace your unsaved outline edits. Continue?')) {
+    if (dirty && !await confirmAction('Generating a new outline will replace your unsaved outline edits. Continue?')) {
       return;
     }
     if (
       latest?.status === 'approved' &&
-      !window.confirm(
+      !await confirmAction(
         'Generate a new outline revision? Drafting pauses until you approve the new revision. Existing chapters with text are kept.',
       )
     ) {
@@ -359,9 +367,9 @@ export function OutlinePanel({
     }
   };
 
-  const selectRevision = (id: string) => {
+  const selectRevision = async (id: string) => {
     if (dirty && id !== viewedId) {
-      if (!window.confirm('Discard unsaved outline edits and view another revision?')) return;
+      if (!await confirmAction('Discard unsaved outline edits and view another revision?')) return;
     }
     const revision = outline?.revisions.find((entry) => entry.id === id);
     if (!revision) return;

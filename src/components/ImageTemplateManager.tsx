@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useMemo, useState } from 'react';
 import type { ImagePromptTemplate } from '@shared/types';
 import { IMAGE_TEMPLATE_VARIABLES } from '@shared/types';
@@ -94,7 +95,7 @@ export function ImageTemplateManager({
   };
 
   const remove = async (template: ImagePromptTemplate) => {
-    if (!window.confirm(`Delete the image prompt template "${template.name}"?`)) return;
+    if (!await confirmAction(`Delete the image prompt template "${template.name}"?`)) return;
     setError(null);
     try {
       await api.deleteImageTemplate(template.id);

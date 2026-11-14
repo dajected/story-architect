@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import type { ChapterDetail, ChatMessage, Conversation, GenerationJob, Project } from '@shared/types';
 import { api } from '../api';
@@ -143,7 +144,7 @@ export function AssistantPanel({
   };
 
   const removeConversation = async () => {
-    if (!conversationId || !window.confirm('Delete this conversation? This cannot be undone.')) return;
+    if (!conversationId || !await confirmAction('Delete this conversation? This cannot be undone.')) return;
     try {
       await api.deleteConversation(conversationId);
       const remaining = conversations.filter((conversation) => conversation.id !== conversationId);
@@ -223,7 +224,7 @@ export function AssistantPanel({
   const applyToChapter = async (message: ChatMessage) => {
     if (!chapter) return;
     if (
-      !window.confirm(
+      !await confirmAction(
         `Append this message to the end of Chapter ${chapter.orderIndex + 1}, "${chapter.title}"?`,
       )
     ) {

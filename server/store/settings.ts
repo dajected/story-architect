@@ -102,7 +102,7 @@ function validateGeneration(settings: GenerationSettings): void {
 
 export function getProjectGeneration(projectId: string): GenerationSettings {
   const global = getGlobalSettings();
-  const row = dbGet<SettingRow>('SELECT settings FROM project_settings WHERE project_id = ?', projectId);
+  const row = dbGet<SettingRow>('SELECT settings AS value FROM project_settings WHERE project_id = ?', projectId);
   const project = parseJson<{ generation?: Partial<GenerationSettings> }>(row?.value, {});
   const projectRow = dbGet<ProjectRowForSettings>(
     'SELECT target_chapter_words FROM projects WHERE id = ?',
@@ -120,7 +120,7 @@ export function setProjectSettings(
   input: { generation?: Partial<GenerationSettings> },
 ): GenerationSettings {
   const global = getGlobalSettings();
-  const row = dbGet<SettingRow>('SELECT settings FROM project_settings WHERE project_id = ?', projectId);
+  const row = dbGet<SettingRow>('SELECT settings AS value FROM project_settings WHERE project_id = ?', projectId);
   const current = parseJson<{ generation?: Partial<GenerationSettings> }>(row?.value, {});
   const generation = {
     ...(current.generation ?? {}),
@@ -132,9 +132,33 @@ export function setProjectSettings(
     `INSERT INTO project_settings (project_id, settings) VALUES (?, ?)
      ON CONFLICT(project_id) DO UPDATE SET settings = excluded.settings`,
     projectId,
-    JSON.stringify({ generation }),
+    JSON.stringify({ ...current, generation }),
   );
   return getProjectGeneration(projectId);
+}
+
+export function projectGenerationSources(projectId: string): Record<string,string> {
+  const row = dbGet<SettingRow>('SELECT settings AS value FROM project_settings WHERE project_id = ?', projectId);
+  const settings = parseJson<{generation?: Partial<GenerationSettings>}>(row?.value, {});
+  const story = dbGet<{target_chapter_words:number | null}>('SELECT target_chapter_words FROM projects WHERE id = ?', projectId);
+  return Object.fromEntries(Object.keys(DEFAULT_GENERATION).map(key => [key, settings.generation?.[key as keyof GenerationSettings] !== undefined ? 'Project override' : key === 'targetWords' && story?.target_chapter_words ? 'Story setup' : 'Global default']));
+}
+
+export function resetProjectGeneration(projectId: string): void {
+  const row = dbGet<SettingRow>('SELECT settings AS value FROM project_settings WHERE project_id = ?', projectId);
+  const current = parseJson<Record<string,unknown>>(row?.value, {});
+  delete current.generation;
+  dbRun('UPDATE project_settings SET settings = ? WHERE project_id = ?', JSON.stringify(current), projectId);
+}
+
+export function getProjectVisualStyle(projectId: string): string {
+  const row = dbGet<SettingRow>('SELECT settings AS value FROM project_settings WHERE project_id = ?', projectId);
+  return parseJson<{visualStyle?:string}>(row?.value, {}).visualStyle ?? '';
+}
+export function setProjectVisualStyle(projectId: string, visualStyle: string): void {
+  const row = dbGet<SettingRow>('SELECT settings AS value FROM project_settings WHERE project_id = ?', projectId);
+  const current = parseJson<Record<string,unknown>>(row?.value, {});
+  dbRun('INSERT INTO project_settings (project_id, settings) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET settings = excluded.settings',projectId,JSON.stringify({...current,visualStyle}));
 }
 
 export function getRoleAssignments(scope: 'global' | 'project', scopeId = ''): RoleAssignment[] {

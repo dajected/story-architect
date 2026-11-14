@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { getImageAssetRow, imageFilePath } from './store/images.js';
 import type { ImageConnectionKind, ImageProviderSettings } from '../shared/types.js';
 import { normaliseBaseUrl, ProviderError } from './providers.js';
 
@@ -411,6 +413,19 @@ export async function generateComfyImage(
   params: GenerateImageParams,
 ): Promise<GeneratedImage> {
   const { workflow } = buildComfyWorkflow(connection, params.prompt, params.negativePrompt);
+  if (connection.settings.referenceAssetId && connection.settings.referenceNode) {
+    const asset = getImageAssetRow(connection.settings.referenceAssetId);
+    const form = new FormData();
+    form.append('image', new Blob([new Uint8Array(fs.readFileSync(imageFilePath(asset.file_name)))], {type: asset.mime_type}), `reference-${asset.id}.${asset.mime_type.split('/')[1]}`);
+    const upload = await fetch(comfyEndpoint(connection.baseUrl, '/upload/image'), {
+      method: 'POST', body: form, signal: params.signal,
+      headers: connection.apiKey ? {Authorization: `Bearer ${connection.apiKey}`} : undefined,
+    });
+    await ensureOk(upload, 'ComfyUI reference upload');
+    const uploaded = await upload.json() as {name?: string; subfolder?: string};
+    if (!uploaded.name) throw new ProviderError('ComfyUI did not return a reference filename.');
+    setNodeInput(workflow, connection.settings.referenceNode, connection.settings.referenceInput || 'image', [uploaded.subfolder, uploaded.name].filter(Boolean).join('/'), 'reference image');
+  }
   const timeoutMs = Math.max(10, Math.min(1800, connection.settings.timeoutSeconds ?? 300)) * 1000;
   const signal = AbortSignal.any([params.signal, AbortSignal.timeout(timeoutMs + 180000)]);
 

@@ -1,3 +1,4 @@
+import { confirmAction } from '../components/ui';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
@@ -63,6 +64,8 @@ export function SettingsPage({
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
 }) {
+  const requestedReturn = new URLSearchParams(location.search).get('returnTo');
+  const returnTo = requestedReturn?.startsWith('/projects/') && !requestedReturn.startsWith('//') ? requestedReturn : '/';
   const [tab, setTab] = useState<Tab>(initialTab);
   const [connections, setConnections] = useState<ConnectionPublic[]>([]);
   const [generation, setGeneration] = useState<GenerationSettings | null>(null);
@@ -231,7 +234,7 @@ export function SettingsPage({
 
   const removeConnection = async (connection: ConnectionPublic) => {
     if (
-      !window.confirm(
+      !await confirmAction(
         `Delete the connection "${connection.name}"? Any model roles using it will be cleared.`,
       )
     ) {
@@ -267,40 +270,40 @@ export function SettingsPage({
   return (
     <div className="page settings-page">
       <PageHeader theme={theme} onThemeChange={onThemeChange}>
-        <Link className="button button-ghost button-small" to="/">
-          Library
-        </Link>
+        <Link className="button button-small" to={returnTo}>{returnTo === '/' ? 'Library' : '← Return to project'}</Link>
+
       </PageHeader>
 
       <main className="settings-layout">
         <aside className="settings-nav">
           <p className="eyebrow">Settings</p>
           <nav>
-            <button className={tab === 'connections' ? 'active' : ''} onClick={() => setTab('connections')}>
+            <button aria-pressed={tab === 'connections'} className={tab === 'connections' ? 'active' : ''} onClick={() => setTab('connections')}>
               Connections
             </button>
-            <button className={tab === 'models' ? 'active' : ''} onClick={() => setTab('models')}>
+            <button aria-pressed={tab === 'models'} className={tab === 'models' ? 'active' : ''} onClick={() => setTab('models')}>
               Models &amp; roles
             </button>
-            <button className={tab === 'generation' ? 'active' : ''} onClick={() => setTab('generation')}>
+            <button aria-pressed={tab === 'generation'} className={tab === 'generation' ? 'active' : ''} onClick={() => setTab('generation')}>
               Generation
             </button>
-            <button className={tab === 'prompts' ? 'active' : ''} onClick={() => setTab('prompts')}>
+            <button aria-pressed={tab === 'prompts'} className={tab === 'prompts' ? 'active' : ''} onClick={() => setTab('prompts')}>
               Prompt templates
             </button>
             <button
-              className={tab === 'image-connections' ? 'active' : ''}
+              aria-pressed={tab === 'image-connections'} className={tab === 'image-connections' ? 'active' : ''}
               onClick={() => setTab('image-connections')}
             >
-              Image service
+              Image services
             </button>
             <button
-              className={tab === 'image-prompts' ? 'active' : ''}
+              aria-pressed={tab === 'image-prompts'} className={tab === 'image-prompts' ? 'active' : ''}
               onClick={() => setTab('image-prompts')}
             >
-              Image prompts
+              Image prompt templates
             </button>
           </nav>
+          <p className="settings-note">Chapter images use two tools: a text model builds the prompt, then an image service draws it. Image prompt templates define the shared art direction.</p>
           <p className="settings-note">
             Credentials are encrypted on the server and never returned to the browser.
           </p>
@@ -534,7 +537,7 @@ export function SettingsPage({
                 </select>
               </div>
             </div>
-            <div className="field">
+            <details open={editor.kind === 'openai-compatible'}><summary>Advanced endpoint settings</summary><div className="field">
               <label htmlFor="connection-url">Base URL</label>
               <input
                 id="connection-url"
@@ -548,7 +551,7 @@ export function SettingsPage({
                 <code>/chat/completions</code> and <code>/models</code>.
               </p>
             </div>
-            <div className="field">
+            </details><div className="field">
               <label htmlFor="connection-key">API key</label>
               <input
                 id="connection-key"

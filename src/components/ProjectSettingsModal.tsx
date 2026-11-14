@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useEffect, useState } from 'react';
 import type {
   ConnectionPublic,
@@ -63,6 +64,7 @@ export function ProjectSettingsModal({
   const saveGeneration = async (generation: Partial<GenerationSettings>) => {
     const next = await api.updateProjectSettings(project.id, generation);
     setData((current) => (current ? { ...current, generation: next } : current));
+    setData(await api.getProjectSettings(project.id));
   };
 
   const saveRoles = async (
@@ -85,7 +87,7 @@ export function ProjectSettingsModal({
   };
 
   const archive = async () => {
-    if (!window.confirm(`Archive "${project.title}"? You can restore it from the library later.`)) {
+    if (!await confirmAction(`Archive "${project.title}"? You can restore it from the library later.`)) {
       return;
     }
     setArchiving(true);
@@ -121,7 +123,7 @@ export function ProjectSettingsModal({
           ).map(([id, label]) => (
             <button
               key={id}
-              className={section === id ? 'active' : ''}
+              aria-pressed={section === id} className={section === id ? 'active' : ''}
               onClick={() => setSection(id)}
             >
               {label}
@@ -159,6 +161,7 @@ export function ProjectSettingsModal({
                     </p>
                   </div>
                 </header>
+                <details className="settings-source" open><summary>Effective settings and sources</summary><dl>{Object.entries(data.generation).map(([key,value]) => <div key={key}><dt>{key}</dt><dd>{String(value ?? 'Provider default')} · {data.generationSources?.[key] ?? 'Global default'}</dd></div>)}</dl><button className="button button-small" onClick={async () => {try {await api.resetProjectGeneration(project.id);setData(await api.getProjectSettings(project.id));} catch(err) {setError(errorText(err));}}}>Use inherited generation defaults</button></details>
                 <GenerationSettingsForm value={data.generation} onSave={saveGeneration} compact />
               </div>
             )

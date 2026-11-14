@@ -12,6 +12,7 @@ import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { clampText, errorText, formatDate } from '../utils';
 import { Banner, EmptyState, Modal, Spinner } from './ui';
+import { ImageGallery } from './ImageGallery';
 
 const TERMINAL_IMAGE_STATUSES = new Set<ImageJob['status']>([
   'completed',
@@ -38,8 +39,12 @@ export function ImageStudio({
   onCharacterUpdated,
   onOpenSettings,
   onOpenImageSettings,
+  initialChapterId,
+  initialAsset,
 }: {
   open: boolean;
+  initialChapterId?: string;
+  initialAsset?: ImageAsset | null;
   project: Project;
   character: Character | null;
   onClose: () => void;
@@ -54,6 +59,10 @@ export function ImageStudio({
   const [notice, setNotice] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [chapterId, setChapterId] = useState('');
+  const [moment, setMoment] = useState<'start' | 'end' | 'custom'>('end');
+  const [referenceId, setReferenceId] = useState('');
+  const [sourceRevisionId, setSourceRevisionId] = useState<string | null>(null);
+  const [sourceTextHash, setSourceTextHash] = useState<string | undefined>();
   const [scene, setScene] = useState('');
   const [clothing, setClothing] = useState('');
   const [visualStyle, setVisualStyle] = useState('');
@@ -78,6 +87,7 @@ export function ImageStudio({
           api.listChapters(project.id),
         ]);
         setData(overview);
+        if (showSpinner) setVisualStyle(overview.visualStyle ?? '');
         setChapters(chapterList);
         setImageJob(overview.activeJob);
         setConnectionId((current) =>
@@ -117,11 +127,16 @@ export function ImageStudio({
     }
     setError(null);
     setNotice(null);
-    setPrompt('');
+    setPrompt(initialAsset?.prompt ?? '');
+    setChapterId(initialChapterId ?? initialAsset?.chapterId ?? '');
+    setMoment(initialAsset?.settings.moment ?? 'end');
+    setReferenceId('');
+    setSourceRevisionId(initialAsset?.settings.sourceRevisionId ?? null);
+    setSourceTextHash(initialAsset?.settings.sourceTextHash);
     setNegativePrompt('');
     setScene('');
     setClothing('');
-    setVisualStyle(project.styleNotes);
+    setVisualStyle(localStorage.getItem(`image-style-${project.id}`) ?? project.styleNotes);
     setInstructions('');
     setImageJob(null);
     setData(null);
@@ -189,7 +204,11 @@ export function ImageStudio({
     setNotice(null);
     setBuilding(true);
     try {
+      const detail = chapterId ? await api.getChapter(chapterId) : null;
+      setSourceRevisionId(detail?.currentRevisionId ?? null);
+      if (detail) {const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(detail.content)); setSourceTextHash(Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join(''));}
       const job = await api.expandImagePrompt(character.id, {
+        moment,
         chapterId: chapterId || null,
         templateId: templateId || null,
         scene,
@@ -221,6 +240,10 @@ export function ImageStudio({
     try {
       const job = await api.generateCharacterImage(character.id, {
         connectionId,
+        moment,
+        sourceRevisionId,
+        sourceTextHash,
+        referenceAssetId: referenceId || null,
         prompt,
         negativePrompt,
         chapterId: chapterId || null,
@@ -259,39 +282,6 @@ export function ImageStudio({
       setImageJob(await api.retryImageJob(job.id));
       await load(false);
       setNotice('Image request retried.');
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const setPortrait = async (asset: ImageAsset) => {
-    setBusyId(asset.id);
-    setError(null);
-    try {
-      const updated = await api.setCharacterPortrait(character.id, asset.id);
-      onCharacterUpdated(updated);
-      await load(false);
-      setNotice(`"${character.name}" now uses this image as the portrait.`);
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const removeAsset = async (asset: ImageAsset) => {
-    if (!window.confirm('Delete this image? The saved image file and its gallery entry are removed.')) {
-      return;
-    }
-    setBusyId(asset.id);
-    setError(null);
-    try {
-      await api.deleteImageAsset(asset.id);
-      const overview = await load(false);
-      if (overview) onCharacterUpdated(overview.character);
-      setNotice('Image deleted.');
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -387,10 +377,12 @@ export function ImageStudio({
 
             <section className="image-studio-section">
               <div className="image-studio-section-head">
-                <h3>1. Build the prompt</h3>
+<h3>1. Review the appearance and prompt</h3>
                 <span className="muted small">Template variables stay editable.</span>
               </div>
 
+              <div className="field"><label htmlFor="studio-moment">Story moment</label><select id="studio-moment" value={moment} onChange={e => {setMoment(e.target.value as typeof moment);setPrompt('');setSourceRevisionId(null);setSourceTextHash(undefined);}}><option value="end">End of chapter</option><option value="start">Start of chapter</option><option value="custom">Custom scene</option></select></div>
+              <div className="field"><label htmlFor="studio-reference">Visual identity reference</label><select id="studio-reference" value={referenceId} onChange={e => setReferenceId(e.target.value)} disabled={data.connections.find(c => c.id === connectionId)?.kind !== 'comfyui' || !data.connections.find(c => c.id === connectionId)?.settings.referenceNode}><option value="">Character profile only</option>{data.assets.map(a => <option key={a.id} value={a.id}>{a.id === data.character.portraitAssetId ? 'Main reference portrait' : `Image ${formatDate(a.createdAt)}`}</option>)}</select><p className="field-hint">Image references use a ComfyUI workflow with a configured reference image node. Other services use the written character profile.</p></div>
               <div className="field">
                 <label htmlFor="image-studio-template">Image prompt template</label>
                 <select
@@ -418,6 +410,7 @@ export function ImageStudio({
                     onChange={(event) => {
                       const next = event.target.value;
                       setChapterId(next);
+                      setPrompt(''); setSourceRevisionId(null); setSourceTextHash(undefined);
                       const chapter = chapters.find((entry) => entry.id === next);
                       if (chapter && !scene.trim()) setScene(chapter.brief);
                     }}
@@ -563,7 +556,7 @@ export function ImageStudio({
                 <select
                   id="image-studio-connection"
                   value={connectionId}
-                  onChange={(event) => setConnectionId(event.target.value)}
+                  onChange={(event) => {setConnectionId(event.target.value);setReferenceId('');}}
                 >
                   {data.connections.length === 0 ? <option value="">No connections</option> : null}
                   {data.connections.map((connection) => (
@@ -625,75 +618,7 @@ export function ImageStudio({
                 Build a prompt and generate the first portrait for {character.name}.
               </EmptyState>
             ) : (
-              <div className="image-gallery">
-                {data.assets.map((asset) => (
-                  <figure className="image-card" key={asset.id}>
-                    <a href={asset.url} target="_blank" rel="noreferrer" className="image-card-image">
-                      <img src={asset.url} alt={`${character.name} generated image`} loading="lazy" />
-                    </a>
-                    <figcaption>
-                      <div className="image-card-meta">
-                        <span className="muted small">{formatDate(asset.createdAt)}</span>
-                        {asset.templateName ? <span className="badge">{asset.templateName}</span> : null}
-                        {data.character.portraitAssetId === asset.id ? (
-                          <span className="badge badge-accent">Portrait</span>
-                        ) : null}
-                      </div>
-                      <details className="image-prompt-details">
-                        <summary>Prompt and settings</summary>
-                        <p>{asset.prompt}</p>
-                        {asset.negativePrompt ? (
-                          <p className="muted small">Avoid: {asset.negativePrompt}</p>
-                        ) : null}
-                        <p className="muted small">
-                          {asset.connectionName ?? 'Image connection'} ·{' '}
-                          {asset.providerKind === 'comfyui'
-                            ? `ComfyUI workflow, prompt node ${asset.settings.promptNode ?? '?'}`
-                            : `Images API, ${asset.settings.model ?? 'provider default model'}${
-                                asset.settings.size ? `, ${asset.settings.size}` : ''
-                              }`}{' '}
-                          · {asset.mimeType}
-                        </p>
-                      </details>
-                      <div className="row-actions">
-                        {data.character.portraitAssetId !== asset.id ? (
-                          <button
-                            className="button button-small"
-                            onClick={() => void setPortrait(asset)}
-                            disabled={busyId === asset.id}
-                          >
-                            {busyId === asset.id ? <Spinner /> : null}
-                            Set as portrait
-                          </button>
-                        ) : (
-                          <button
-                            className="button button-ghost button-small"
-                            onClick={async () => {
-                              try {
-                                const updated = await api.setCharacterPortrait(character.id, null);
-                                onCharacterUpdated(updated);
-                                await load(false);
-                                setNotice('Portrait cleared.');
-                              } catch (err) {
-                                setError(errorText(err));
-                              }
-                            }}
-                          >
-                            Clear portrait
-                          </button>
-                        )}
-                        <button
-                          className="button button-danger-ghost button-small"
-                          onClick={() => void removeAsset(asset)}
-                          disabled={busyId === asset.id}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
+              <ImageGallery assets={data.assets} characters={[data.character]} chapters={chapters} onChanged={async () => {const overview=await load(false);if(overview)onCharacterUpdated(overview.character);}} onRegenerate={asset => {setPrompt(asset.prompt); setChapterId(asset.chapterId ?? ''); setSourceRevisionId(asset.settings.sourceRevisionId ?? null); setSourceTextHash(asset.settings.sourceTextHash); setNotice('Prompt loaded. Review it above, then generate an alternative.');}} />
             )}
 
             {data.jobs.length > 0 ? (

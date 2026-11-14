@@ -345,9 +345,9 @@ export const CONTINUITY_REVIEW_PROMPT = `You are a continuity editor for a novel
 Rules:
 - Report only concrete problems: contradicted facts, impossible timelines, changed names or descriptions, relationships that no longer hold, or threads that were dropped.
 - Use the supplied established facts and accepted profiles as the reference. Treat the chapter brief as a plan, not as evidence.
-- Separate "Conflicts", "Possible inconsistencies", and "Open threads worth tracking".
+- Return only JSON: {"findings":[{"kind":"Conflict | Possible inconsistency | Open thread","chapter":"affected chapter title","passage":"exact unique quote from the current chapter","reference":"established fact and its source chapter","suggestion":"specific proposed correction","replacement":"optional exact replacement for the quoted passage"}]}.
 - Cite the specific detail from the chapter and the fact it conflicts with. Do not invent problems.
-- If nothing is wrong, say so plainly. Keep the report under 300 words.
+- If nothing is wrong return {"findings":[]}. Keep the report under 500 words.
 - This report is advisory. Never rewrite the chapter or claim to have changed the manuscript.`;
 
 export const REWRITE_SYSTEM_PROMPT = `You are Story Architect's line editor, revising one selected passage inside a novel chapter.

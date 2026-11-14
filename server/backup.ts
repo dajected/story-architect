@@ -172,6 +172,7 @@ interface ImageTemplateRow {
 }
 
 interface ImageAssetRow {
+  selected_for_chapter?: number;
   id: string;
   project_id: string;
   character_id: string;
@@ -903,6 +904,9 @@ export function restoreProjectBackup(body: Buffer): RestoreResult {
         if (!characterId) {
           throw badRequest('The backup contains an image without its character.');
         }
+        const imageSettings = JSON.parse(asset.settings || '{}') as Record<string, unknown>;
+        imageSettings.sourceRevisionId = mapRevision(typeof imageSettings.sourceRevisionId === 'string' ? imageSettings.sourceRevisionId : null);
+        imageSettings.referenceAssetId = mapAsset(typeof imageSettings.referenceAssetId === 'string' ? imageSettings.referenceAssetId : null);
         dbRun(
           `INSERT INTO image_assets (
              id, project_id, character_id, chapter_id, job_id, file_name, mime_type, prompt,
@@ -922,9 +926,12 @@ export function restoreProjectBackup(body: Buffer): RestoreResult {
           asset.template_content ?? '',
           asset.connection_name,
           asset.provider_kind,
-          asset.settings ?? '{}',
+          JSON.stringify(imageSettings),
           asset.created_at,
         );
+        if (asset.selected_for_chapter === 1 && asset.chapter_id) {
+          dbRun('UPDATE image_assets SET selected_for_chapter = 1 WHERE id = ?', newAssetId);
+        }
       }
 
       for (const portrait of portraitUpdates) {

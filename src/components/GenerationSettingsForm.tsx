@@ -93,7 +93,7 @@ export function GenerationSettingsForm({
       <p className="field-hint">
         {CONTEXT_PRESETS.find((preset) => preset.id === contextPreset)?.description}
       </p>
-      <div className="form-row three">
+      <details><summary>Advanced model sampling</summary><div className="form-row three">
         <div className="field">
           <label htmlFor="temperature">Temperature</label>
           <input
@@ -146,7 +146,7 @@ export function GenerationSettingsForm({
       <p className="field-hint">
         Empty sampling fields are omitted from the provider request so the model's own defaults apply.
       </p>
-      <div className="form-actions inline">
+      </details><div className="form-actions inline">
         <button type="submit" className="button button-primary button-small" disabled={saving}>
           {saving ? <Spinner /> : null}
           {saving ? 'Saving…' : 'Save generation settings'}

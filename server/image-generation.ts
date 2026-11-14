@@ -46,6 +46,7 @@ import {
   createImageAsset,
   createImageJob,
   getImageJob,
+  getImageAsset,
   imagesRoot,
   listChapterImageAssets,
   listCharacterImageAssets,
@@ -62,7 +63,7 @@ import {
   updatePortraitRequest,
 } from './store/portrait-requests.js';
 import { getProject } from './store/projects.js';
-import { getProjectGeneration, resolveRoles, resolveTaskModel } from './store/settings.js';
+import { getProjectGeneration, resolveRoles, resolveTaskModel, getProjectVisualStyle } from './store/settings.js';
 import { streamChat } from './providers.js';
 import type { ProviderConnection } from './providers.js';
 
@@ -82,6 +83,7 @@ function textLimit(value: string | undefined | null, max: number, label: string)
 }
 
 export interface ImagePromptExpansionInput {
+  moment?: 'start' | 'end' | 'custom';
   chapterId?: string | null;
   templateId?: string | null;
   scene?: string;
@@ -114,13 +116,13 @@ export function startImagePromptGeneration(
   const sceneText = [
     scene || chapter?.brief || '(No scene was specified; use an evocative portrait setting.)',
     chapterText.trim()
-      ? `Current chapter excerpt for visual reference:\n${trimText(chapterText, 4000)}`
+      ? `Depict the ${input.moment ?? 'end'} of the chapter. Use only appearance established at that point.\n${input.moment === 'start' ? chapterText.slice(0, 4000) : chapterExcerpt(chapterText, 7000)}`
       : '',
   ]
     .filter(Boolean)
     .join('\n\n');
 
-  const visualStyleValue = visualStyle || project.styleNotes || 'cinematic character portrait';
+  const visualStyleValue = visualStyle || getProjectVisualStyle(project.id) || 'cinematic character portrait';
   const clothingValue = clothing || '(not specified)';
   const rendered = renderTemplate(
     template.content,
@@ -247,6 +249,10 @@ export function startImagePromptGeneration(
 }
 
 export interface ImageGenerationInput {
+  moment?: 'start' | 'end' | 'custom';
+  sourceRevisionId?: string | null;
+  sourceTextHash?: string;
+  referenceAssetId?: string | null;
   connectionId: string;
   prompt: string;
   negativePrompt?: string;
@@ -257,6 +263,9 @@ export interface ImageGenerationInput {
 }
 
 export interface ChapterPortraitInput {
+  moment?: 'start' | 'end' | 'custom';
+  scene?: string;
+  visualStyle?: string;
   characterId: string;
   connectionId?: string | null;
   templateId?: string | null;
@@ -416,9 +425,10 @@ export function startChapterPortraitRequest(
   const template = resolveImagePromptTemplate(project.id, input.templateId ?? null);
   const instructions = textLimit(input.instructions, 4000, 'Instructions');
   const chapterNumber = chapter.orderIndex + 1;
-  const changes = chapterEndChanges(chapterId, character.id);
+  const moment = input.moment ?? 'end';
+  const changes = moment === 'end' ? chapterEndChanges(chapterId, character.id) : [];
   const sceneText = [
-    `A portrait of ${character.name} at the very end of Chapter ${chapterNumber}, "${chapter.title}", after all of the events in that chapter.`,
+    `A portrait of ${character.name} at the ${moment === 'end' ? 'very end' : moment} of Chapter ${chapterNumber}, "${chapter.title}". ${input.scene ?? ''}`,
     '',
     changes.length > 0
       ? `Physical changes and circumstances established by this chapter:\n${changes
@@ -426,18 +436,18 @@ export function startChapterPortraitRequest(
           .join('\n')}`
       : 'No explicit physical changes were recorded. Use the established appearance, plus anything the closing text clearly shows.',
     '',
-    `Closing passage of the chapter (for clothing, injuries, condition, setting, mood and lighting):\n${chapterExcerpt(text)}`,
+    `Chapter reference (for clothing, injuries, condition, setting, mood and lighting):\n${moment === 'start' ? text.slice(0, 7000) : chapterExcerpt(text)}`,
     '',
-    `Show ${character.name} exactly as they appear at this point: the end of the chapter, not the start.`,
+    `Show ${character.name} exactly as they appear at the requested moment. Do not anticipate later events.`,
   ].join('\n');
 
   const clothingValue =
     'As established by the character profile and the chapter. Change, damage or remove clothing only where the chapter supports it.';
   const visualStyleValue =
-    project.styleNotes || 'cinematic character portrait, painterly book-cover illustration';
+    input.visualStyle || getProjectVisualStyle(project.id) || 'cinematic character portrait, painterly book-cover illustration';
   const additionalInstructionsValue =
     instructions ||
-    'A solo character portrait with a clear view of the face and upper body. No other people, captions or text. The image must reflect the character’s end-of-chapter state.';
+    `A solo character portrait with a clear view of the face and upper body. No other people, captions or text. Reflect the requested ${moment} moment.`;
 
   const rendered = renderTemplate(
     template.content,
@@ -526,6 +536,9 @@ export function startChapterPortraitRequest(
     templateName: template.name,
     templateContent: template.content,
     temperature: settings.temperature ?? 0.7,
+    sourceRevisionId: chapter.currentRevisionId,
+    sourceTextHash: crypto.createHash('sha256').update(text).digest('hex'),
+    moment,
   });
 
   return request;
@@ -542,6 +555,9 @@ async function runChapterPortrait(
     templateName: string;
     templateContent: string;
     temperature: number;
+    sourceRevisionId: string | null;
+    sourceTextHash: string;
+    moment: 'start' | 'end' | 'custom';
   },
 ): Promise<void> {
   const runtime = createRuntime(job.id);
@@ -553,7 +569,7 @@ async function runChapterPortrait(
         {
           role: 'user',
           content:
-            'Write the final image prompt for this character at the end of the chapter now. Return only the prompt.',
+            'Write the final image prompt for this character at the requested moment now. Return only the prompt.',
         },
       ],
       temperature: options.temperature,
@@ -606,7 +622,7 @@ async function runChapterPortrait(
       templateId: options.templateId,
       templateName: options.templateName,
       templateContent: options.templateContent,
-      settings: imageConnection.settings,
+      settings: {...imageConnection.settings, sourceRevisionId: options.sourceRevisionId, sourceTextHash: options.sourceTextHash, moment: options.moment},
     });
     updatePortraitRequest(request.id, {
       status: 'imaging',
@@ -705,6 +721,8 @@ export function chapterPortraitOverview(chapterId: string): ChapterPortraitOverv
 
   return {
     chapterId,
+    requests,
+    visualStyle: getProjectVisualStyle(chapter.projectId),
     chapterTitle: chapter.title,
     chapterNumber: chapter.orderIndex + 1,
     hasText: Boolean(text.trim()),
@@ -741,6 +759,12 @@ export function startImageGeneration(
     throw conflict('An image is already being generated for this character.');
   }
 
+  if (input.referenceAssetId) {
+    const reference = getImageAsset(input.referenceAssetId);
+    if (reference.characterId !== characterId) throw badRequest('Choose a reference image of this character.');
+    if (connection.kind !== 'comfyui' || !connection.settings.referenceNode) throw badRequest('Reference images require a ComfyUI reference node configured in Image services.');
+  }
+
   const job = createImageJob({
     projectId: project.id,
     characterId,
@@ -752,7 +776,7 @@ export function startImageGeneration(
     templateId: input.templateId ?? null,
     templateName: input.templateName ?? null,
     templateContent: input.templateContent ?? '',
-    settings: connection.settings,
+    settings: {...connection.settings, sourceRevisionId: input.sourceRevisionId ?? (input.chapterId ? getChapter(input.chapterId).currentRevisionId : null), sourceTextHash: input.sourceTextHash ?? (input.chapterId ? crypto.createHash('sha256').update(currentChapterText(input.chapterId)).digest('hex') : undefined), moment: input.moment ?? 'end', referenceAssetId: input.referenceAssetId ?? null},
   });
   void runImageJob(job.id);
   return job;
@@ -770,7 +794,8 @@ async function runImageJob(jobId: string): Promise<void> {
   });
 
   try {
-    const connection = getProviderImageConnection(initial.connectionId);
+    const savedConnection = getProviderImageConnection(initial.connectionId);
+    const connection = {...savedConnection, settings: initial.settings};
     const result = await generateImage(connection, {
       prompt: initial.prompt,
       negativePrompt: initial.negativePrompt,
@@ -882,7 +907,7 @@ export function retryImageJob(jobId: string): ImageJob {
     templateId: original.templateId,
     templateName: original.templateName,
     templateContent: original.templateContent,
-    settings: connection.settings,
+    settings: {...connection.settings, sourceRevisionId: original.settings.sourceRevisionId, sourceTextHash: original.settings.sourceTextHash, moment: original.settings.moment, referenceAssetId: original.settings.referenceAssetId},
   });
   void runImageJob(retry.id);
   return retry;
@@ -894,6 +919,7 @@ export function characterImageOverview(characterId: string): CharacterImageOverv
   const imagePromptRole: ResolvedRole | null =
     roles.find((role) => role.role === 'image_prompt') ?? null;
   return {
+    visualStyle: getProjectVisualStyle(character.projectId),
     character,
     assets: listCharacterImageAssets(character.id),
     jobs: listCharacterImageJobs(character.id),

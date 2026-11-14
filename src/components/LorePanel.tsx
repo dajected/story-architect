@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   LoreEntry,
@@ -124,7 +125,7 @@ export function LorePanel({ project }: { project: Project }) {
     const message = book.owned
       ? `Delete "${book.name}" and all of its entries? This cannot be undone.`
       : `Detach "${book.name}" from this novel? The shared book and its entries stay in the library.`;
-    if (!window.confirm(message)) return;
+    if (!await confirmAction(message)) return;
     setBusy(true);
     setError(null);
     try {
@@ -172,7 +173,7 @@ export function LorePanel({ project }: { project: Project }) {
   };
 
   const removeEntry = async (entry: LoreEntry) => {
-    if (!window.confirm(`Delete the lore entry "${entry.title}"?`)) return;
+    if (!await confirmAction(`Delete the lore entry "${entry.title}"?`)) return;
     setBusy(true);
     setError(null);
     try {
@@ -277,7 +278,7 @@ export function LorePanel({ project }: { project: Project }) {
   };
 
   const removeInstruction = async (instruction: ProseInstruction) => {
-    if (!window.confirm(`Delete the saved instruction "${instruction.name}"?`)) return;
+    if (!await confirmAction(`Delete the saved instruction "${instruction.name}"?`)) return;
     setBusy(true);
     try {
       await api.deleteProseInstruction(project.id, instruction.id);

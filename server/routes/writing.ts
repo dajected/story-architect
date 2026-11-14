@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { badRequest } from '../errors.js';
 import { z } from 'zod';
 import type { ContextInfo, ContextPreset } from '../../shared/types.js';
 import {
@@ -11,6 +12,7 @@ import {
   useRevision,
   appendToChapter,
   getChapterRow,
+  applyRewriteToChapter,
 } from '../store/chapters.js';
 import { getProject } from '../store/projects.js';
 import {
@@ -27,6 +29,18 @@ import type { JobEvent } from '../jobs.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const writingRouter = Router();
+
+writingRouter.post('/chapters/:id/review-correction', wrap((req,res) => {
+  const id=stringParam(req.params.id,'chapter id');
+  const body=parseBody(z.object({jobId:z.string(),expectedContent:z.string().max(2000000),passage:z.string().min(1).max(200000),replacement:z.string().min(1).max(200000)}),req.body);
+  const job=getJob(body.jobId);
+  if(job.chapterId!==id || job.kind!=='review' || job.status!=='completed') throw badRequest('Choose a completed review of this chapter.');
+  const chapter=getChapterDetail(id);
+  if(chapter.content!==body.expectedContent) {res.status(409).json({error:'The manuscript changed. Refresh and review the correction again.'});return;}
+  const start=chapter.content.indexOf(body.passage);
+  if(start<0 || chapter.content.indexOf(body.passage,start+1)>=0) {res.status(409).json({error:'The passage changed or occurs more than once. Edit it manually.'});return;}
+  res.json(applyRewriteToChapter({chapterId:id,start,end:start+body.passage.length,selection:body.passage,replacement:body.replacement,jobId:job.id}));
+}));
 
 function buildContextInfo(chapterId: string, requestedPreset?: unknown): ContextInfo {
   const chapterRow = getChapterRow(chapterId);

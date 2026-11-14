@@ -74,6 +74,7 @@ export function ChapterSidebar({
               const index = chapters.indexOf(chapter);
               return (
                 <button
+                  aria-current={selectedId === chapter.id ? 'page' : undefined}
                   key={chapter.id}
                   ref={selectedId === chapter.id ? selectedRef : null}
                   className={`chapter-item ${selectedId === chapter.id ? 'selected' : ''}`}

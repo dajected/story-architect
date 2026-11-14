@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useState } from 'react';
 import type {
   ImageConnectionInput,
@@ -153,7 +154,7 @@ export function ImageConnectionManager({
   };
 
   const remove = async (connection: ImageConnectionPublic) => {
-    if (!window.confirm(`Delete the image connection "${connection.name}"?`)) return;
+    if (!await confirmAction(`Delete the image connection "${connection.name}"?`)) return;
     setError(null);
     try {
       await api.deleteImageConnection(connection.id);
@@ -385,6 +386,10 @@ export function ImageConnectionManager({
             ) : (
               <>
                 <h3 className="form-section-title">ComfyUI workflow</h3>
+                <div className="form-row">
+                  <div className="field"><label htmlFor="reference-node">Reference image node ID (optional)</label><input id="reference-node" value={editor.settings.referenceNode ?? ''} onChange={event => setSetting('referenceNode', event.target.value)} placeholder="LoadImage node ID" /></div>
+                  <div className="field"><label htmlFor="reference-input">Reference image field</label><input id="reference-input" value={editor.settings.referenceInput ?? ''} onChange={event => setSetting('referenceInput', event.target.value)} placeholder="image" /></div>
+                </div>
                 <div className="field">
                   <label htmlFor="image-workflow">Workflow JSON (API format)</label>
                   <textarea

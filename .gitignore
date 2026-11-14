@@ -5,3 +5,6 @@ data
 .env
 *.log
 .DS_Store
+work/ui-test-data/
+work/test-results/
+playwright-report/

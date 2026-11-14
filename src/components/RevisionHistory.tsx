@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useEffect, useState } from 'react';
 import type { ChapterDetail, ChapterRevision } from '@shared/types';
 import { api } from '../api';
@@ -81,7 +82,7 @@ export function RevisionHistory({
   const restore = async () => {
     if (!revision) return;
     if (
-      !window.confirm(
+      !await confirmAction(
         `Restore version ${revision.version} as a new revision? The current text stays in history.`,
       )
     ) {

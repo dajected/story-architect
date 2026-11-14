@@ -21,6 +21,7 @@ import type {
   ImageConnectionInput,
   ImageConnectionPublic,
   ImageJob,
+  ImageAsset,
   ImagePromptTemplate,
   ImageProviderSettings,
   LoreEntry,
@@ -97,6 +98,7 @@ export interface SettingsResponse {
 }
 
 export interface ProjectSettingsResponse {
+  generationSources?: Record<string,string>;
   generation: GenerationSettings;
   roles: ResolvedRole[];
   templates: PromptTemplate[];
@@ -137,6 +139,7 @@ export interface LorebookInput {
 }
 
 export interface ImagePromptExpansionInput {
+  moment?: 'start' | 'end' | 'custom';
   chapterId?: string | null;
   templateId?: string | null;
   scene?: string;
@@ -146,6 +149,10 @@ export interface ImagePromptExpansionInput {
 }
 
 export interface ImageGenerationInput {
+  moment?: 'start' | 'end' | 'custom';
+  sourceRevisionId?: string | null;
+  sourceTextHash?: string;
+  referenceAssetId?: string | null;
   connectionId: string;
   prompt: string;
   negativePrompt?: string;
@@ -156,6 +163,9 @@ export interface ImageGenerationInput {
 }
 
 export interface ChapterPortraitInput {
+  moment?: 'start' | 'end' | 'custom';
+  scene?: string;
+  visualStyle?: string;
   characterId: string;
   connectionId?: string | null;
   templateId?: string | null;
@@ -588,6 +598,11 @@ export const api = {
     ).then((r) => r.template),
 
   // Character images
+  applyReviewCorrection: (id:string,input:{jobId:string;expectedContent:string;passage:string;replacement:string}) => request<{chapter:ChapterDetail}>('POST',`/chapters/${id}/review-correction`,input).then(r=>r.chapter),
+  saveVisualStyle: (id:string,visualStyle:string) => request<void>('PATCH', `/projects/${id}/visual-style`, {visualStyle}),
+  resetProjectGeneration: (id: string) => request<void>('DELETE', `/projects/${id}/generation-settings`),
+  listProjectImages: (id: string) => request<{assets: ImageAsset[]}>('GET', `/projects/${id}/images`).then(r => r.assets),
+  selectChapterImage: (chapterId: string, assetId: string) => request<{asset: ImageAsset}>('POST', `/chapters/${chapterId}/selected-image`, {assetId}).then(r => r.asset),
   getCharacterImages: (characterId: string) =>
     request<CharacterImageOverview>('GET', `/characters/${characterId}/images`),
   getChapterPortraits: (chapterId: string) =>

@@ -21,8 +21,10 @@ import { OutlinePanel } from '../components/OutlinePanel';
 import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 import { Banner, EmptyState, Spinner } from '../components/ui';
 import { errorText, formatWords } from '../utils';
+import { ProjectImagesPanel } from '../components/ProjectImagesPanel';
+import { useWritingPreferences, WritingPreferences, PanelResize } from '../components/WorkspaceControls';
 
-type Tab = 'manuscript' | 'outline' | 'cast' | 'memory' | 'lore' | 'activity';
+type Tab = 'manuscript' | 'outline' | 'cast' | 'memory' | 'lore' | 'activity' | 'images';
 
 export function WorkspacePage({
   theme,
@@ -44,10 +46,36 @@ export function WorkspacePage({
   const [error, setError] = useState<string | null>(null);
   const [chapterError, setChapterError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('outline');
-  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1120);
+  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1180 && localStorage.getItem('assistant-open') !== 'false');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const initialised = useRef(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [chaptersVisible, setChaptersVisible] = useState(() => localStorage.getItem('chapters-visible') !== 'false');
+  const {preferences, setPreferences, style} = useWritingPreferences();
+  const setPreference = (key: string, value: number) => setPreferences(current => ({...current, [key]:value}));
+  useEffect(() => {if (project) localStorage.setItem(`workspace-tab-${projectId}`, tab);}, [tab, project, projectId]);
+  useEffect(() => {localStorage.setItem('assistant-open', String(assistantOpen));}, [assistantOpen]);
+  useEffect(() => {localStorage.setItem('chapters-visible', String(chaptersVisible));}, [chaptersVisible]);
+  useEffect(() => {const handler = () => {if (window.innerWidth <= 1180) setAssistantOpen(false);};window.addEventListener('resize', handler);return () => window.removeEventListener('resize',handler);}, []);
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"]')) return;
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
+        if (event.key.toLowerCase() === 'f') {event.preventDefault(); setFocusMode(v => !v);}
+        if (event.key.toLowerCase() === 'a') {event.preventDefault(); setAssistantOpen(v => !v);}
+        if (event.key.toLowerCase() === 'p') {event.preventDefault(); window.dispatchEvent(new Event('toggle-manuscript-preview'));}
+      }
+      if (event.key === 'Escape') setFocusMode(false);
+      if (event.altKey && ['ArrowLeft','ArrowRight'].includes(event.key)) {
+        const index = chapters.findIndex(c => c.id === selectedId);
+        const target = chapters[index + (event.key === 'ArrowRight' ? 1 : -1)];
+        if (target) {event.preventDefault(); setTab('manuscript'); void selectChapter(target.id);}
+      }
+    };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown',handler);
+  }, [chapters, selectedId]);
 
   const selectChapter = useCallback(async (id: string | null) => {
     setSelectedId(id);
@@ -92,7 +120,8 @@ export function WorkspacePage({
 
       if (!initialised.current) {
         initialised.current = true;
-        setTab(loadedProject.outlineStatus === 'approved' ? 'manuscript' : 'outline');
+        const storedTab = new URLSearchParams(location.search).get('tab') ?? localStorage.getItem(`workspace-tab-${projectId}`);
+        setTab(storedTab && ['manuscript','outline','cast','memory','lore','activity','images'].includes(storedTab) ? storedTab as Tab : loadedProject.outlineStatus === 'approved' ? 'manuscript' : 'outline');
       }
 
       const stored = localStorage.getItem(`story-architect-chapter-${projectId}`);
@@ -223,7 +252,7 @@ export function WorkspacePage({
   };
 
   return (
-    <div className="workspace-shell">
+    <div className={`workspace-shell ${focusMode ? 'focus-mode' : ''} ${chaptersVisible ? '' : 'chapters-collapsed'}`} style={style}>
       <header className="workspace-topbar">
         <div className="workspace-topbar-left">
           <Brand small />
@@ -240,32 +269,33 @@ export function WorkspacePage({
           </div>
         </div>
 
-        <div className="workspace-tabs">
-          <button className={tab === 'manuscript' ? 'active' : ''} onClick={() => setTab('manuscript')}>
+        <nav className="workspace-tabs" aria-label="Workspace sections">
+          <button aria-pressed={tab === 'manuscript'} className={tab === 'manuscript' ? 'active' : ''} onClick={() => setTab('manuscript')}>
             Manuscript
           </button>
-          <button className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
+          <button aria-pressed={tab === 'outline'} className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
             Outline
           </button>
-          <button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>
+          <button aria-pressed={tab === 'cast'} className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>
             Cast
           </button>
-          <button className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
+          <button aria-pressed={tab === 'memory'} className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
             Continuity
           </button>
-          <button className={tab === 'lore' ? 'active' : ''} onClick={() => setTab('lore')}>
+          <button aria-pressed={tab === 'lore'} className={tab === 'lore' ? 'active' : ''} onClick={() => setTab('lore')}>
             Lore
           </button>
           <button
-            className={tab === 'activity' ? 'active' : ''}
+            aria-pressed={tab === 'activity'} className={tab === 'activity' ? 'active' : ''}
             onClick={() => setTab('activity')}
           >
             Activity
           </button>
-        </div>
+          <button aria-pressed={tab === 'images'} className={tab === 'images' ? 'active' : ''} onClick={() => setTab('images')}>Images</button>
+        </nav>
 
         <div className="workspace-actions">
-          <button className="button button-ghost button-small sidebar-toggle" onClick={() => setSidebarOpen(true)}>
+          <button className="button button-ghost button-small sidebar-toggle" aria-expanded={sidebarOpen || chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
             Chapters
           </button>
           <button
@@ -274,6 +304,10 @@ export function WorkspacePage({
           >
             Assistant
           </button>
+          <button className="button button-small" aria-pressed={focusMode} onClick={() => {setTab('manuscript'); setFocusMode(v => !v);}}>{focusMode ? 'Exit focus' : 'Focus'}</button>
+          <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content">
+          <button className="button button-small" onClick={() => setPreferencesOpen(true)}>Writing preferences & shortcuts</button>
+          <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export with chapter images</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export
           </a>
@@ -282,6 +316,7 @@ export function WorkspacePage({
             Project settings
           </button>
           <ThemeToggle theme={theme} onChange={onThemeChange} />
+          </div></details>
         </div>
       </header>
 
@@ -319,11 +354,12 @@ export function WorkspacePage({
         <ChapterSidebar
           chapters={chapters}
           selectedId={selectedId}
-          onSelect={(id) => void selectChapter(id)}
+          onSelect={(id) => {setTab('manuscript'); void selectChapter(id);}}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
 
+        {chaptersVisible ? <PanelResize label="Resize chapter panel" value={preferences.sidebarWidth!} min={200} max={400} onChange={value => setPreference('sidebarWidth',value)} /> : null}
         <div className="workspace-center">
           <div className={`workspace-view ${tab === 'outline' ? '' : 'is-hidden'}`}>
             <div className="workspace-scroll">
@@ -340,7 +376,7 @@ export function WorkspacePage({
           </div>
 
           <div className={`workspace-view ${tab === 'manuscript' ? '' : 'is-hidden'}`}>
-            {project.outlineStatus !== 'approved' ? (
+            {project.outlineStatus !== 'approved' && !chapters.length ? (
               <div className="workspace-scroll">
                 <EmptyState
                   title="Drafting is locked until the outline is approved"
@@ -396,6 +432,7 @@ export function WorkspacePage({
             )}
           </div>
 
+          {tab === 'images' ? <div className="workspace-view"><div className="workspace-scroll"><ProjectImagesPanel project={project} /></div></div> : null}
           {tab === 'cast' ? (
             <div className="workspace-view">
               <div className="workspace-scroll">
@@ -438,6 +475,7 @@ export function WorkspacePage({
           ) : null}
         </div>
 
+        {assistantOpen ? <PanelResize label="Resize Assistant" value={preferences.assistantWidth!} min={280} max={600} reverse onChange={value => setPreference('assistantWidth',value)} /> : null}
         <AssistantPanel
           project={project}
           chapter={chapterDetail}
@@ -448,6 +486,7 @@ export function WorkspacePage({
         />
       </div>
 
+      <WritingPreferences open={preferencesOpen} onClose={() => setPreferencesOpen(false)} preferences={preferences} onChange={setPreference} />
       <ProjectSettingsModal
         open={settingsOpen}
         project={project}

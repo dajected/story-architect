@@ -1,3 +1,4 @@
+import { confirmAction } from '../components/ui';
 import { BackupButton } from '../components/BackupButton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -16,6 +17,9 @@ export function LibraryPage({
   onThemeChange: (theme: Theme) => void;
 }) {
   const navigate = useNavigate();
+  const [sort, setSort] = useState(() => localStorage.getItem('library-sort') ?? 'recent');
+  const [compact, setCompact] = useState(() => localStorage.getItem('library-compact') === 'true');
+  const [ready, setReady] = useState({text:false, image:false});
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +44,7 @@ export function LibraryPage({
 
   useEffect(() => {
     void load();
+    void Promise.all([api.getSettings(), api.listImageConnections()]).then(([settings, images]) => setReady({text: settings.roles.some(r => r.role === 'default' && Boolean(r.model && r.connectionId)), image: images.length > 0})).catch(() => {});
   }, [load]);
 
   const active = projects.filter((project) => project.status === 'active');
@@ -56,13 +61,14 @@ export function LibraryPage({
     );
   }, [active, search]);
 
+  const sorted = [...filtered].sort((a,b) => sort === 'title' ? a.title.localeCompare(b.title) : sort === 'words' ? b.currentWords - a.currentWords : b.updatedAt.localeCompare(a.updatedAt));
   const create = async (input: Record<string, unknown>) => {
     const project = await api.createProject(input);
     navigate(`/projects/${project.id}`);
   };
 
   const archive = async (project: Project) => {
-    if (!window.confirm(`Archive "${project.title}"? You can restore it later from the library.`)) {
+    if (!await confirmAction(`Archive "${project.title}"? You can restore it later from the library.`)) {
       return;
     }
     try {
@@ -132,6 +138,7 @@ export function LibraryPage({
 
         {restoreNotice ? <Banner tone="success">{restoreNotice}</Banner> : null}
 
+        {!ready.text || !ready.image ? <section className="setup-checklist"><h2>Your writing tools</h2><div className="row-actions"><Link className="button button-small" to="/settings?tab=connections">{ready.text ? '✓' : '1.'} Connect a text model</Link><span className="muted small">2. Create a novel → approve its outline → draft a chapter</span><Link className="button button-small" to="/settings?tab=image-connections">{ready.image ? '✓' : '3.'} Set up chapter images (optional)</Link></div><p className="muted small">You can plan and write manually before connecting models.</p></section> : null}
         <div className="library-toolbar">
           <input
             className="search-input"
@@ -142,6 +149,8 @@ export function LibraryPage({
             aria-label="Search projects"
           />
           <div className="library-toolbar-right">
+            <select aria-label="Sort novels" value={sort} onChange={e => {setSort(e.target.value); localStorage.setItem('library-sort',e.target.value);}}><option value="recent">Recently updated</option><option value="title">Title</option><option value="words">Word count</option></select>
+            <button className="button button-small" aria-pressed={compact} onClick={() => {setCompact(v => !v);localStorage.setItem('library-compact',String(!compact));}}>{compact ? 'Card view' : 'Compact view'}</button>
             <span className="muted">
               {active.length} active {active.length === 1 ? 'novel' : 'novels'}
             </span>
@@ -193,8 +202,8 @@ export function LibraryPage({
               : 'Try a different phrase or clear the search.'}
           </EmptyState>
         ) : (
-          <div className="project-grid">
-            {filtered.map((project) => (
+          <div className={`project-grid ${compact ? 'compact-library' : ''}`}>
+            {sorted.map((project) => (
               <ProjectCard key={project.id} project={project} onArchive={archive} />
             ))}
           </div>
@@ -203,7 +212,7 @@ export function LibraryPage({
         {showArchived && archived.length > 0 ? (
           <section className="archive-section">
             <h2>Archive</h2>
-            <div className="project-grid">
+            <div className={`project-grid ${compact ? 'compact-library' : ''}`}>
               {archived.map((project) => (
                 <ProjectCard key={project.id} project={project} onRestore={restore} />
               ))}
@@ -229,7 +238,7 @@ export function LibraryPage({
         open={creating}
         onClose={() => setCreating(false)}
         title="Create a novel"
-        subtitle="Answer as much or as little as you like. Blank fields are left to the AI."
+        subtitle="Start with a title and premise. You can refine story preferences at any time."
         width="wide"
       >
         <ProjectForm submitLabel="Create project" onSubmit={create} onCancel={() => setCreating(false)} />
@@ -249,7 +258,7 @@ function ProjectCard({
 }) {
   return (
     <article className="project-card">
-      <Link className="project-card-main" to={`/projects/${project.id}`}>
+      <Link className="project-card-main" to={`/projects/${project.id}${project.currentWords > 0 ? '?tab=manuscript' : ''}`}>
         <div className="project-card-top">
           <span className={`badge ${outlineBadgeClass(project.outlineStatus)}`}>
             {outlineLabel(project.outlineStatus)}
@@ -268,8 +277,8 @@ function ProjectCard({
         </div>
       </Link>
       <div className="project-card-actions">
-        <Link className="button button-ghost button-small" to={`/projects/${project.id}`}>
-          Open
+        <Link className="button button-ghost button-small" to={`/projects/${project.id}${project.currentWords > 0 ? '?tab=manuscript' : ''}`}>
+          {project.currentWords > 0 ? 'Continue writing →' : project.outlineStatus === 'draft' ? 'Review outline →' : 'Open project →'}
         </Link>
         <BackupButton projectId={project.id} label="Back up" />
         {onArchive ? (

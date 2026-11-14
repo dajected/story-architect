@@ -46,6 +46,8 @@ const COMFY_KEYS: Array<keyof ImageProviderSettings> = [
   'seedNode',
   'seedInput',
   'outputNode',
+  'referenceNode',
+  'referenceInput',
   'timeoutSeconds',
 ];
 
@@ -203,9 +205,9 @@ export function sanitizeImageSettings(
       continue;
     }
     if (typeof value === 'string') {
-      if (value.trim()) output[key] = value.trim();
+      if (value.trim()) (output as Record<string, unknown>)[key] = value.trim();
     } else if (typeof value === 'number' && Number.isFinite(value)) {
-      output[key] = String(value);
+      (output as Record<string, unknown>)[key] = String(value);
     }
   }
 

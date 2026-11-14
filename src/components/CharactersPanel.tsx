@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate } from '../utils';
 import { ImageStudio } from './ImageStudio';
+import { ProjectImagesPanel } from './ProjectImagesPanel';
 import { Banner, EmptyState, Modal, Spinner } from './ui';
 
 const EMPTY_FORM: CharacterInput = {
@@ -28,6 +29,9 @@ export function CharactersPanel({
   onOpenSettings: () => void;
   onOpenImageSettings: () => void;
 }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [timeline, setTimeline] = useState<Character | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -155,9 +159,10 @@ export function CharactersPanel({
     setStudioCharacter((current) => (current?.id === updated.id ? updated : current));
   };
 
-  const active = characters.filter((character) => character.status === 'active');
-  const proposed = characters.filter((character) => character.status === 'proposed');
-  const archived = characters.filter((character) => character.status === 'archived');
+  const visible = characters.filter(c => `${c.name} ${c.role} ${c.identity}`.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'missing' ? !c.portraitUrl : c.status === filter)));
+  const active = visible.filter((character) => character.status === 'active');
+  const proposed = visible.filter((character) => character.status === 'proposed');
+  const archived = visible.filter((character) => character.status === 'archived');
 
   if (loading) {
     return (
@@ -203,6 +208,7 @@ export function CharactersPanel({
           </button>
         </div>
       </header>
+        <div className="row-actions"><input type="search" aria-label="Search cast" placeholder="Find a character" value={query} onChange={e => setQuery(e.target.value)} /><select aria-label="Filter cast" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All characters</option><option value="active">Accepted</option><option value="proposed">Proposed</option><option value="archived">Archived</option><option value="missing">Missing portrait</option></select></div>
 
       {error ? (
         <Banner
@@ -242,7 +248,7 @@ export function CharactersPanel({
       ) : null}
 
       {proposed.length > 0 ? (
-        <section className="cast-section">
+      <section className="cast-section">
           <div className="cast-section-head">
             <h2>Proposed cast</h2>
             <span className="badge badge-warning">{proposed.length} awaiting review</span>
@@ -259,7 +265,7 @@ export function CharactersPanel({
                   </div>
                   <span className="badge badge-warning">Proposal</span>
                 </div>
-                <ProfileSummary character={character} />
+                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => setTimeline(character)}>Appearance timeline</button>
                 <div className="row-actions">
                   <button
                     className="button button-primary button-small"
@@ -337,7 +343,7 @@ export function CharactersPanel({
                   </div>
                   <span className="badge badge-accent">Active</span>
                 </div>
-                <ProfileSummary character={character} />
+                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => setTimeline(character)}>Appearance timeline</button>
                 <div className="row-actions">
                   <button
                     className="button button-small"
@@ -366,7 +372,7 @@ export function CharactersPanel({
       </section>
 
       {archived.length > 0 ? (
-        <section className="cast-section">
+      <section className="cast-section">
           <div className="cast-section-head">
             <h2>Archived</h2>
             <span className="muted small">{archived.length}</span>
@@ -487,6 +493,7 @@ export function CharactersPanel({
         ) : null}
       </Modal>
 
+      <Modal open={Boolean(timeline)} onClose={() => {setTimeline(null);void load();}} title={timeline?.name ?? 'Appearance timeline'} width="wide">{timeline ? <ProjectImagesPanel project={project} character={timeline} /> : null}</Modal>
       <ImageStudio
         open={studioCharacter !== null}
         project={project}

@@ -9,7 +9,8 @@ import type {
   ImageProviderSettings,
 } from '../../shared/types.js';
 import { config } from '../config.js';
-import { dbAll, dbGet, dbRun, timestamp } from '../db.js';
+import { dbAll, dbGet, dbRun, timestamp, transaction } from '../db.js';
+import { badRequest } from '../errors.js';
 import { notFound } from '../errors.js';
 
 export interface ImageJobRow {
@@ -35,6 +36,7 @@ export interface ImageJobRow {
 }
 
 export interface ImageAssetRow {
+  selected_for_chapter?: number;
   id: string;
   project_id: string;
   character_id: string;
@@ -91,7 +93,11 @@ function mapJob(row: ImageJobRow): ImageJob {
 }
 
 function mapAsset(row: ImageAssetRow): ImageAsset {
+  const settings = parseSettings(row.settings);
+  const chapter = row.chapter_id ? dbGet<{current_revision_id: string | null; content: string | null}>('SELECT c.current_revision_id, r.content FROM chapters c LEFT JOIN chapter_revisions r ON r.id = c.current_revision_id WHERE c.id = ?', row.chapter_id) : null;
   return {
+    selectedForChapter: row.selected_for_chapter === 1,
+    sourceOutdated: Boolean(row.chapter_id && (!settings.sourceRevisionId || settings.sourceRevisionId !== chapter?.current_revision_id || !settings.sourceTextHash || settings.sourceTextHash !== crypto.createHash('sha256').update(chapter?.content ?? '').digest('hex'))),
     id: row.id,
     projectId: row.project_id,
     characterId: row.character_id,
@@ -301,6 +307,20 @@ export function listChapterImageAssets(chapterId: string): ImageAsset[] {
     chapterId,
   );
   return rows.map(mapAsset);
+}
+
+export function listProjectImageAssets(projectId: string): ImageAsset[] {
+  return dbAll<ImageAssetRow>('SELECT * FROM image_assets WHERE project_id = ? ORDER BY created_at DESC', projectId).map(mapAsset);
+}
+
+export function selectChapterImage(chapterId: string, assetId: string): ImageAsset {
+  const asset = getImageAssetRow(assetId);
+  if (asset.chapter_id !== chapterId) throw badRequest('Choose an image from this chapter.');
+  transaction(() => {
+    dbRun('UPDATE image_assets SET selected_for_chapter = 0 WHERE chapter_id = ? AND character_id = ?', chapterId, asset.character_id);
+    dbRun('UPDATE image_assets SET selected_for_chapter = 1 WHERE id = ?', assetId);
+  });
+  return getImageAsset(assetId);
 }
 
 export function deleteImageAsset(id: string): void {

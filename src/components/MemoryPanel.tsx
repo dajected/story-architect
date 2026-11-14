@@ -1,3 +1,4 @@
+import { confirmAction } from './ui';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type {
   ChapterMemory,
@@ -144,7 +145,7 @@ export function MemoryPanel({
   };
 
   const deleteFact = async (id: string) => {
-    if (!window.confirm('Delete this fact permanently? Superseding keeps a record in the project.')) {
+    if (!await confirmAction('Delete this fact permanently? Superseding keeps a record in the project.')) {
       return;
     }
     setBusy(true);
@@ -246,7 +247,7 @@ export function MemoryPanel({
       <header className="panel-header memory-header">
         <div>
           <p className="eyebrow">Continuity</p>
-          <h1>Memory review</h1>
+          <h1>Continuity</h1>
           <p className="lede">
             Summaries and facts are derived from accepted manuscript revisions. Proposed canon
             only enters later prompts after you accept it.
@@ -453,7 +454,7 @@ export function MemoryPanel({
         <section className="memory-section facts-section">
           <div className="facts-column">
             <div className="facts-head">
-              <h2>Proposed canon</h2>
+              <h2>Proposed facts</h2>
               <span className="badge badge-warning">{proposed.length}</span>
             </div>
             {proposed.length === 0 ? (

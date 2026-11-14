@@ -8,7 +8,7 @@ export const ROLE_LABELS: Record<TaskRole, string> = {
   default: 'Default model',
   outline: 'Outline',
   prose: 'Prose',
-  memory: 'Memory',
+  memory: 'Continuity',
   image_prompt: 'Image prompt',
 };
 
@@ -579,6 +579,13 @@ export const IMAGE_CONNECTION_LABELS: Record<ImageConnectionKind, string> = {
 
 /** Per-connection image provider settings. Image credentials stay separate from text connections. */
 export interface ImageProviderSettings {
+  sourceRevisionId?: string | null;
+  sourceTextHash?: string;
+  moment?: 'start' | 'end' | 'custom';
+  referenceAssetId?: string | null;
+  /** ComfyUI LoadImage node to receive a reference uploaded to /upload/image. */
+  referenceNode?: string;
+  referenceInput?: string;
   /** OpenAI Images model such as gpt-image-1 or dall-e-3. */
   model?: string;
   size?: string;
@@ -669,6 +676,8 @@ export interface ImageJob {
 }
 
 export interface ImageAsset {
+  selectedForChapter: boolean;
+  sourceOutdated: boolean;
   id: string;
   projectId: string;
   characterId: string;
@@ -689,6 +698,7 @@ export interface ImageAsset {
 }
 
 export interface CharacterImageOverview {
+  visualStyle?: string;
   character: Character;
   assets: ImageAsset[];
   jobs: ImageJob[];
@@ -790,6 +800,8 @@ export interface ChapterPortraitCandidate {
 }
 
 export interface ChapterPortraitOverview {
+  requests: ChapterPortraitRequest[];
+  visualStyle?: string;
   chapterId: string;
   chapterTitle: string;
   chapterNumber: number;

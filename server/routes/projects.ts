@@ -7,15 +7,43 @@ import {
   setProjectStatus,
   updateProject,
 } from '../store/projects.js';
-import { getProjectGeneration, resolveRoles, setProjectSettings } from '../store/settings.js';
+import { getProjectGeneration, resolveRoles, setProjectSettings, projectGenerationSources, resetProjectGeneration, setProjectVisualStyle } from '../store/settings.js';
 import { currentChapterText, listChapters } from '../store/chapters.js';
 import { listPromptTemplates } from '../store/templates.js';
 import { projectGenerationHistory } from '../jobs.js';
 import { createProjectBackup, restoreProjectBackup } from '../backup.js';
 import { badRequest } from '../errors.js';
+import fs from 'node:fs';
+import { listProjectImageAssets, getImageAssetRow, imageFilePath } from '../store/images.js';
+import { listCharacters } from '../store/characters.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const projectsRouter = Router();
+
+projectsRouter.patch('/projects/:id/visual-style', wrap((req,res) => {
+  const id=stringParam(req.params.id,'project id');getProject(id);
+  const {visualStyle}=parseBody(z.object({visualStyle:z.string().max(4000)}),req.body);
+  setProjectVisualStyle(id,visualStyle);res.status(204).end();
+}));
+
+projectsRouter.get('/projects/:id/export.html', wrap((req, res) => {
+  const id = stringParam(req.params.id, 'project id');
+  const project = getProject(id);
+  const assets = listProjectImageAssets(id).filter(a => a.selectedForChapter);
+  const cast = listCharacters(id);
+  const escape = (text: string) => text.replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]!));
+  const sections = listChapters(id).map(chapter => {
+    const images = assets.filter(a => a.chapterId === chapter.id).map(asset => {
+      const file = imageFilePath(getImageAssetRow(asset.id).file_name);
+      if (!fs.existsSync(file)) return '';
+      return `<figure><img src="data:${asset.mimeType};base64,${fs.readFileSync(file).toString('base64')}" alt="${escape(cast.find(c => c.id === asset.characterId)?.name ?? 'Character')}"><figcaption>${escape(cast.find(c => c.id === asset.characterId)?.name ?? 'Character')}${asset.sourceOutdated ? ' — based on an earlier draft' : ''}</figcaption></figure>`;
+    }).join('');
+    return `<section><h2>Chapter ${chapter.orderIndex + 1}: ${escape(chapter.title)}</h2><div class="portraits">${images}</div><pre>${escape(currentChapterText(chapter.id))}</pre></section>`;
+  }).join('');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${slugify(project.title) || 'manuscript'}-illustrated.html"`);
+  res.send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(project.title)}</title><style>body{max-width:850px;margin:40px auto;padding:20px;font:18px/1.8 Georgia,serif;color:#252525;background:#fff}pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}.portraits{display:flex;flex-wrap:wrap;gap:20px}figure{margin:0;max-width:220px}img{max-width:100%;height:auto}figcaption{font:14px system-ui}section{break-before:page}</style><h1>${escape(project.title)}</h1><p>${escape(project.premise)}</p>${sections}</html>`);
+}));
 
 const projectFields = {
   title: z.string().max(240).optional(),
@@ -84,11 +112,17 @@ projectsRouter.get(
     getProject(id);
     res.json({
       generation: getProjectGeneration(id),
+      generationSources: projectGenerationSources(id),
       roles: resolveRoles(id),
       templates: listPromptTemplates(id),
     });
   }),
 );
+
+projectsRouter.delete('/projects/:id/generation-settings', wrap((req, res) => {
+  const id = stringParam(req.params.id, 'project id'); getProject(id); resetProjectGeneration(id);
+  res.json({generation: getProjectGeneration(id), generationSources: projectGenerationSources(id)});
+}));
 
 projectsRouter.patch(
   '/projects/:id/settings',
