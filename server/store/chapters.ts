@@ -9,7 +9,7 @@ import type {
 } from '../../shared/types.js';
 import { countWords } from '../../shared/utils.js';
 import { dbAll, dbGet, dbRun, timestamp, transaction } from '../db.js';
-import { badRequest, notFound } from '../errors.js';
+import { badRequest, conflict, notFound } from '../errors.js';
 import { touchProject } from './projects.js';
 import { latestChapterJob } from '../jobs.js';
 
@@ -295,8 +295,57 @@ export function restoreRevision(revisionId: string): { revision: ChapterRevision
   return { revision, chapter: getChapterDetail(chapter.id) };
 }
 
-export function appendToChapter(chapterId: string, text: string): ChapterDetail {
-  const addition = text.trim();
+/**
+ * Replace a selected passage with an accepted rewrite. The result is a new
+ * immutable revision, so the pre-rewrite working copy remains in history.
+ */
+export function applyRewriteToChapter(params: {
+  chapterId: string;
+  start: number;
+  end: number;
+  selection: string;
+  replacement: string;
+  jobId: string;
+}): { revision: ChapterRevision; chapter: ChapterDetail } {
+  const replacement = params.replacement.trim();
+  if (!replacement) throw badRequest('The rewrite is empty.');
+  const text = currentChapterText(params.chapterId);
+  if (!text.trim()) throw badRequest('This chapter has no text to rewrite.');
+  const start = Math.max(0, Math.floor(params.start));
+  const end = Math.max(start, Math.floor(params.end));
+  if (end > text.length) {
+    throw conflict('The chapter text changed since this passage was selected. Select it again.');
+  }
+  const currentSelection = text.slice(start, end);
+  if (currentSelection !== params.selection) {
+    throw conflict('The chapter text changed since this passage was selected. Select it again.');
+  }
+  if (!currentSelection.trim()) throw badRequest('Select some text to rewrite.');
+
+  const updatedText = `${text.slice(0, start)}${replacement}${text.slice(end)}`;
+  const chapter = getChapterRow(params.chapterId);
+  const revision = transaction(() => {
+    const created = insertRevision({
+      chapterId: params.chapterId,
+      content: updatedText,
+      source: 'rewrite',
+      editable: false,
+      jobId: params.jobId,
+    });
+    dbRun(
+      'UPDATE chapters SET current_revision_id = ?, status = ?, updated_at = ? WHERE id = ?',
+      created.id,
+      'drafted',
+      timestamp(),
+      params.chapterId,
+    );
+    touchProject(chapter.project_id);
+    return created;
+  });
+  return { revision, chapter: getChapterDetail(params.chapterId) };
+}
+
+export function appendToChapter(chapterId: string, text: string): ChapterDetail {  const addition = text.trim();
   if (!addition) throw badRequest('There is no text to insert.');
   if (addition.length > 1_000_000) throw badRequest('That text is too large to insert.');
   const current = currentChapterText(chapterId);

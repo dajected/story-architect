@@ -4,6 +4,8 @@ import type {
   ConnectionKind,
   ConnectionPublic,
   GenerationSettings,
+  ImageConnectionPublic,
+  ImagePromptTemplate,
   PromptTemplate,
   ResolvedRole,
   TaskRole,
@@ -11,12 +13,20 @@ import type {
 import { api } from '../api';
 import { PageHeader, type Theme } from '../components/Chrome';
 import { GenerationSettingsForm } from '../components/GenerationSettingsForm';
+import { ImageConnectionManager } from '../components/ImageConnectionManager';
+import { ImageTemplateManager } from '../components/ImageTemplateManager';
 import { RoleEditor } from '../components/RoleEditor';
 import { TemplateManager } from '../components/TemplateManager';
 import { Banner, Modal, Spinner } from '../components/ui';
 import { errorText, formatDate } from '../utils';
 
-type Tab = 'connections' | 'models' | 'generation' | 'prompts';
+type Tab =
+  | 'connections'
+  | 'models'
+  | 'generation'
+  | 'prompts'
+  | 'image-connections'
+  | 'image-prompts';
 
 interface ConnectionEditor {
   id?: string;
@@ -32,6 +42,20 @@ const DEFAULT_BASE: Record<ConnectionKind, string> = {
   'openai-compatible': 'http://localhost:1234/v1',
 };
 
+const SETTINGS_TABS: Tab[] = [
+  'connections',
+  'models',
+  'generation',
+  'prompts',
+  'image-connections',
+  'image-prompts',
+];
+
+function initialTab(): Tab {
+  const requested = new URLSearchParams(window.location.search).get('tab');
+  return requested && SETTINGS_TABS.includes(requested as Tab) ? (requested as Tab) : 'connections';
+}
+
 export function SettingsPage({
   theme,
   onThemeChange,
@@ -39,11 +63,13 @@ export function SettingsPage({
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
 }) {
-  const [tab, setTab] = useState<Tab>('connections');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [connections, setConnections] = useState<ConnectionPublic[]>([]);
   const [generation, setGeneration] = useState<GenerationSettings | null>(null);
   const [roles, setRoles] = useState<ResolvedRole[]>([]);
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [imageConnections, setImageConnections] = useState<ImageConnectionPublic[]>([]);
+  const [imageTemplates, setImageTemplates] = useState<ImagePromptTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -56,15 +82,20 @@ export function SettingsPage({
 
   const load = useCallback(async () => {
     try {
-      const [connectionList, settings, templateList] = await Promise.all([
-        api.listConnections(),
-        api.getSettings(),
-        api.listTemplates(),
-      ]);
+      const [connectionList, settings, templateList, imageConnectionList, imageTemplateList] =
+        await Promise.all([
+          api.listConnections(),
+          api.getSettings(),
+          api.listTemplates(),
+          api.listImageConnections(),
+          api.listImageTemplates(),
+        ]);
       setConnections(connectionList);
       setGeneration(settings.generation);
       setRoles(settings.roles);
       setTemplates(templateList);
+      setImageConnections(imageConnectionList);
+      setImageTemplates(imageTemplateList);
       setError(null);
     } catch (err) {
       setError(errorText(err));
@@ -90,6 +121,14 @@ export function SettingsPage({
 
   const refreshTemplates = async () => {
     setTemplates(await api.listTemplates());
+  };
+
+  const refreshImageConnections = async () => {
+    setImageConnections(await api.listImageConnections());
+  };
+
+  const refreshImageTemplates = async () => {
+    setImageTemplates(await api.listImageTemplates());
   };
 
   const openNew = () => {
@@ -249,6 +288,18 @@ export function SettingsPage({
             <button className={tab === 'prompts' ? 'active' : ''} onClick={() => setTab('prompts')}>
               Prompt templates
             </button>
+            <button
+              className={tab === 'image-connections' ? 'active' : ''}
+              onClick={() => setTab('image-connections')}
+            >
+              Image service
+            </button>
+            <button
+              className={tab === 'image-prompts' ? 'active' : ''}
+              onClick={() => setTab('image-prompts')}
+            >
+              Image prompts
+            </button>
           </nav>
           <p className="settings-note">
             Credentials are encrypted on the server and never returned to the browser.
@@ -356,8 +407,9 @@ export function SettingsPage({
                 <div>
                   <h1>Models &amp; roles</h1>
                   <p className="muted">
-                    Route each task to a model. Unassigned task roles inherit the default model.
-                    Memory and image prompt roles are ready for later stages.
+                    Route each task to a model. Unassigned task roles inherit the default model. The
+                    image-prompt role expands character image templates but never chooses the image
+                    service.
                   </p>
                 </div>
               </header>
@@ -398,6 +450,32 @@ export function SettingsPage({
                 </div>
               </header>
               <TemplateManager templates={templates} projectId={null} onChanged={refreshTemplates} />
+            </div>
+          ) : null}
+
+          {tab === 'image-connections' ? (
+            <ImageConnectionManager
+              connections={imageConnections}
+              onChanged={refreshImageConnections}
+            />
+          ) : null}
+
+          {tab === 'image-prompts' ? (
+            <div className="settings-panel">
+              <header className="panel-header">
+                <div>
+                  <h1>Image prompts</h1>
+                  <p className="muted">
+                    Templates for character portraits. Their placeholders are expanded by the
+                    image-prompt model before an image service is called.
+                  </p>
+                </div>
+              </header>
+              <ImageTemplateManager
+                templates={imageTemplates}
+                projectId={null}
+                onChanged={refreshImageTemplates}
+              />
             </div>
           ) : null}
         </section>

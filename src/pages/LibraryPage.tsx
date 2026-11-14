@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BackupButton } from '../components/BackupButton';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Project } from '@shared/types';
 import { api } from '../api';
@@ -21,6 +22,9 @@ export function LibraryPage({
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState('');
+  const [restoring, setRestoring] = useState(false);
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
+  const backupInput = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +83,26 @@ export function LibraryPage({
     }
   };
 
+  const restoreBackup = async (file: File) => {
+    setRestoring(true);
+    setError(null);
+    setRestoreNotice(null);
+    try {
+      const result = await api.restoreProject(file);
+      setRestoreNotice(
+        `Restored "${result.project.title}" with ${result.stats.chapters} chapters, ` +
+          `${result.stats.revisions} revisions, ${result.stats.characters} characters, and ` +
+          `${result.stats.images} images. Open it from the library.`,
+      );
+      await load();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setRestoring(false);
+      if (backupInput.current) backupInput.current.value = '';
+    }
+  };
+
   return (
     <div className="page library-page">
       <PageHeader theme={theme} onThemeChange={onThemeChange}>
@@ -106,6 +130,8 @@ export function LibraryPage({
           </Banner>
         ) : null}
 
+        {restoreNotice ? <Banner tone="success">{restoreNotice}</Banner> : null}
+
         <div className="library-toolbar">
           <input
             className="search-input"
@@ -119,6 +145,23 @@ export function LibraryPage({
             <span className="muted">
               {active.length} active {active.length === 1 ? 'novel' : 'novels'}
             </span>
+            <input
+              ref={backupInput}
+              type="file"
+              accept=".gz,.tar.gz,application/gzip"
+              className="visually-hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void restoreBackup(file);
+              }}
+            />
+            <button
+              className="button button-ghost button-small"
+              onClick={() => backupInput.current?.click()}
+              disabled={restoring}
+            >
+              {restoring ? <Spinner label="Restoring…" /> : 'Restore backup'}
+            </button>
             {archived.length > 0 ? (
               <button
                 className="button button-ghost button-small"
@@ -228,6 +271,7 @@ function ProjectCard({
         <Link className="button button-ghost button-small" to={`/projects/${project.id}`}>
           Open
         </Link>
+        <BackupButton projectId={project.id} label="Back up" />
         {onArchive ? (
           <button className="button button-ghost button-small" onClick={() => onArchive(project)}>
             Archive

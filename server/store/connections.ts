@@ -168,3 +168,33 @@ export function modelContextLength(connectionId: string, model: string): number 
     return null;
   }
 }
+
+function pricePerToken(value: string | undefined): number | null {
+  if (value === undefined || value === '') return null;
+  const price = Number(value);
+  return Number.isFinite(price) && price >= 0 ? price : null;
+}
+
+/**
+ * Cached per-token pricing for a model. OpenRouter publishes prices on its
+ * model list; most OpenAI-compatible endpoints do not, so this is usually null.
+ */
+export function modelPricing(
+  connectionId: string,
+  model: string,
+): { promptPerToken: number; completionPerToken: number; currency: 'USD' } | null {
+  try {
+    const row = getConnectionRow(connectionId);
+    const entry = parseModels(row.models).find((option) => option.id === model);
+    const prompt = pricePerToken(entry?.promptPrice);
+    const completion = pricePerToken(entry?.completionPrice);
+    if (prompt === null && completion === null) return null;
+    return {
+      promptPerToken: prompt ?? 0,
+      completionPerToken: completion ?? 0,
+      currency: 'USD',
+    };
+  } catch {
+    return null;
+  }
+}

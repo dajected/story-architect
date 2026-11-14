@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChapterDetail,
   ChapterMemory,
@@ -7,8 +7,10 @@ import type {
   GenerationJob,
   GenerationSettings,
   Project,
+  ProseInstruction,
+  RewriteAction,
 } from '@shared/types';
-import { CONTEXT_PRESETS } from '@shared/types';
+import { CONTEXT_PRESETS, REWRITE_ACTION_LABELS } from '@shared/types';
 import { countWords } from '@shared/utils';
 import { api, type ContextInfo } from '../api';
 import { useJobStream } from '../hooks';
@@ -26,6 +28,9 @@ export function ChapterEditor({
   onRefreshChapter,
   onOpenOutline,
   onOpenMemory,
+  onNavigate,
+  canNavigatePrevious,
+  canNavigateNext,
 }: {
   project: Project;
   chapter: ChapterDetail;
@@ -34,6 +39,9 @@ export function ChapterEditor({
   onRefreshChapter: () => Promise<void>;
   onOpenOutline: () => void;
   onOpenMemory: () => void;
+  onNavigate?: (direction: 'previous' | 'next') => void;
+  canNavigatePrevious?: boolean;
+  canNavigateNext?: boolean;
 }) {
   const [content, setContent] = useState(chapter.content);
   const [savedContent, setSavedContent] = useState(chapter.content);
@@ -58,6 +66,17 @@ export function ChapterEditor({
   const [recBusy, setRecBusy] = useState(false);
   const [previewRevision, setPreviewRevision] = useState<ChapterRevisionMeta | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{ start: number; end: number; text: string } | null>(
+    null,
+  );
+  const [rewriteInstruction, setRewriteInstruction] = useState('');
+  const [proposal, setProposal] = useState('');
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyingRewrite, setApplyingRewrite] = useState(false);
+  const [savedInstructions, setSavedInstructions] = useState<ProseInstruction[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const initialRevisionRef = useRef(chapter.currentRevisionId);
   const contentRef = useRef(content);
@@ -66,8 +85,11 @@ export function ChapterEditor({
   savedRef.current = savedContent;
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const [saveNonce, setSaveNonce] = useState(0);
+  const memoryRefreshTimer = useRef<number | null>(null);
 
-  const localWords = useMemo(() => countWords(content), [content]);
+  // Keep the live word count deferred so a long chapter never blocks typing.
+  const deferredContent = useDeferredValue(content);
+  const localWords = useMemo(() => countWords(deferredContent), [deferredContent]);
 
   useEffect(() => {
     if (chapter.currentRevisionId !== initialRevisionRef.current) {
@@ -77,6 +99,7 @@ export function ChapterEditor({
       if (contentRef.current === savedRef.current) {
         setContent(chapter.content);
         setSavedContent(chapter.content);
+        setSelection(null);
       }
     }
   }, [chapter.currentRevisionId, chapter.content]);
@@ -115,18 +138,43 @@ export function ChapterEditor({
     };
   }, [chapter.id]);
 
-  const refreshMemory = () => {
-    api
-      .getChapterMemory(chapter.id)
-      .then((result) => setMemory(result.memory))
-      .catch(() => undefined);
+  // Autosave fires often. Coalesce the derived memory refresh into one trailing
+  // read so a long typing session stays responsive but stale status still updates.
+  const refreshMemory = (force = false) => {
+    if (memoryRefreshTimer.current !== null) {
+      window.clearTimeout(memoryRefreshTimer.current);
+      memoryRefreshTimer.current = null;
+    }
+    const run = () => {
+      api
+        .getChapterMemory(chapter.id)
+        .then((result) => setMemory(result.memory))
+        .catch(() => undefined);
+    };
+    if (force) {
+      run();
+      return;
+    }
+    memoryRefreshTimer.current = window.setTimeout(() => {
+      memoryRefreshTimer.current = null;
+      run();
+    }, 3000);
   };
 
   useEffect(() => {
-    refreshMemory();
+    refreshMemory(true);
     // Memory status is per chapter; reload when the editor switches chapters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id]);
+
+  useEffect(() => {
+    return () => {
+      if (memoryRefreshTimer.current !== null) {
+        window.clearTimeout(memoryRefreshTimer.current);
+        memoryRefreshTimer.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!showGenerate) return;
@@ -147,6 +195,17 @@ export function ChapterEditor({
 
   const finishedRef = useRef<(job: GenerationJob) => void>(() => {});
   const stream = useJobStream((job) => finishedRef.current(job));
+  const rewriteStream = useJobStream((job) => {
+    if (job.status === 'completed') setProposal(job.output.trim());
+  });
+  const reviewStream = useJobStream();
+
+  useEffect(() => {
+    api
+      .listProseInstructions(project.id)
+      .then(setSavedInstructions)
+      .catch(() => setSavedInstructions([]));
+  }, [project.id]);
 
   useEffect(() => {
     if (chapter.latestJob && chapter.latestJob.status === 'running') {
@@ -178,11 +237,11 @@ export function ChapterEditor({
     } catch {
       await onRefreshChapter();
     }
-    refreshMemory();
+    refreshMemory(true);
     if (job.status === 'completed') {
       // A summary may have been queued automatically after this draft.
-      window.setTimeout(refreshMemory, 5000);
-      window.setTimeout(refreshMemory, 20000);
+      window.setTimeout(() => refreshMemory(true), 5000);
+      window.setTimeout(() => refreshMemory(true), 20000);
     }
   };
 
@@ -221,6 +280,76 @@ export function ChapterEditor({
     } catch (err) {
       setGenerateError(errorText(err));
       setStopping(false);
+    }
+  };
+
+  const captureSelection = () => {
+    const element = textareaRef.current;
+    if (!element) return;
+    const start = element.selectionStart;
+    const end = element.selectionEnd;
+    if (end > start) {
+      setSelection({ start, end, text: content.slice(start, end) });
+    }
+  };
+
+  const startRewrite = async (action: RewriteAction) => {
+    if (!selection) return;
+    setApplyError(null);
+    setProposal('');
+    try {
+      const job = await api.rewriteChapter(chapter.id, {
+        action,
+        selection: selection.text,
+        start: selection.start,
+        end: selection.end,
+        instruction: rewriteInstruction.trim() || undefined,
+      });
+      rewriteStream.attach(job);
+    } catch (err) {
+      setGenerateError(errorText(err));
+    }
+  };
+
+  const applyProposal = async () => {
+    if (!rewriteStream.job || !proposal.trim()) return;
+    setApplyingRewrite(true);
+    setApplyError(null);
+    try {
+      const result = await api.applyRewrite(rewriteStream.job.id, proposal);
+      initialRevisionRef.current = result.chapter.currentRevisionId;
+      onChapterUpdated(result.chapter);
+      setContent(result.chapter.content);
+      setSavedContent(result.chapter.content);
+      setSelection(null);
+      setProposal('');
+      rewriteStream.reset();
+      setRecoveryNotice(
+        'Rewrite applied as a new revision. The previous text is in History, and this chapter’s summary is now stale.',
+      );
+      refreshMemory(true);
+    } catch (err) {
+      setApplyError(errorText(err));
+    } finally {
+      setApplyingRewrite(false);
+    }
+  };
+
+  const dismissRewrite = () => {
+    rewriteStream.reset();
+    setProposal('');
+    setApplyError(null);
+  };
+
+  const startReview = async () => {
+    setReviewOpen(true);
+    setReviewError(null);
+    if (reviewStream.running) return;
+    try {
+      const job = await api.reviewChapter(chapter.id);
+      reviewStream.attach(job);
+    } catch (err) {
+      setReviewError(errorText(err));
     }
   };
 
@@ -312,11 +441,34 @@ export function ChapterEditor({
           </div>
         </div>
         <div className="editor-actions">
+          {onNavigate ? (
+            <>
+              <button
+                className="button button-ghost button-small chapter-step"
+                onClick={() => onNavigate('previous')}
+                disabled={!canNavigatePrevious}
+                title="Previous chapter"
+              >
+                ← Previous
+              </button>
+              <button
+                className="button button-ghost button-small chapter-step"
+                onClick={() => onNavigate('next')}
+                disabled={!canNavigateNext}
+                title="Next chapter"
+              >
+                Next →
+              </button>
+            </>
+          ) : null}
           <button className="button button-ghost button-small" onClick={onOpenOutline}>
             Edit outline
           </button>
           <button className="button button-ghost button-small" onClick={onOpenMemory}>
             Continuity
+          </button>
+          <button className="button button-ghost button-small" onClick={() => void startReview()}>
+            Review continuity
           </button>
           <button className="button button-ghost button-small" onClick={() => setHistoryOpen(true)}>
             History
@@ -424,6 +576,26 @@ export function ChapterEditor({
                 onChange={(event) => setInstructions(event.target.value)}
                 placeholder="Optional: focus this scene on the argument at the dinner table, keep the storm offstage…"
               />
+              {savedInstructions.length > 0 ? (
+                <select
+                  className="saved-instruction-picker"
+                  value=""
+                  onChange={(event) => {
+                    const found = savedInstructions.find((entry) => entry.id === event.target.value);
+                    if (!found) return;
+                    setInstructions((current) =>
+                      current.trim() ? `${current.trimEnd()}\n${found.text}` : found.text,
+                    );
+                  }}
+                >
+                  <option value="">Add a saved instruction…</option>
+                  {savedInstructions.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
             </div>
             <div className="generate-side">
               <div className="field">
@@ -534,6 +706,165 @@ export function ChapterEditor({
         </section>
       ) : null}
 
+      {mode === 'write' && selection ? (
+        <section className="selection-tools">
+          <div className="selection-head">
+            <span className="eyebrow">Selected passage</span>
+            <span className="muted small">
+              {formatWords(countWords(selection.text))} words
+            </span>
+            <button
+              className="button button-ghost button-small selection-clear"
+              onClick={() => setSelection(null)}
+            >
+              Clear selection
+            </button>
+          </div>
+          <div className="selection-controls">
+            <input
+              value={rewriteInstruction}
+              onChange={(event) => setRewriteInstruction(event.target.value)}
+              placeholder="Optional focus or style note, e.g. colder, more clipped, keep the image of the door."
+              aria-label="Rewrite instruction"
+            />
+            {savedInstructions.length > 0 ? (
+              <select
+                value=""
+                onChange={(event) => {
+                  const found = savedInstructions.find((entry) => entry.id === event.target.value);
+                  if (found) setRewriteInstruction(found.text);
+                }}
+                aria-label="Use a saved instruction"
+              >
+                <option value="">Use a saved instruction…</option>
+                {savedInstructions.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+          <div className="selection-actions">
+            {(['rewrite', 'expand', 'shorten', 'style'] as RewriteAction[]).map((action) => (
+              <button
+                key={action}
+                className="button button-small"
+                onClick={() => void startRewrite(action)}
+                disabled={rewriteStream.running}
+              >
+                {REWRITE_ACTION_LABELS[action]}
+              </button>
+            ))}
+            <span className="muted small">
+              The model proposes a replacement. Nothing changes until you apply it.
+            </span>
+          </div>
+        </section>
+      ) : null}
+
+      {rewriteStream.job ? (
+        <section className="rewrite-panel">
+          <div className="stream-head">
+            <span className="eyebrow">Rewrite proposal</span>
+            <span className="badge">{rewriteStream.job.model}</span>
+            <span className="muted small">
+              {rewriteStream.running
+                ? 'Streaming the revised passage…'
+                : rewriteStream.job.status === 'completed'
+                  ? `Proposal ready · ${formatWords(countWords(proposal))} words`
+                  : `Rewrite ${rewriteStream.job.status}`}
+            </span>
+            {!rewriteStream.running ? (
+              <button
+                className="button button-ghost button-small stream-dismiss"
+                onClick={dismissRewrite}
+              >
+                Discard
+              </button>
+            ) : null}
+          </div>
+          {rewriteStream.job.error ? (
+            <Banner tone="danger">{rewriteStream.job.error}</Banner>
+          ) : null}
+          {rewriteStream.job.status === 'completed' ? (
+            <textarea
+              className="rewrite-proposal"
+              value={proposal}
+              onChange={(event) => setProposal(event.target.value)}
+              spellCheck
+              aria-label="Proposed replacement text"
+            />
+          ) : (
+            <div className="stream-output">
+              {rewriteStream.output || (rewriteStream.running ? 'Waiting for the first tokens…' : 'No output.')}
+            </div>
+          )}
+          {applyError ? <Banner tone="danger">{applyError}</Banner> : null}
+          <div className="rewrite-foot">
+            <span className="muted small">
+              {content !== savedContent
+                ? 'Waiting for the chapter to finish saving before this rewrite can be applied.'
+                : 'Applying replaces the selected passage and creates a new revision. The chapter summary is marked stale; later prose is never rewritten.'}
+            </span>
+            <button
+              className="button button-primary button-small"
+              onClick={() => void applyProposal()}
+              disabled={
+                rewriteStream.running ||
+                rewriteStream.job.status !== 'completed' ||
+                !proposal.trim() ||
+                applyingRewrite ||
+                content !== savedContent
+              }
+            >
+              {applyingRewrite ? <Spinner /> : null}
+              Apply rewrite
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {reviewOpen ? (
+        <section className="review-panel">
+          <div className="stream-head">
+            <span className="eyebrow">Continuity review</span>
+            <span className="badge">{reviewStream.job?.model ?? 'memory role'}</span>
+            <span className="muted small">
+              {reviewStream.running
+                ? 'Checking the chapter against accepted memory…'
+                : reviewStream.job
+                  ? `Review ${reviewStream.job.status}`
+                  : 'Starting…'}
+            </span>
+            {!reviewStream.running ? (
+              <button
+                className="button button-ghost button-small stream-dismiss"
+                onClick={() => {
+                  reviewStream.reset();
+                  setReviewOpen(false);
+                }}
+              >
+                Close
+              </button>
+            ) : null}
+          </div>
+          {reviewError ? <Banner tone="danger">{reviewError}</Banner> : null}
+          {reviewStream.job?.error ? (
+            <Banner tone="danger">{reviewStream.job.error}</Banner>
+          ) : null}
+          <div className="stream-output">
+            {reviewStream.output ||
+              (reviewStream.running ? 'Waiting for the review…' : 'No report yet.')}
+          </div>
+          <div className="stream-foot">
+            <span className="muted small">
+              Advisory only. A review never changes the manuscript.
+            </span>
+          </div>
+        </section>
+      ) : null}
+
       <div className="editor-toolbar">
         <div className="segmented">
           <button className={mode === 'write' ? 'active' : ''} onClick={() => setMode('write')}>
@@ -551,9 +882,14 @@ export function ChapterEditor({
       <div className="editor-surface">
         {mode === 'write' ? (
           <textarea
+            ref={textareaRef}
             className="manuscript-textarea"
             value={content}
-            onChange={(event) => setContent(event.target.value)}
+            onChange={(event) => {
+              setContent(event.target.value);
+              setSelection(null);
+            }}
+            onSelect={captureSelection}
             placeholder="Begin the chapter, or generate a draft and edit it here."
             spellCheck
           />

@@ -1,5 +1,21 @@
-import type { GenerationSettings } from './types.js';
+import type { GenerationSettings, JobSettingsSnapshot } from './types.js';
 import { DEFAULT_GENERATION } from './types.js';
+
+/** Capture the sampling settings shown in the generation log. */
+export function jobSettingsSnapshot(
+  settings: Pick<GenerationSettings, 'temperature' | 'topP' | 'maxTokens'> &
+    Partial<Pick<GenerationSettings, 'contextPreset' | 'targetWords'>>,
+  extra: Partial<JobSettingsSnapshot> = {},
+): JobSettingsSnapshot {
+  return {
+    temperature: settings.temperature ?? null,
+    topP: settings.topP ?? null,
+    maxTokens: settings.maxTokens ?? null,
+    ...(settings.contextPreset ? { contextPreset: settings.contextPreset } : {}),
+    ...(settings.targetWords !== undefined ? { targetWords: settings.targetWords } : {}),
+    ...extra,
+  };
+}
 
 export function normalizeGenerationSettings(
   value: Partial<GenerationSettings> | null | undefined,

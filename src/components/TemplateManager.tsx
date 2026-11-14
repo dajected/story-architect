@@ -21,6 +21,7 @@ const PLACEHOLDERS = [
   'chapter_brief',
   'target_words',
   'story_memory',
+  'lore',
   'recent_prose',
   'additional_instructions',
   'context_preset',

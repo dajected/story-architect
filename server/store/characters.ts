@@ -22,6 +22,7 @@ export interface CharacterRow {
   notes: string;
   status: CharacterStatus;
   source: CharacterSource;
+  portrait_asset_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -45,6 +46,10 @@ function mapCharacter(row: CharacterQueryRow): Character {
     status: row.status,
     source: row.source,
     factCount: Number(row.fact_count ?? 0),
+    portraitAssetId: row.portrait_asset_id ?? null,
+    portraitUrl: row.portrait_asset_id
+      ? `/api/image-assets/${row.portrait_asset_id}/file`
+      : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -206,6 +211,28 @@ export function addProposedCharacters(
     }
   }
   return created;
+}
+
+export function setCharacterPortrait(id: string, assetId: string | null): Character {
+  const current = getCharacterRow(id);
+  if (assetId) {
+    const asset = dbGet<{ id: string; character_id: string }>(
+      'SELECT id, character_id FROM image_assets WHERE id = ?',
+      assetId,
+    );
+    if (!asset) throw badRequest('That image does not exist.');
+    if (asset.character_id !== id) {
+      throw badRequest('That image belongs to another character.');
+    }
+  }
+  dbRun(
+    'UPDATE characters SET portrait_asset_id = ?, updated_at = ? WHERE id = ?',
+    assetId,
+    timestamp(),
+    id,
+  );
+  touchProject(current.project_id);
+  return getCharacter(id);
 }
 
 export function activeCharacters(projectId: string): Character[] {

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
 import {
   createProject,
@@ -10,6 +10,9 @@ import {
 import { getProjectGeneration, resolveRoles, setProjectSettings } from '../store/settings.js';
 import { currentChapterText, listChapters } from '../store/chapters.js';
 import { listPromptTemplates } from '../store/templates.js';
+import { projectGenerationHistory } from '../jobs.js';
+import { createProjectBackup, restoreProjectBackup } from '../backup.js';
+import { badRequest } from '../errors.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const projectsRouter = Router();
@@ -97,6 +100,46 @@ projectsRouter.patch(
       req.body,
     );
     res.json({ generation: setProjectSettings(id, { generation: body.generation as never }) });
+  }),
+);
+
+projectsRouter.post(
+  '/projects/restore',
+  express.raw({
+    type: ['application/gzip', 'application/x-gzip', 'application/octet-stream'],
+    limit: '512mb',
+  }),
+  wrap((req, res) => {
+    if (!Buffer.isBuffer(req.body)) {
+      throw badRequest('Send the backup file as application/gzip or application/octet-stream.');
+    }
+    const result = restoreProjectBackup(req.body);
+    res.status(201).json(result);
+  }),
+);
+
+projectsRouter.get(
+  '/projects/:id/backup',
+  wrap((req, res) => {
+    const backup = createProjectBackup(stringParam(req.params.id, 'project id'));
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Length', String(backup.bytes.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${backup.filename}"; filename*=UTF-8''${encodeURIComponent(backup.filename)}`,
+    );
+    res.send(backup.bytes);
+  }),
+);
+
+projectsRouter.get(
+  '/projects/:id/generation-history',
+  wrap((req, res) => {
+    const id = stringParam(req.params.id, 'project id');
+    getProject(id);
+    const limit = Number(req.query.limit ?? 200);
+    res.json(projectGenerationHistory(id, Number.isFinite(limit) ? limit : 200));
   }),
 );
 

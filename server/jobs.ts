@@ -1,12 +1,18 @@
 import crypto from 'node:crypto';
 import type {
+  GenerationHistory,
+  GenerationHistoryEntry,
+  GenerationHistorySummary,
   GenerationJob,
   GenerationJobKind,
   GenerationJobStatus,
+  JobPricing,
+  JobSettingsSnapshot,
   TokenUsage,
 } from '../shared/types.js';
 import { dbAll, dbGet, dbRun, timestamp } from './db.js';
 import { AppError, conflict, notFound } from './errors.js';
+import { modelPricing } from './store/connections.js';
 
 export interface JobRow {
   id: string;
@@ -22,6 +28,9 @@ export interface JobRow {
   output: string;
   error: string | null;
   usage: string | null;
+  settings: string | null;
+  pricing: string | null;
+  estimated_cost: number | null;
   revision_id: string | null;
   created_at: string;
   started_at: string | null;
@@ -31,13 +40,61 @@ export interface JobRow {
 function parseUsage(raw: string | null): TokenUsage | null {
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as TokenUsage;
+    const value = JSON.parse(raw) as TokenUsage;
+    return value && typeof value === 'object' ? value : null;
   } catch {
     return null;
   }
 }
 
+function parseSettings(raw: string | null): JobSettingsSnapshot | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as JobSettingsSnapshot;
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePricing(raw: string | null): JobPricing | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as JobPricing;
+    if (
+      value &&
+      typeof value === 'object' &&
+      Number.isFinite(value.promptPerToken) &&
+      Number.isFinite(value.completionPerToken)
+    ) {
+      return { ...value, currency: 'USD' };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Estimated provider cost in USD. It uses the pricing cached when the job was
+ * created, so later model-list refreshes do not rewrite history.
+ */
+export function estimateJobCost(
+  usage: TokenUsage | null,
+  pricing: JobPricing | null,
+): number | null {
+  if (!usage || !pricing) return null;
+  const prompt = Number(usage.promptTokens ?? 0);
+  const completion = Number(usage.completionTokens ?? 0);
+  if (!usage.promptTokens && !usage.completionTokens) return null;
+  const cost = prompt * pricing.promptPerToken + completion * pricing.completionPerToken;
+  if (!Number.isFinite(cost) || cost < 0) return null;
+  return Math.round(cost * 1_000_000) / 1_000_000;
+}
+
 export function mapJob(row: JobRow): GenerationJob {
+  const usage = parseUsage(row.usage);
+  const pricing = parsePricing(row.pricing);
   return {
     id: row.id,
     projectId: row.project_id,
@@ -49,7 +106,13 @@ export function mapJob(row: JobRow): GenerationJob {
     model: row.model,
     output: row.output,
     error: row.error,
-    usage: parseUsage(row.usage),
+    usage,
+    settings: parseSettings(row.settings),
+    pricing,
+    estimatedCost:
+      row.estimated_cost === null || row.estimated_cost === undefined
+        ? estimateJobCost(usage, pricing)
+        : Number(row.estimated_cost),
     revisionId: row.revision_id,
     createdAt: row.created_at,
     startedAt: row.started_at,
@@ -78,15 +141,18 @@ export function createJob(params: {
   model: string;
   prompt: string;
   context?: unknown;
+  settings?: JobSettingsSnapshot | null;
   status?: 'queued' | 'running';
 }): GenerationJob {
   const id = crypto.randomUUID();
   const at = timestamp();
+  const pricing = modelPricing(params.connectionId, params.model);
   dbRun(
     `INSERT INTO generation_jobs (
        id, project_id, kind, status, chapter_id, conversation_id, connection_id, model,
-       prompt, context_json, output, error, usage, revision_id, created_at, started_at, finished_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, NULL, ?, ?, NULL)`,
+       prompt, context_json, output, error, usage, settings, pricing, estimated_cost,
+       revision_id, created_at, started_at, finished_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, ?, ?, NULL, NULL, ?, ?, NULL)`,
     id,
     params.projectId,
     params.kind,
@@ -97,6 +163,8 @@ export function createJob(params: {
     params.model,
     params.prompt,
     params.context ? JSON.stringify(params.context) : null,
+    params.settings ? JSON.stringify(params.settings) : null,
+    pricing ? JSON.stringify(pricing) : null,
     at,
     params.status === 'queued' ? null : at,
   );
@@ -193,17 +261,127 @@ export function listProjectJobs(projectId: string, limit = 20): GenerationJob[] 
   return rows.map(mapJob);
 }
 
+interface HistoryRow extends JobRow {
+  connection_name: string | null;
+  chapter_title: string | null;
+  chapter_order: number | null;
+}
+
+function durationMs(startedAt: string | null, finishedAt: string | null): number | null {
+  if (!startedAt || !finishedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(finishedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return end - start;
+}
+
+/**
+ * Readable generation log for one project: model, sampling snapshot, token
+ * usage, and an estimated cost where the provider published pricing.
+ */
+export function projectGenerationHistory(projectId: string, limit = 200): GenerationHistory {
+  const capped = Math.max(1, Math.min(1000, Math.floor(limit)));
+  const rows = dbAll<HistoryRow>(
+    `SELECT j.*, c.name AS connection_name, ch.title AS chapter_title, ch.order_index AS chapter_order
+       FROM generation_jobs j
+       LEFT JOIN connections c ON c.id = j.connection_id
+       LEFT JOIN chapters ch ON ch.id = j.chapter_id
+      WHERE j.project_id = ?
+      ORDER BY j.created_at DESC
+      LIMIT ?`,
+    projectId,
+    capped,
+  );
+
+  const entries: GenerationHistoryEntry[] = rows.map((row) => {
+    const usage = parseUsage(row.usage);
+    const pricing = parsePricing(row.pricing);
+    return {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      model: row.model,
+      connectionName: row.connection_name,
+      chapterId: row.chapter_id,
+      chapterTitle: row.chapter_title,
+      chapterOrder: row.chapter_order === null ? null : Number(row.chapter_order),
+      settings: parseSettings(row.settings),
+      usage,
+      estimatedCost:
+        row.estimated_cost === null || row.estimated_cost === undefined
+          ? estimateJobCost(usage, pricing)
+          : Number(row.estimated_cost),
+      error: row.error,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      durationMs: durationMs(row.started_at, row.finished_at),
+    };
+  });
+
+  const summary: GenerationHistorySummary = {
+    total: entries.length,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    interrupted: 0,
+    active: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    estimatedCost: null,
+    pricedJobs: 0,
+    unpricedJobs: 0,
+  };
+
+  let cost = 0;
+  for (const entry of entries) {
+    if (entry.status === 'completed') summary.completed += 1;
+    else if (entry.status === 'failed') summary.failed += 1;
+    else if (entry.status === 'cancelled') summary.cancelled += 1;
+    else if (entry.status === 'interrupted') summary.interrupted += 1;
+    else summary.active += 1;
+
+    const prompt = Number(entry.usage?.promptTokens ?? 0);
+    const completion = Number(entry.usage?.completionTokens ?? 0);
+    summary.promptTokens += prompt;
+    summary.completionTokens += completion;
+    summary.totalTokens += Number(
+      entry.usage?.totalTokens ?? (entry.usage ? prompt + completion : 0),
+    );
+
+    if (entry.estimatedCost !== null) {
+      cost += entry.estimatedCost;
+      summary.pricedJobs += 1;
+    } else if (entry.usage) {
+      summary.unpricedJobs += 1;
+    }
+  }
+  if (summary.pricedJobs > 0) {
+    summary.estimatedCost = Math.round(cost * 1_000_000) / 1_000_000;
+  }
+
+  return { projectId, entries, summary, limit: capped };
+}
+
 export function updateJob(
   id: string,
   patch: Partial<
     Pick<
       JobRow,
-      'status' | 'output' | 'error' | 'usage' | 'revision_id' | 'finished_at' | 'started_at'
+      | 'status'
+      | 'output'
+      | 'error'
+      | 'usage'
+      | 'estimated_cost'
+      | 'revision_id'
+      | 'finished_at'
+      | 'started_at'
     >
   >,
 ): GenerationJob {
   const fields: string[] = [];
-  const values: Array<string | null> = [];
+  const values: Array<string | number | null> = [];
   if (patch.status !== undefined) {
     fields.push('status = ?');
     values.push(patch.status);
@@ -219,6 +397,10 @@ export function updateJob(
   if (patch.usage !== undefined) {
     fields.push('usage = ?');
     values.push(patch.usage);
+  }
+  if (patch.estimated_cost !== undefined) {
+    fields.push('estimated_cost = ?');
+    values.push(patch.estimated_cost === null ? null : Number(patch.estimated_cost));
   }
   if (patch.revision_id !== undefined) {
     fields.push('revision_id = ?');
@@ -310,11 +492,16 @@ export function finalizeJob(
     status = 'cancelled';
   }
 
+  const usageRaw = options.usage ? JSON.stringify(options.usage) : existing.usage;
+  const usage = options.usage ?? parseUsage(existing.usage);
+  const estimatedCost = estimateJobCost(usage, parsePricing(existing.pricing));
+
   const job = updateJob(jobId, {
     status,
     output: runtime ? runtime.output : existing.output,
     error: options.error ?? null,
-    usage: options.usage ? JSON.stringify(options.usage) : existing.usage,
+    usage: usageRaw,
+    estimated_cost: estimatedCost,
     revision_id: options.revisionId === undefined ? existing.revision_id : options.revisionId,
     finished_at: timestamp(),
   });

@@ -1,9 +1,12 @@
 import type {
   Chapter,
   Character,
+  ContextLore,
+  ContextLoreEntry,
   ContextPreset,
   ContextSection,
   Fact,
+  LoreEntry,
   Project,
 } from '../shared/types.js';
 import { CONTEXT_PRESETS } from '../shared/types.js';
@@ -11,11 +14,14 @@ import { countWords, estimateTokens } from '../shared/utils.js';
 import { currentChapterText, listChapters } from './store/chapters.js';
 import { latestOutlineRevision } from './store/outline.js';
 import { memoryForPrompt } from './store/memory.js';
+import { listLoreEntries } from './store/lore.js';
 import { conflict } from './errors.js';
 
 export interface ProseContext {
   recentProse: string;
   memoryText: string;
+  loreText: string;
+  lore: ContextLore;
   includedChapters: number;
   omittedChapters: number;
   includedWords: number;
@@ -72,6 +78,141 @@ function memoryShare(preset: ContextPreset): number {
   if (preset === 'focused') return 0.45;
   if (preset === 'broad') return 0.55;
   return 0.5;
+}
+
+function loreShare(preset: ContextPreset): number {
+  if (preset === 'focused') return 0.16;
+  if (preset === 'broad') return 0.24;
+  return 0.2;
+}
+
+const LORE_TOKEN_CAP = 12000;
+
+/** Whole-word, case-insensitive keyword match against a lowercased haystack. */
+export function triggerMatches(trigger: string, haystack: string): boolean {
+  const needle = trigger.trim().toLowerCase();
+  if (!needle) return false;
+  if (/\s/.test(needle)) return haystack.includes(needle);
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(haystack);
+}
+
+function loreBlock(entry: LoreEntry): string {
+  return `### ${entry.title}\n${entry.content}`;
+}
+
+function loreHaystack(
+  chapter: Chapter,
+  additionalInstructions: string,
+  chapters: Chapter[],
+): string {
+  const preceding = chapters
+    .filter((entry) => entry.orderIndex < chapter.orderIndex && entry.currentRevisionId)
+    .slice(-1)[0];
+  const recent = preceding ? currentChapterText(preceding.id).slice(-6000) : '';
+  return `${chapter.brief}\n${additionalInstructions}\n${recent}`.toLowerCase();
+}
+
+/**
+ * Activate lore entries from the chapter brief, extra instructions, and a
+ * bounded tail of recent prose. Manual pins win, then always-include entries,
+ * then keyword matches ordered by priority. Entries that do not fit the lore
+ * budget are reported rather than silently truncated.
+ */
+function buildLoreContext(
+  project: Project,
+  chapter: Chapter,
+  additionalInstructions: string,
+  chapters: Chapter[],
+  preset: ContextPreset,
+  availableInputTokens: number,
+): { text: string; lore: ContextLore } {
+  const all = listLoreEntries(project.id);
+  const enabled = all.filter((entry) => entry.enabled);
+  const haystack = loreHaystack(chapter, additionalInstructions, chapters);
+  const reasonRank: Record<string, number> = { manual: 0, always: 1, keyword: 2 };
+
+  type TriggeredLore = {
+    entry: LoreEntry;
+    matched: string[];
+    reason: ContextLoreEntry['reason'];
+    tokens: number;
+  };
+
+  const triggered = enabled
+    .map((entry): TriggeredLore | null => {
+      const matched = entry.triggers.filter((trigger) => triggerMatches(trigger, haystack));
+      const reason: ContextLoreEntry['reason'] | null = entry.pinned
+        ? 'manual'
+        : entry.alwaysInclude
+          ? 'always'
+          : matched.length > 0
+            ? 'keyword'
+            : null;
+      if (!reason) return null;
+      return { entry, matched, reason, tokens: estimateTokens(loreBlock(entry)) };
+    })
+    .filter((item): item is TriggeredLore => item !== null)
+    .sort((a, b) => {
+      const byReason = reasonRank[a.reason] - reasonRank[b.reason];
+      if (byReason !== 0) return byReason;
+      if (b.matched.length !== a.matched.length) return b.matched.length - a.matched.length;
+      if (b.entry.priority !== a.entry.priority) return b.entry.priority - a.entry.priority;
+      return a.entry.title.localeCompare(b.entry.title);
+    });
+
+  const budgetTokens = Math.min(
+    LORE_TOKEN_CAP,
+    Math.floor(availableInputTokens * loreShare(preset)),
+  );
+  const kept: TriggeredLore[] = [];
+  const omitted: TriggeredLore[] = [];
+  let usedTokens = 0;
+  for (const item of triggered) {
+    if (usedTokens + item.tokens > budgetTokens) {
+      omitted.push({ ...item, reason: 'budget' });
+      continue;
+    }
+    kept.push(item);
+    usedTokens += item.tokens;
+  }
+
+  const entries: ContextLoreEntry[] = [
+    ...kept.map((item) => ({
+      id: item.entry.id,
+      title: item.entry.title,
+      lorebookName: item.entry.lorebookName,
+      tokens: item.tokens,
+      reason: item.reason,
+      matched: item.matched,
+    })),
+    ...omitted.map((item) => ({
+      id: item.entry.id,
+      title: item.entry.title,
+      lorebookName: item.entry.lorebookName,
+      tokens: item.tokens,
+      reason: 'budget' as const,
+      matched: item.matched,
+    })),
+  ];
+
+  const text =
+    kept.length > 0
+      ? `## Lore\n\n${kept.map((item) => loreBlock(item.entry)).join('\n\n')}`
+      : '';
+
+  return {
+    text,
+    lore: {
+      entries,
+      activated: kept.length,
+      omitted: omitted.length,
+      totalEntries: all.length,
+      triggeredEntries: triggered.length,
+      budgetTokens,
+      usedTokens,
+    },
+  };
 }
 
 function takeWithin<T>(items: T[], capTokens: number, text: (item: T) => string): T[] {
@@ -205,13 +346,24 @@ export function buildProseContext(
   }
 
   const remaining = availableInputTokens - requiredTokens;
+  const chapters = listChapters(project.id);
+  const loreContext = buildLoreContext(
+    project,
+    chapter,
+    options.additionalInstructions ?? '',
+    chapters,
+    preset,
+    remaining,
+  );
+  const loreText = loreContext.text;
+  const lore = loreContext.lore;
+  const loreTokens = estimateTokens(loreText);
   const memory = memoryForPrompt(project.id, chapter.id);
-  const memoryBudget = Math.floor(remaining * memoryShare(preset));
+  const memoryBudget = Math.floor(Math.max(0, remaining - loreTokens) * memoryShare(preset));
 
   const summaryCap = Math.floor(memoryBudget * 0.45);
   const characterCap = Math.floor(memoryBudget * 0.3);
   const factCap = Math.max(0, memoryBudget - summaryCap - characterCap);
-  const chapters = listChapters(project.id);
 
   // Most recent summaries are the most useful, but render them chronologically.
   const summariesRecentFirst = [...memory.summaries].reverse();
@@ -317,8 +469,15 @@ export function buildProseContext(
       } awaiting review and excluded from context.`,
     );
   }
+  if (lore.omitted > 0) {
+    warnings.push(
+      `${lore.omitted} activated lore ${
+        lore.omitted === 1 ? 'entry did' : 'entries did'
+      } not fit the ${Math.round(loreShare(preset) * 100)}% lore budget. Raise the preset or shorten the entries to include them.`,
+    );
+  }
 
-  const proseTokens = Math.max(0, remaining - memoryTokens);
+  const proseTokens = Math.max(0, remaining - loreTokens - memoryTokens);
   const pieces: Array<{ title: string; text: string }> = [];
   for (const entry of chapters) {
     if (entry.orderIndex >= chapter.orderIndex || !entry.currentRevisionId) continue;
@@ -367,6 +526,21 @@ export function buildProseContext(
       tokens: requiredTokens,
       included: true,
       detail: 'Project metadata, standing instructions, this chapter brief, extra instructions, and prompt template.',
+    },
+    {
+      id: 'lore',
+      label: 'Lore',
+      tokens: loreTokens,
+      included: lore.activated > 0,
+      detail:
+        `${lore.activated} of ${lore.totalEntries} ${
+          lore.totalEntries === 1 ? 'entry' : 'entries'
+        } activated${lore.omitted > 0 ? `, ${lore.omitted} over budget` : ''}` +
+        `${lore.entries.some((entry) => entry.reason === 'manual') ? '; includes manually pinned entries' : ''}.`,
+      note:
+        lore.omitted > 0
+          ? `${lore.omitted} activated ${lore.omitted === 1 ? 'entry was' : 'entries were'} excluded by the lore budget.`
+          : undefined,
     },
     {
       id: 'summaries',
@@ -422,6 +596,8 @@ export function buildProseContext(
   return {
     recentProse: recentProse || '(No preceding prose is included for this chapter.)',
     memoryText,
+    loreText,
+    lore,
     includedChapters,
     omittedChapters,
     includedWords,
@@ -430,7 +606,7 @@ export function buildProseContext(
     reservedOutputTokens,
     availableInputTokens,
     requiredTokens,
-    estimatedTokens: requiredTokens + memoryTokens + proseTokensActual,
+    estimatedTokens: requiredTokens + loreTokens + memoryTokens + proseTokensActual,
     preset,
     sections,
     warnings,

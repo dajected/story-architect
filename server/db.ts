@@ -1,8 +1,13 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { dbPath, ensureDataDirs } from './config.js';
+import { backupsDir, dbPath, ensureDataDirs } from './config.js';
 import { DEFAULT_GENERATION } from '../shared/types.js';
-import { OUTLINE_TEMPLATE_DEFAULT, PROSE_TEMPLATE_DEFAULT } from './prompts.js';
+import {
+  IMAGE_PROMPT_TEMPLATE_DEFAULT,
+  OUTLINE_TEMPLATE_DEFAULT,
+  PROSE_TEMPLATE_DEFAULT,
+} from './prompts.js';
 
 ensureDataDirs();
 
@@ -225,10 +230,169 @@ const migrations: Array<() => void> = [
       CREATE INDEX idx_facts_character ON facts(character_id);
     `);
   },
+  () => {
+    db.exec(`
+      CREATE TABLE lorebooks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE lorebook_links (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, lorebook_id)
+      );
+
+      CREATE TABLE lore_entries (
+        id TEXT PRIMARY KEY,
+        lorebook_id TEXT NOT NULL REFERENCES lorebooks(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        triggers TEXT NOT NULL DEFAULT '[]',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        always_include INTEGER NOT NULL DEFAULT 0,
+        priority INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE lore_pins (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        entry_id TEXT NOT NULL REFERENCES lore_entries(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, entry_id)
+      );
+
+      CREATE TABLE prose_instructions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_lorebooks_project ON lorebooks(project_id, name COLLATE NOCASE);
+      CREATE INDEX idx_lorebook_links_project ON lorebook_links(project_id);
+      CREATE INDEX idx_lore_entries_book ON lore_entries(lorebook_id, priority DESC);
+      CREATE INDEX idx_prose_instructions_project ON prose_instructions(project_id, name COLLATE NOCASE);
+    `);
+  },
+  () => {
+    db.exec(`
+      CREATE TABLE image_connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        api_key TEXT,
+        settings TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE image_prompt_templates (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE image_assets (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
+        job_id TEXT,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        negative_prompt TEXT NOT NULL DEFAULT '',
+        template_id TEXT,
+        template_name TEXT,
+        template_content TEXT NOT NULL DEFAULT '',
+        connection_id TEXT,
+        connection_name TEXT,
+        provider_kind TEXT NOT NULL,
+        settings TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE image_jobs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
+        connection_id TEXT NOT NULL,
+        provider_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        negative_prompt TEXT NOT NULL DEFAULT '',
+        template_id TEXT,
+        template_name TEXT,
+        template_content TEXT NOT NULL DEFAULT '',
+        settings TEXT NOT NULL DEFAULT '{}',
+        remote_id TEXT,
+        asset_id TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
+      );
+
+      ALTER TABLE characters ADD COLUMN portrait_asset_id TEXT REFERENCES image_assets(id) ON DELETE SET NULL;
+
+      CREATE INDEX idx_image_connections_name ON image_connections(name COLLATE NOCASE);
+      CREATE INDEX idx_image_templates_project ON image_prompt_templates(project_id, name COLLATE NOCASE);
+      CREATE INDEX idx_image_jobs_character ON image_jobs(character_id, created_at);
+      CREATE INDEX idx_image_jobs_project ON image_jobs(project_id, created_at);
+      CREATE INDEX idx_image_assets_character ON image_assets(character_id, created_at);
+      CREATE INDEX idx_image_assets_project ON image_assets(project_id, created_at);
+    `);
+  },
+  () => {
+    db.exec(`
+      ALTER TABLE generation_jobs ADD COLUMN settings TEXT;
+      ALTER TABLE generation_jobs ADD COLUMN pricing TEXT;
+      ALTER TABLE generation_jobs ADD COLUMN estimated_cost REAL;
+    `);
+  },
 ];
+
+/**
+ * Take a consistent copy of the database before applying a later migration.
+ * `VACUUM INTO` includes committed WAL content and cannot run inside a
+ * transaction, so it happens before the migration loop opens one.
+ */
+function backupBeforeMigration(version: number): void {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = path.join(backupsDir, `pre-migration-v${version}-${stamp}.db`);
+  try {
+    const escaped = file.replace(/'/g, "''");
+    db.exec(`VACUUM INTO '${escaped}'`);
+    console.log(`[story-architect] pre-upgrade database backup written to ${file}`);
+  } catch (error) {
+    console.warn(
+      `[story-architect] could not write a pre-upgrade database backup: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
 
 function migrate(): void {
   const current = getUserVersion();
+  if (current > 0 && current < migrations.length) {
+    backupBeforeMigration(current);
+  }
   for (let version = current; version < migrations.length; version++) {
     const migration = migrations[version];
     if (!migration) continue;
@@ -267,11 +431,35 @@ function seed(): void {
     insert.run('tpl-prose-default', 'prose', 'Default prose prompt', PROSE_TEMPLATE_DEFAULT, now(), now());
   }
 
+  const imageTemplateCount = db
+    .prepare('SELECT COUNT(*) AS count FROM image_prompt_templates')
+    .get() as { count: number };
+  if (Number(imageTemplateCount.count) === 0) {
+    db.prepare(
+      `INSERT INTO image_prompt_templates (id, project_id, name, content, is_default, created_at, updated_at)
+       VALUES (?, NULL, ?, ?, 1, ?, ?)`,
+    ).run(
+      'tpl-image-prompt-default',
+      'Default character image prompt',
+      IMAGE_PROMPT_TEMPLATE_DEFAULT,
+      now(),
+      now(),
+    );
+  }
+
   const interruptedAt = now();
   db.prepare(
     `UPDATE generation_jobs
      SET status = 'interrupted',
          error = COALESCE(error, 'The server restarted while this generation was running. Saved partial output is kept.'),
+         finished_at = ?
+     WHERE status IN ('queued', 'running')`,
+  ).run(interruptedAt);
+
+  db.prepare(
+    `UPDATE image_jobs
+     SET status = 'interrupted',
+         error = COALESCE(error, 'The server restarted while this image was being generated. The prompt is kept so you can retry.'),
          finished_at = ?
      WHERE status IN ('queued', 'running')`,
   ).run(interruptedAt);
@@ -333,6 +521,14 @@ export function toBool(value: unknown): boolean {
 
 export function timestamp(): string {
   return now();
+}
+
+export function schemaVersion(): number {
+  return getUserVersion();
+}
+
+export function latestMigrationVersion(): number {
+  return migrations.length;
 }
 
 export function closeDatabase(): void {

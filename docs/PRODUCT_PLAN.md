@@ -1,7 +1,7 @@
 # Story Architect product plan
 
-Status: stages 1 and 2 implemented. See [README](../README.md) and
-[IMPLEMENTATION.md](IMPLEMENTATION.md); later stages remain planned.
+Status: stages 1–5 implemented. See [README](../README.md) and
+[IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ## Agreed direction
 
@@ -162,7 +162,9 @@ Design the data model around projects, outline revisions, chapters, chapter revi
 
 These do not prevent stage 1 planning or implementation:
 
-- Choose the first hosted image API and ComfyUI workflow before stage 4.
+- The first hosted image adapter is the OpenAI Images API (`/images/generations`).
+  ComfyUI uses a user-supplied API-format workflow with mapped prompt, negative
+  prompt, seed, and output nodes. Further image adapters can follow the same contract.
 - Tune preset budgets and the exact editor styling against the first working build.
 
 ## References

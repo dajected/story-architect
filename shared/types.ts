@@ -17,7 +17,7 @@ export const ROLE_HINTS: Record<TaskRole, string> = {
   outline: 'Plans the novel and its chapter outline.',
   prose: 'Drafts chapters and powers the assistant chat.',
   memory: 'Writes chapter summaries, proposes continuity facts, and casts characters from the outline.',
-  image_prompt: 'Reserved for image prompt expansion once stage 4 ships.',
+  image_prompt: 'Expands character image templates into a final prompt for an image service.',
 };
 
 export type ContextPreset = 'focused' | 'balanced' | 'broad';
@@ -170,7 +170,13 @@ export interface Chapter {
   updatedAt: string;
 }
 
-export type ChapterRevisionSource = 'generated' | 'edited' | 'restored' | 'recovered' | 'imported';
+export type ChapterRevisionSource =
+  | 'generated'
+  | 'edited'
+  | 'restored'
+  | 'recovered'
+  | 'rewrite'
+  | 'imported';
 
 export interface ChapterRevision {
   id: string;
@@ -194,7 +200,15 @@ export interface ChapterDetail extends Chapter {
   latestJob: GenerationJob | null;
 }
 
-export type GenerationJobKind = 'outline' | 'chapter' | 'chat' | 'memory' | 'characters';
+export type GenerationJobKind =
+  | 'outline'
+  | 'chapter'
+  | 'chat'
+  | 'memory'
+  | 'characters'
+  | 'rewrite'
+  | 'review'
+  | 'image_prompt';
 
 export type GenerationJobStatus =
   | 'queued'
@@ -210,6 +224,22 @@ export interface TokenUsage {
   totalTokens?: number;
 }
 
+/** Sampling settings captured when a job is created, for the generation log. */
+export interface JobSettingsSnapshot {
+  temperature: number | null;
+  topP: number | null;
+  maxTokens: number | null;
+  contextPreset?: ContextPreset;
+  targetWords?: number | null;
+}
+
+/** Cached provider pricing, in USD per token, captured with the job. */
+export interface JobPricing {
+  promptPerToken: number;
+  completionPerToken: number;
+  currency: 'USD';
+}
+
 export interface GenerationJob {
   id: string;
   projectId: string;
@@ -222,10 +252,55 @@ export interface GenerationJob {
   output: string;
   error: string | null;
   usage: TokenUsage | null;
+  settings: JobSettingsSnapshot | null;
+  pricing: JobPricing | null;
+  estimatedCost: number | null;
   revisionId: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+export interface GenerationHistoryEntry {
+  id: string;
+  kind: GenerationJobKind;
+  status: GenerationJobStatus;
+  model: string;
+  connectionName: string | null;
+  chapterId: string | null;
+  chapterTitle: string | null;
+  chapterOrder: number | null;
+  settings: JobSettingsSnapshot | null;
+  usage: TokenUsage | null;
+  estimatedCost: number | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface GenerationHistorySummary {
+  total: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  interrupted: number;
+  active: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** Null when no completed job had usable provider pricing. */
+  estimatedCost: number | null;
+  pricedJobs: number;
+  unpricedJobs: number;
+}
+
+export interface GenerationHistory {
+  projectId: string;
+  entries: GenerationHistoryEntry[];
+  summary: GenerationHistorySummary;
+  limit: number;
 }
 
 export type ChatRole = 'user' | 'assistant';
@@ -280,6 +355,8 @@ export interface Character {
   status: CharacterStatus;
   source: CharacterSource;
   factCount: number;
+  portraitAssetId: string | null;
+  portraitUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -398,6 +475,229 @@ export interface MemoryOverview {
   memoryRole: { connectionId: string; connectionName: string | null; model: string } | null;
 }
 
+export interface Lorebook {
+  id: string;
+  name: string;
+  description: string;
+  /** Project that owns the book, or null for a shared book. */
+  projectId: string | null;
+  /** True when the current project owns this book. */
+  owned: boolean;
+  entryCount: number;
+  linkedProjectCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LoreEntry {
+  id: string;
+  lorebookId: string;
+  lorebookName: string;
+  title: string;
+  content: string;
+  triggers: string[];
+  enabled: boolean;
+  alwaysInclude: boolean;
+  priority: number;
+  /** True when this entry is pinned for the next generation in the current project. */
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LoreEntryInput {
+  title: string;
+  content: string;
+  triggers?: string[];
+  enabled?: boolean;
+  alwaysInclude?: boolean;
+  priority?: number;
+}
+
+export interface LoreOverview {
+  projectId: string;
+  books: Lorebook[];
+  entries: LoreEntry[];
+  pinnedEntryIds: string[];
+  /** Books that exist elsewhere and can be linked to this novel. */
+  unlinkedBooks: Lorebook[];
+}
+
+export type LoreActivationReason = 'manual' | 'always' | 'keyword' | 'budget';
+
+export interface ContextLoreEntry {
+  id: string;
+  title: string;
+  lorebookName: string;
+  tokens: number;
+  reason: LoreActivationReason;
+  matched: string[];
+}
+
+export interface ContextLore {
+  entries: ContextLoreEntry[];
+  activated: number;
+  omitted: number;
+  totalEntries: number;
+  triggeredEntries: number;
+  budgetTokens: number;
+  usedTokens: number;
+}
+
+export type RewriteAction = 'rewrite' | 'expand' | 'shorten' | 'style';
+
+export const REWRITE_ACTION_LABELS: Record<RewriteAction, string> = {
+  rewrite: 'Rewrite',
+  expand: 'Expand',
+  shorten: 'Shorten',
+  style: 'Adjust style',
+};
+
+export interface RewriteRequest {
+  action: RewriteAction;
+  selection: string;
+  start: number;
+  end: number;
+  instruction?: string;
+}
+
+export interface ProseInstruction {
+  id: string;
+  projectId: string | null;
+  name: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ImageConnectionKind = 'openai-images' | 'comfyui';
+
+export const IMAGE_CONNECTION_LABELS: Record<ImageConnectionKind, string> = {
+  'openai-images': 'OpenAI Images API',
+  comfyui: 'ComfyUI',
+};
+
+/** Per-connection image provider settings. Image credentials stay separate from text connections. */
+export interface ImageProviderSettings {
+  /** OpenAI Images model such as gpt-image-1 or dall-e-3. */
+  model?: string;
+  size?: string;
+  quality?: string;
+  /** ComfyUI API-format workflow JSON. */
+  workflow?: string;
+  promptNode?: string;
+  promptInput?: string;
+  negativeNode?: string;
+  negativeInput?: string;
+  seedNode?: string;
+  seedInput?: string;
+  outputNode?: string;
+  timeoutSeconds?: number;
+}
+
+export interface ImageConnectionPublic {
+  id: string;
+  name: string;
+  kind: ImageConnectionKind;
+  baseUrl: string;
+  hasApiKey: boolean;
+  settings: ImageProviderSettings;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImageConnectionInput {
+  name: string;
+  kind: ImageConnectionKind;
+  baseUrl: string;
+  apiKey?: string | null;
+  settings?: ImageProviderSettings;
+}
+
+export interface ImagePromptTemplate {
+  id: string;
+  projectId: string | null;
+  name: string;
+  content: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const IMAGE_TEMPLATE_VARIABLES: Array<{ name: string; description: string }> = [
+  { name: 'novel_title', description: 'Novel title.' },
+  { name: 'genre', description: 'Genre.' },
+  { name: 'tone', description: 'Tone.' },
+  { name: 'project_style', description: 'The novel’s style notes.' },
+  { name: 'character_name', description: 'Character name.' },
+  { name: 'character_role', description: 'Character role.' },
+  { name: 'identity', description: 'Character identity.' },
+  { name: 'appearance', description: 'Character appearance, including lasting physical details.' },
+  { name: 'clothing', description: 'Clothing or outfit supplied for this image.' },
+  { name: 'personality', description: 'Character personality.' },
+  { name: 'goals', description: 'Character goals.' },
+  { name: 'notes', description: 'Character notes.' },
+  { name: 'scene', description: 'Scene or moment supplied for this image.' },
+  { name: 'chapter_title', description: 'Selected chapter title.' },
+  { name: 'chapter_brief', description: 'Selected chapter brief.' },
+  { name: 'visual_style', description: 'Visual style supplied for this image.' },
+  { name: 'additional_instructions', description: 'Extra instructions for this image.' },
+];
+
+export type ImageJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface ImageJob {
+  id: string;
+  projectId: string;
+  characterId: string;
+  chapterId: string | null;
+  connectionId: string;
+  providerKind: ImageConnectionKind;
+  status: ImageJobStatus;
+  prompt: string;
+  negativePrompt: string;
+  templateId: string | null;
+  templateName: string | null;
+  templateContent: string;
+  settings: ImageProviderSettings;
+  remoteId: string | null;
+  assetId: string | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface ImageAsset {
+  id: string;
+  projectId: string;
+  characterId: string;
+  chapterId: string | null;
+  jobId: string | null;
+  url: string;
+  mimeType: string;
+  prompt: string;
+  negativePrompt: string;
+  templateId: string | null;
+  templateName: string | null;
+  templateContent: string;
+  connectionId: string | null;
+  connectionName: string | null;
+  providerKind: ImageConnectionKind;
+  settings: ImageProviderSettings;
+  createdAt: string;
+}
+
+export interface CharacterImageOverview {
+  character: Character;
+  assets: ImageAsset[];
+  jobs: ImageJob[];
+  activeJob: ImageJob | null;
+  connections: ImageConnectionPublic[];
+  templates: ImagePromptTemplate[];
+  imagePromptRole: ResolvedRole | null;
+}
+
 export interface ContextSection {
   id: string;
   label: string;
@@ -423,6 +723,7 @@ export interface ContextInfo {
   };
   sections: ContextSection[];
   warnings: string[];
+  lore: ContextLore;
   includedWords: number;
   includedChapters: number;
   omittedChapters: number;

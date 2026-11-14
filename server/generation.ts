@@ -1,5 +1,13 @@
-import type { ContextPreset, GenerationJob, ProjectDraft } from '../shared/types.js';
+import type {
+  ChapterDetail,
+  ContextPreset,
+  GenerationJob,
+  ProjectDraft,
+  RewriteAction,
+  RewriteRequest,
+} from '../shared/types.js';
 import { CONTEXT_PRESETS } from '../shared/types.js';
+import { jobSettingsSnapshot } from '../shared/utils.js';
 import { approvedOutlineText, buildChatChapterContext, buildProseContext } from './context.js';
 import { AppError, badRequest, conflict, errorMessage } from './errors.js';
 import { getProject, touchProject } from './store/projects.js';
@@ -10,15 +18,20 @@ import {
   outlinePromptValues,
   parseOutline,
   buildChatSystemPrompt,
+  buildRewriteSystemPrompt,
+  CONTINUITY_REVIEW_PROMPT,
 } from './prompts.js';
 import { requireLatestApprovedOutline, createOutlineFromGeneration } from './store/outline.js';
 import {
+  applyRewriteToChapter,
+  currentChapterText,
   getChapterRow,
   listChapters,
   createRevisionFromJob,
   getChapter,
 } from './store/chapters.js';
 import { memoryPromptText } from './store/memory.js';
+import { clearLorePins } from './store/lore.js';
 import { modelContextLength } from './store/connections.js';
 import { autoStartChapterMemory } from './memory-generation.js';
 import {
@@ -29,7 +42,7 @@ import {
 } from './store/chat.js';
 import {
   activeChatJob,
-  activeJobForChapter,
+  activeJobForChapterKind,
   activeOutlineJob,
   appendOutput,
   assertJobTerminal,
@@ -37,6 +50,7 @@ import {
   createRuntime,
   finalizeJob,
   getJob,
+  getJobRow,
   isCancellation,
   outputSoFar,
   updateJob,
@@ -138,6 +152,7 @@ export function startOutlineGeneration(
     model: model.model,
     prompt,
     context: { templateReplaced: true, additionalInstructions: instructions },
+    settings: jobSettingsSnapshot(settings),
   });
 
   void (async () => {
@@ -190,7 +205,7 @@ export function startChapterGeneration(
 ): GenerationJob {
   const chapter = getChapterRow(chapterId);
   const project = getProject(chapter.project_id);
-  const active = activeJobForChapter(chapterId);
+  const active = activeJobForChapterKind(chapterId, 'chapter');
   if (active) throw conflict('This chapter is already being generated.');
   requireLatestApprovedOutline(project.id);
   if (!Number(chapter.brief_approved)) {
@@ -236,16 +251,22 @@ export function startChapterGeneration(
     chapter_brief: chapter.brief,
     target_words: targetWords,
     story_memory: context.memoryText || '(No story memory yet.)',
+    lore: context.loreText || '(No lore entries activated.)',
     recent_prose: context.recentProse,
     additional_instructions: instructions || 'None.',
     context_preset: preset,
   });
   // Custom templates created before stage 2 have no story-memory placeholder;
-  // append the memory block rather than silently dropping it.
+  // append the memory block rather than silently dropping it. Stage 3 lore is
+  // appended the same way when a template lacks {{lore}}.
   const promptWithMemory =
     context.memoryText && !/\{\{\s*story_memory\s*\}\}/.test(template.content)
       ? `${prompt}\n\n${context.memoryText}`
       : prompt;
+  const promptWithLore =
+    context.loreText && !/\{\{\s*lore\s*\}\}/.test(template.content)
+      ? `${promptWithMemory}\n\n${context.loreText}`
+      : promptWithMemory;
 
   // Reserve the reply capacity that the context budget assumed, even when the
   // provider would otherwise apply an unbounded default.
@@ -260,7 +281,7 @@ export function startChapterGeneration(
     chapterId,
     connectionId: model.connectionId,
     model: model.model,
-    prompt: promptWithMemory,
+    prompt: promptWithLore,
     context: {
       preset,
       budgetTokens: context.budgetTokens,
@@ -277,19 +298,28 @@ export function startChapterGeneration(
       totalCharacters: context.totalCharacters,
       includedFacts: context.includedFacts,
       totalFacts: context.totalFacts,
+      includedLore: context.lore.activated,
+      totalLore: context.lore.totalEntries,
+      omittedLore: context.lore.omitted,
+      loreEntries: context.lore.entries,
+      loreBudgetTokens: context.lore.budgetTokens,
       staleSummaries: context.staleSummaries,
       pendingFacts: context.pendingFacts,
       sections: context.sections,
       targetWords,
     },
+    settings: jobSettingsSnapshot(generationSettings, { contextPreset: preset, targetWords }),
   });
+
+  // Manual pins apply to one generation only.
+  clearLorePins(project.id);
 
   void (async () => {
     const result = await runStream(
       job,
       model.provider,
       [
-        { role: 'system', content: promptWithMemory },
+        { role: 'system', content: promptWithLore },
         {
           role: 'user',
           content: `Write Chapter ${chapter.order_index + 1}, "${chapter.title}", now. Return prose only.`,
@@ -404,6 +434,7 @@ export function startChatGeneration(params: {
     model: model.model,
     prompt: systemPrompt,
     context: { chapterId: params.chapterId ?? null, historyMessages: history.length },
+    settings: jobSettingsSnapshot(settings),
   });
 
   void (async () => {
@@ -445,6 +476,230 @@ export function startChatGeneration(params: {
   })();
 
   return { job, messageId: userMessage.id };
+}
+
+const REWRITE_ACTIONS: RewriteAction[] = ['rewrite', 'expand', 'shorten', 'style'];
+
+function rewriteMaxTokens(action: RewriteAction, selectionChars: number): number {
+  const base = Math.max(400, Math.round((selectionChars / 4) * 1.5));
+  if (action === 'expand') return Math.min(6000, Math.round(base * 2));
+  if (action === 'shorten') return Math.min(3000, Math.round(base * 0.9));
+  return Math.min(4000, base);
+}
+
+/**
+ * Revise a selected passage without touching the manuscript. The proposal is
+ * stored on the job and only becomes a revision when the author applies it.
+ */
+export function startRewriteGeneration(
+  chapterId: string,
+  request: RewriteRequest,
+): GenerationJob {
+  const chapter = getChapterRow(chapterId);
+  const project = getProject(chapter.project_id);
+  const text = currentChapterText(chapterId);
+  if (!text.trim()) {
+    throw conflict('Draft or write this chapter before rewriting a passage.');
+  }
+  const action = REWRITE_ACTIONS.includes(request.action) ? request.action : 'rewrite';
+  const selection = typeof request.selection === 'string' ? request.selection : '';
+  if (!selection.trim()) throw badRequest('Select some text to rewrite.');
+  if (selection.length > 12000) {
+    throw badRequest('Selected text must be 12,000 characters or fewer.');
+  }
+  const start = Math.floor(Number(request.start));
+  const end = Math.floor(Number(request.end));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+    throw badRequest('The selected range is not valid.');
+  }
+  if (end > text.length || text.slice(start, end) !== selection) {
+    throw conflict('The chapter text changed since this passage was selected. Select it again.');
+  }
+  if (activeJobForChapterKind(chapterId, 'rewrite')) {
+    throw conflict('A rewrite is already running for this chapter.');
+  }
+
+  const instruction = ensureAdditionalInstructions(request.instruction);
+  const model = resolveTaskModel(project.id, 'prose');
+  const settings = getProjectGeneration(project.id);
+  const before = text.slice(Math.max(0, start - 1500), start);
+  const after = text.slice(end, end + 1500);
+  const system = buildRewriteSystemPrompt({
+    action,
+    title: project.title,
+    premise: project.premise,
+    genre: project.genre,
+    tone: project.tone,
+    pov: project.pov,
+    tense: project.tense,
+    styleNotes: project.styleNotes,
+    contentPreferences: project.contentPreferences,
+    instructions: project.instructions,
+    chapterNumber: chapter.order_index + 1,
+    chapterTitle: chapter.title,
+    chapterBrief: chapter.brief,
+    before,
+    selection,
+    after,
+    instruction,
+  });
+
+  const rewriteSettings = {
+    ...settings,
+    maxTokens: settings.maxTokens ?? rewriteMaxTokens(action, selection.length),
+  };
+
+  const job = createJob({
+    projectId: project.id,
+    kind: 'rewrite',
+    chapterId,
+    connectionId: model.connectionId,
+    model: model.model,
+    prompt: system,
+    context: { stage: 'rewrite', action, start, end, selection, instruction },
+    settings: jobSettingsSnapshot(rewriteSettings),
+  });
+
+  void (async () => {
+    const result = await runStream(
+      job,
+      model.provider,
+      [
+        { role: 'system', content: system },
+        { role: 'user', content: 'Return only the replacement passage for the selected text now.' },
+      ],
+      rewriteSettings,
+    );
+    if (!result) return;
+    if (!result.content.trim()) {
+      finalizeJob(job.id, 'failed', {
+        error: 'The model returned an empty rewrite. The chapter text is untouched.',
+        usage: result.usage,
+      });
+      return;
+    }
+    // The draft is a proposal. It becomes a revision only through applyRewriteJob.
+    finalizeJob(job.id, 'completed', { usage: result.usage });
+  })();
+
+  return job;
+}
+
+export function applyRewriteJob(
+  jobId: string,
+  replacementOverride?: string,
+): { revisionId: string; chapterId: string; chapter: ChapterDetail } {
+  const job = getJob(jobId);
+  if (job.kind !== 'rewrite' || !job.chapterId) {
+    throw badRequest('Only a rewrite job can be applied to a chapter.');
+  }
+  assertJobTerminal(job);
+  if (job.status !== 'completed') {
+    throw conflict('Only a completed rewrite can be applied. Try again or discard it.');
+  }
+  const row = getJobRow(jobId);
+  let context: {
+    start?: unknown;
+    end?: unknown;
+    selection?: unknown;
+  } = {};
+  try {
+    context = row.context_json ? (JSON.parse(row.context_json) as typeof context) : {};
+  } catch {
+    throw new AppError(500, 'The saved rewrite no longer has its original selection.');
+  }
+  const start = Number(context.start);
+  const end = Number(context.end);
+  const selection = typeof context.selection === 'string' ? context.selection : '';
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !selection) {
+    throw new AppError(500, 'The saved rewrite no longer has its original selection.');
+  }
+  const replacement =
+    typeof replacementOverride === 'string' && replacementOverride.trim()
+      ? replacementOverride
+      : job.output;
+  if (!replacement.trim()) throw badRequest('The rewrite has no text to apply.');
+  if (replacement.length > 200000) throw badRequest('That replacement is too large to apply.');
+
+  const { revision, chapter } = applyRewriteToChapter({
+    chapterId: job.chapterId,
+    start,
+    end,
+    selection,
+    replacement,
+    jobId: job.id,
+  });
+  updateJob(job.id, { revision_id: revision.id });
+  return { revisionId: revision.id, chapterId: job.chapterId, chapter };
+}
+
+function trimForReview(text: string, limit = 42000): string {
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit * 0.6);
+  const tail = limit - head;
+  return `${text.slice(0, head)}\n\n[Middle of the chapter omitted to fit the review.]\n\n${text.slice(-tail)}`;
+}
+
+/** Advisory continuity check for one chapter using the memory role. */
+export function startContinuityReview(chapterId: string): GenerationJob {
+  const chapter = getChapterRow(chapterId);
+  const project = getProject(chapter.project_id);
+  const text = currentChapterText(chapterId);
+  if (!text.trim()) {
+    throw conflict('Draft or write this chapter before reviewing continuity.');
+  }
+  if (activeJobForChapterKind(chapterId, 'review')) {
+    throw conflict('A continuity review is already running for this chapter.');
+  }
+  const model = resolveTaskModel(project.id, 'memory');
+  const memory = memoryPromptText(project.id, chapterId);
+  const trimmedMemory =
+    memory.length > 18000 ? `${memory.slice(0, 18000)}\n[Earlier story memory trimmed.]` : memory;
+  const job = createJob({
+    projectId: project.id,
+    kind: 'review',
+    chapterId,
+    connectionId: model.connectionId,
+    model: model.model,
+    prompt: CONTINUITY_REVIEW_PROMPT,
+    context: { stage: 'review', memoryChars: trimmedMemory.length },
+    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1200 }),
+  });
+
+  void (async () => {
+    const user = `Novel: ${project.title}
+Premise: ${project.premise || '(not set)'}
+Chapter ${chapter.order_index + 1}: ${chapter.title}
+Brief (a plan, not evidence): ${chapter.brief || '(none)'}
+
+## Accepted story memory
+${trimmedMemory || '(No summaries, facts, or cast have been accepted yet.)'}
+
+## Chapter text
+${trimForReview(text)}
+
+Review this chapter's continuity now. Report only concrete conflicts and possible inconsistencies.`;
+    const result = await runStream(
+      job,
+      model.provider,
+      [
+        { role: 'system', content: CONTINUITY_REVIEW_PROMPT },
+        { role: 'user', content: user },
+      ],
+      { temperature: 0.2, topP: null, maxTokens: 1200 },
+    );
+    if (!result) return;
+    if (!result.content.trim()) {
+      finalizeJob(job.id, 'failed', {
+        error: 'The review model returned an empty report. Try again.',
+        usage: result.usage,
+      });
+      return;
+    }
+    finalizeJob(job.id, 'completed', { usage: result.usage });
+  })();
+
+  return job;
 }
 
 export function applyPartialJob(jobId: string): {

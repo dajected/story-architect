@@ -6,9 +6,10 @@ A self-hosted AI writing workspace for novels. Plan a premise, approve a chapter
 outline, draft chapters with a model of your choice, revise with full history,
 talk ideas through with an assistant, and export the manuscript as Markdown.
 
-Stage 2 is implemented: persistent story memory, a reviewable cast, continuity
-facts, and revision-aware stale-memory handling on top of the stage 1 workflow
-described in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
+Stage 5 is implemented: portable project backup and restore, a generation log with
+token usage and cost estimates, faster long-novel navigation, a health check that
+reports schema state, and documented upgrade and recovery paths, on top of the
+stage 1–4 workflow described in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
 
 ## What is in stage 1
 
@@ -69,6 +70,82 @@ described in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
 - **Budget safety** — output capacity is reserved up front. If the required brief
   and instructions cannot fit, generation is refused with an explanation rather
   than dropping essential instructions.
+
+## What stage 3 adds
+
+- **Lorebooks** — one or more books per novel, each holding titled entries. A book
+  can be linked to other novels, so shared world notes do not need copying.
+- **Keyword activation** — entries activate against the chapter brief, additional
+  generation instructions, and a bounded tail of recent prose. Matching is
+  whole-word and case-insensitive, and each entry is counted once.
+- **Pins and always-include** — an entry can be pinned for the next generation or
+  marked always-include. Pins are consumed by one generation, so they never leak
+  into later chapters by accident.
+- **Lore budget** — activation shares the input budget with memory and prose.
+  Priority, automatic matches, and pins order the entries, and the context
+  inspector lists every activated entry with its reason plus any entries excluded
+  by the budget.
+- **Selected-text rewrites** — rewrite, expand, shorten, or adjust the style of a
+  passage. The model streams a proposal, you can edit it before applying, and the
+  current text is untouched until you accept it.
+- **Recoverable rewrite revisions** — an accepted rewrite becomes a new revision
+  with its own source label. The previous text stays in History, and the chapter
+  summary is marked stale until you rebuild it.
+- **Saved prose instructions** — reusable voice and style notes that can be added
+  to chapter generation or a style rewrite.
+- **Continuity review** — an advisory pass over one chapter against accepted
+  summaries, facts, and cast. It reports conflicts without changing the
+  manuscript, and it uses the memory role.
+
+## What stage 4 adds
+
+- **Image service connections** — a separate connection list for images. Use an
+  OpenAI Images-compatible endpoint (`/images/generations`) or a ComfyUI server. Image
+  credentials and settings never touch the text-model connections or role assignments.
+- **Image prompt templates** — global or project-scoped templates with placeholders
+  for character name, role, identity, appearance, clothing, scene, chapter context,
+  visual style, and novel details.
+- **Model-expanded prompts** — the image-prompt role turns the template and the chosen
+  character and chapter into a draft prompt. The reply streams into the studio, where
+  you can edit it before spending an image request.
+- **ComfyUI workflows** — paste an API-format workflow and map the prompt, optional
+  negative prompt, seed, and output image nodes. Story Architect queues the workflow,
+  polls the run history, and downloads the result.
+- **Character gallery** — each image is saved under the data directory with its prompt,
+  template snapshot, provider settings, and character link. Set any image as the
+  character's portrait or remove it later.
+- **Persisted image jobs** — queued, running, completed, failed, cancelled, and
+  interrupted states survive a browser refresh. Interrupted ComfyUI jobs are reconciled
+  against the service at startup when possible, and the stored prompt makes every other
+  interrupted job retryable.
+
+## What stage 5 adds
+
+- **Portable project backups** — download one `.tar.gz` containing the project,
+  outline and chapter revisions, accepted memory and facts, cast, lorebooks,
+  templates, saved instructions, chats, image files, and image metadata. API keys,
+  text connections, image connections, role assignments, and global settings are
+  deliberately excluded.
+- **Restore into a fresh installation** — upload a project backup from the library.
+  Every internal ID is regenerated, so the same backup can be restored more than
+  once without colliding with existing work. Shared lorebooks become project-owned
+  copies, and character portraits keep pointing at the restored image.
+- **Generation log** — a project-level Activity tab lists outline, chapter, chat,
+  memory, casting, rewrite, review, and image-prompt jobs with the model, sampling
+  settings, provider-reported token usage, duration, status, and an estimated cost
+  where cached model pricing is available.
+- **Cost estimates with provenance** — pricing is captured when a job starts, so a
+  later model-list refresh does not rewrite history. Providers that do not publish
+  prices show usage without a cost.
+- **Long-novel navigation** — the chapter sidebar filters by title or brief and
+  keeps the current chapter in view, and the editor has previous/next chapter
+  controls. Word counting is deferred while typing, and memory-status reads are
+  coalesced into one trailing refresh instead of firing on every autosave.
+- **Operational polish** — `/api/health` reports the app version, schema version,
+  latest available migration, and uptime. Before a later migration runs, the server
+  writes a consistent `VACUUM INTO` copy under `DATA_DIR/backups/`.
+- **Upgrade and recovery documentation** — see [Upgrading](#upgrading) and
+  [Recovery](#recovery).
 
 ## Get the code
 
@@ -131,8 +208,10 @@ docker compose pull
 docker compose up -d
 ```
 
+See [Upgrading](#upgrading) for the database backup and rollback path.
+
 The image is public, so no registry login is needed. Available tags include
-`latest`, `v0.1.0`, and `sha-<short>`. Set `STORY_ARCHITECT_IMAGE` to a version
+`latest`, `v0.2.0`, and `sha-<short>`. Set `STORY_ARCHITECT_IMAGE` to a version
 or SHA tag for a reproducible deployment; `latest` follows the `main` branch.
 `STORY_ARCHITECT_PULL_POLICY` controls checking for updates (`missing` by
 default, or `always`).
@@ -178,7 +257,9 @@ dataset at `/data`. The container is independent of any text model or ComfyUI
 installation; both run elsewhere.
 
 The health endpoint is `GET /api/health`; the Dockerfile and Compose file both
-use it for container health checks. Streaming replies use server-sent events at
+use it for container health checks. It returns `ok`, the app version, the applied
+schema version, the latest schema version this build knows about, and uptime. A
+database failure returns HTTP 503. Streaming replies use server-sent events at
 `/api/jobs/:id/stream`, so an authenticating reverse proxy should disable
 response buffering for `/api/`. There is no built-in login.
 
@@ -197,19 +278,79 @@ response buffering for `/api/`. There is no built-in login.
 
 ### Backups
 
-Stop the container before copying the data directory so SQLite's write-ahead
-log is consistent:
+There are two complementary backups.
+
+**Project backups** are portable and credential-free. Use **Back up** beside a
+novel in the library, or **Backup** in the workspace. One `.tar.gz` contains the
+project, outline and chapter revisions, memory and facts, cast, lore, templates,
+saved instructions, chats, image metadata, and image files. Restore it from
+**Restore backup** in the library; every internal ID is regenerated, so restoring
+the same file twice creates two independent projects. Connections, API keys, role
+assignments, and global settings are not included, so configure those again on a
+fresh installation. If an image file is missing or unreadable, backup stops and
+shows an error; restore the file or remove that image from its gallery before retrying.
+
+**Full installation backups** preserve everything, including credentials:
 
 ```bash
 docker compose stop
-rsync -a "$STORY_ARCHITECT_DATA_PATH"/ /safe/backups/story-architect/
+# Use the host path you set as STORY_ARCHITECT_DATA_PATH in .env.
+rsync -a /mnt/tank/apps/story-architect/ /safe/backups/story-architect/
 docker compose start
 ```
 
 Back up `story-architect.db`, `secret.key` (or the environment variable that
-replaces it), and any future asset folders together. Without the encryption key,
-stored API keys cannot be decrypted; manuscript text, revisions, outline, and
-chats are unaffected and remain readable.
+replaces it), the `images/` folder, and the `backups/` folder together. Without
+the encryption key, stored API keys cannot be decrypted; manuscript text,
+revisions, outline, chats, and image files are unaffected and remain readable.
+Copying while the container is stopped keeps SQLite's write-ahead log consistent.
+
+### Upgrading
+
+1. Take a full installation backup and optionally a project backup for anything
+   important.
+2. Pull and recreate the container:
+
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+
+3. Watch the container become healthy:
+
+   ```bash
+   docker compose ps
+   curl -fsS http://127.0.0.1:3000/api/health
+   ```
+
+The server applies ordered SQLite migrations on boot. When the existing database
+is at an older schema version, it first writes a consistent copy to
+`DATA_DIR/backups/pre-migration-v<version>-<timestamp>.db` using `VACUUM INTO`.
+The health response reports the applied and latest schema versions; they match
+after a successful upgrade.
+
+To roll back, stop the container, replace `story-architect.db` with the
+pre-migration copy (and keep its `-wal`/`-shm` files removed), then run the older
+image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
+
+### Recovery
+
+- **Interrupted text generation** — after a restart, queued or running jobs become
+  `interrupted`. Open the chapter; saved partial output is offered as a
+  recoverable draft. Current prose is never changed automatically.
+- **Interrupted image generation** — jobs become `interrupted` on boot. ComfyUI
+  jobs with a remote ID resume polling the existing request. If recovery times out,
+  Retry checks that same request without submitting a duplicate workflow. Other jobs
+  keep their prompt for retry.
+- **Lost or replaced project** — restore its project backup from the library. If
+  the project still exists, the restored copy is added as a separate project, so
+  the original is not overwritten.
+- **Lost encryption key** — re-enter API keys in Settings. Manuscripts, chats,
+  revisions, lore, and images remain readable without the key.
+- **Full data-directory recovery** — stop the container, restore the saved
+  `story-architect.db`, `secret.key`, `images/`, and `backups/` into
+  `STORY_ARCHITECT_DATA_PATH`, then start the container. The health endpoint should
+  report the expected schema version.
 
 ## First-run walkthrough
 
@@ -229,9 +370,30 @@ chats are unaffected and remain readable.
 8. After a chapter becomes current, open **Continuity** to review its summary
    and proposed facts. Accept the facts that are canon, supersede anything the
    new text has made obsolete, and rebuild stale summaries after editing.
-9. Ask the assistant for help. Use **Insert into chapter** only when you want a
-   message to become manuscript text.
-10. **Export** downloads the current manuscript as Markdown.
+9. Open **Lore** to create a lorebook, add keyword-triggered entries, and pin
+   anything that must appear in the next generation. Link the same book from
+   another novel to reuse it.
+10. Select a passage in the manuscript to **Rewrite**, **Expand**, **Shorten**,
+    or **Adjust style**. Review the proposal, edit it if needed, then apply it as
+    a new revision.
+11. Use **Review continuity** for an advisory check against accepted memory.
+12. Under **Settings → Image service**, add an OpenAI Images-compatible endpoint or
+    ComfyUI. For ComfyUI, paste an API-format workflow and map its prompt and output
+    nodes. Set the image-prompt role under **Models & roles** if it should not inherit
+    the default model.
+13. Open **Cast**, choose a character, and select **Portrait & gallery**. Pick a
+    template and optional chapter, build the prompt, edit it, then generate. Set the
+    result as the character's portrait.
+14. Ask the assistant for help. Use **Insert into chapter** only when you want a
+    message to become manuscript text.
+15. **Export** downloads the current manuscript as Markdown.
+16. Open **Activity** to review generation jobs, models, sampling settings, token
+    usage, and estimated cost.
+17. Use **Backup** in the workspace or **Back up** in the library to download a
+    portable project archive. **Restore backup** in the library imports one into a
+    new project.
+18. For NAS maintenance, use `GET /api/health`, the pre-migration copies under
+    `DATA_DIR/backups/`, and the upgrade and recovery notes above.
 
 ## How generation behaves
 
@@ -253,8 +415,31 @@ chats are unaffected and remain readable.
 - Only accepted facts enter prompts. Proposed facts wait in Continuity, and
   superseded or rejected facts are excluded. Facts scoped to a later chapter, and
   plans without a scope, are kept out of earlier scenes.
+- Lore activates from whole-word keyword matches in the chapter brief, extra
+  generation instructions, and the last few thousand characters of preceding
+  prose. Pinned entries come first, then always-include entries, then keyword
+  matches by priority. Entries that do not fit the lore share of the preset
+  budget are listed as excluded rather than truncated mid-entry. Pins clear after
+  one generation.
+- A selected-text rewrite streams as a proposal and creates no revision until you
+  apply it. Applying inserts a new `rewrite` revision, keeps the previous text in
+  History, and leaves the chapter summary stale for an explicit rebuild.
+- A continuity review uses the memory role and is advisory only. Its report is
+  stored on the job and never changes the manuscript.
 - The memory role also proposes the cast from the approved outline. Proposed
   characters are excluded from context until accepted.
+- Image prompts are expanded from a saved template by the image-prompt role. The
+  template is rendered server-side with character, scene, clothing, style, and
+  chapter details, then the model returns editable prompt text. No image request is
+  made until you press **Generate image**.
+- Image jobs are separate from prose and memory jobs. Only one image can run per
+  character at a time. The prompt, template revision, image connection, and provider
+  settings are snapshotted onto the job and the saved image, so later setting changes
+  do not rewrite history.
+- The OpenAI Images adapter sends `POST /images/generations` and accepts base64 or
+  URL responses. ComfyUI receives an API-format workflow, polls `/history`, and
+  downloads the image from `/view`. A missing mapping fails with the node details
+  instead of silently generating with an empty prompt.
 - Generation never overwrites current prose. If the chapter is empty, the new
   draft becomes current; otherwise it is stored as an alternative revision that
   can be previewed and explicitly made current.
@@ -282,10 +467,15 @@ chats are unaffected and remain readable.
 - TypeScript server (Express 5) serving the built interface and API.
 - SQLite through Node's built-in `node:sqlite`, with migrations tracked by
   `PRAGMA user_version`; generated files live under `DATA_DIR`.
-- Provider adapters share an OpenAI chat-completions streaming path, with
-  OpenRouter-specific headers and model metadata.
+- Text provider adapters share an OpenAI chat-completions streaming path, with
+  OpenRouter-specific headers and model metadata. Image adapters implement the
+  OpenAI Images API and ComfyUI separately, and generated files live under
+  `DATA_DIR/images/`.
 - Persisted generation jobs stream to the browser over server-sent events and
-  keep partial text for recovery.
+  keep partial text for recovery. The same rows feed the Activity log, including
+  settings snapshots, usage, and cost estimates.
+- Project archives are gzipped POSIX tar files containing a JSON manifest and the
+  project's images. No archive library is added to the runtime image.
 - Server code is in [`server/`](server), shared contracts in
   [`shared/`](shared), and the interface in [`src/`](src). See
   [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the data model and API.
@@ -300,12 +490,20 @@ npm run build
 
 `npm test` includes unit tests for outline and continuity parsing plus an
 in-process end-to-end workflow against a mock OpenAI-compatible provider covering
-both the stage 1 drafting loop and stage 2 memory, cast, staleness, fact review,
-and context budgeting. A manual pass can use any real endpoint. The stage
-completion criteria are listed in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
+the stage 1 drafting loop, stage 2 memory, cast, staleness, fact review, and
+context budgeting, stage 3 lore activation, pinned entries, reused lorebooks,
+rewrite application, continuity review, and saved instructions, stage 4 image
+prompt expansion, OpenAI Images output, ComfyUI workflow mapping, saved assets,
+portrait assignment, and separation from text connections, and stage 5 health and
+schema reporting, duplicate-request refusal for a running job, generation-cost
+accounting, and a full project backup/restore round trip with images, memory,
+facts, lore, templates, chats, and portrait links. A manual pass can use any real
+endpoint. The stage completion criteria are listed in
+[docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
 
-## Deferred beyond stage 2
+## Deferred beyond stage 5
 
-Lorebooks, selected-text rewrite tools, image generation, and backup tooling are
-planned in later stages. The data model reserves roles and tables for them, but
-the interface does not expose those features yet.
+Reference-image workflows, image editing, automatic image generation, alternate
+plot branches, and additional export formats remain outside the current scope.
+The project archive is the supported interchange format; it is intentionally not
+a general filesystem snapshot.

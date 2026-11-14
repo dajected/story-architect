@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { OutlineChapter } from '../shared/types.js';
+import type { OutlineChapter, RewriteAction } from '../shared/types.js';
 
 export const OUTLINE_TEMPLATE_DEFAULT = `You are Story Architect, an experienced developmental editor and novelist.
 
@@ -52,6 +52,9 @@ Content preferences: {{content_preferences}}
 ## Story memory
 {{story_memory}}
 
+## Lore
+{{lore}}
+
 ## Recent preceding prose
 {{recent_prose}}
 
@@ -68,6 +71,84 @@ Approximate target length: {{target_words}} words.
 - Follow the chapter brief and hold the established point of view and tense.
 - Write finished prose only: no chapter heading, notes, outlines, or commentary around the text.
 - End at a natural stopping point near the target length.`;
+
+export const IMAGE_PROMPT_SYSTEM = `You are an art director for a novel's character portraits. Turn the supplied story details into one concrete image-generation prompt.
+
+Rules:
+- Return only the final prompt as a single paragraph. No headings, labels, quotation marks, code fences, or commentary.
+- Describe the subject, physical features, clothing, expression, pose, setting, lighting, camera framing, and visual style.
+- Use the character's established appearance and the selected scene. Do not invent contradictions or new story events.
+- Keep the prompt under 180 words and make it usable by a text-to-image model.
+- Do not include negative-prompt text; the author supplies that separately.`;
+
+export const IMAGE_PROMPT_TEMPLATE_DEFAULT = `Create the image-generation prompt for this character portrait.
+
+## Novel
+Title: {{novel_title}}
+Genre: {{genre}}
+Tone: {{tone}}
+Visual style: {{visual_style}}
+Story style notes: {{project_style}}
+
+## Character
+Name: {{character_name}}
+Role: {{character_role}}
+Identity: {{identity}}
+Appearance: {{appearance}}
+Clothing: {{clothing}}
+Personality: {{personality}}
+Goals: {{goals}}
+Notes: {{notes}}
+
+## Scene
+{{scene}}
+Chapter: {{chapter_title}}
+Chapter brief: {{chapter_brief}}
+
+## Additional instructions
+{{additional_instructions}}`;
+
+export interface ImagePromptValuesParams {
+  novelTitle: string;
+  genre: string;
+  tone: string;
+  projectStyle: string;
+  characterName: string;
+  characterRole: string;
+  identity: string;
+  appearance: string;
+  clothing: string;
+  personality: string;
+  goals: string;
+  notes: string;
+  scene: string;
+  chapterTitle: string;
+  chapterBrief: string;
+  visualStyle: string;
+  additionalInstructions: string;
+}
+
+export function imagePromptValues(params: ImagePromptValuesParams): PromptValues {
+  return {
+    novel_title: params.novelTitle,
+    genre: params.genre,
+    tone: params.tone,
+    project_style: params.projectStyle,
+    character_name: params.characterName,
+    character_role: params.characterRole,
+    identity: params.identity,
+    clothing: params.clothing,
+    appearance: params.appearance,
+    personality: params.personality,
+    goals: params.goals,
+    notes: params.notes,
+    scene: params.scene,
+    chapter_title: params.chapterTitle,
+    chapter_brief: params.chapterBrief,
+    visual_style: params.visualStyle,
+    additional_instructions: params.additionalInstructions,
+  };
+}
 
 export interface PromptValues {
   [key: string]: string | number | null | undefined;
@@ -257,6 +338,90 @@ Rules:
 
 Return only valid JSON, with no commentary and no code fences:
 {"characters":[{"name":"...","role":"protagonist","identity":"...","appearance":"...","personality":"...","goals":"...","relationships":"..."}]}`;
+
+export const CONTINUITY_REVIEW_PROMPT = `You are a continuity editor for a novel. Check one chapter against the derived story memory supplied by the author.
+
+Rules:
+- Report only concrete problems: contradicted facts, impossible timelines, changed names or descriptions, relationships that no longer hold, or threads that were dropped.
+- Use the supplied established facts and accepted profiles as the reference. Treat the chapter brief as a plan, not as evidence.
+- Separate "Conflicts", "Possible inconsistencies", and "Open threads worth tracking".
+- Cite the specific detail from the chapter and the fact it conflicts with. Do not invent problems.
+- If nothing is wrong, say so plainly. Keep the report under 300 words.
+- This report is advisory. Never rewrite the chapter or claim to have changed the manuscript.`;
+
+export const REWRITE_SYSTEM_PROMPT = `You are Story Architect's line editor, revising one selected passage inside a novel chapter.
+
+Rules:
+- Return only the replacement prose for the selected passage. No quotation marks, labels, headings, commentary, or explanation.
+- Keep the established point of view, tense, voice, and the facts of the surrounding text.
+- Do not introduce new plot events, characters, or continuity facts. Preserve the passage's meaning and its bridge into the following text.
+- Match the surrounding prose's paragraph style. Do not repeat the surrounding paragraphs.
+- Resolve the requested action exactly; it overrides the passage's current length or style.`;
+
+const REWRITE_ACTION_INSTRUCTIONS: Record<RewriteAction, string> = {
+  rewrite:
+    'Rewrite the passage for clarity, rhythm, and precision while keeping its meaning and roughly its current length.',
+  expand:
+    'Expand the passage to roughly 1.5 to 2 times its current length by deepening sensory detail, interiority, and physical action. Do not add new plot events.',
+  shorten:
+    'Shorten the passage to roughly 60 percent of its current length, keeping the essential action, image, and emotional beat.',
+  style:
+    'Rewrite the passage in the requested style. If the author gives no style note, make it more literary, concrete, and rhythmically varied.',
+};
+
+export function rewriteActionInstruction(action: RewriteAction): string {
+  return REWRITE_ACTION_INSTRUCTIONS[action] ?? REWRITE_ACTION_INSTRUCTIONS.rewrite;
+}
+
+export function buildRewriteSystemPrompt(params: {
+  action: RewriteAction;
+  title: string;
+  premise: string;
+  genre: string;
+  tone: string;
+  pov: string;
+  tense: string;
+  styleNotes: string;
+  contentPreferences: string;
+  instructions: string;
+  chapterNumber: number;
+  chapterTitle: string;
+  chapterBrief: string;
+  before: string;
+  selection: string;
+  after: string;
+  instruction: string;
+}): string {
+  return `${REWRITE_SYSTEM_PROMPT}
+
+## Novel
+Title: ${params.title || '(untitled)'}
+Premise: ${params.premise || '(not set)'}
+Genre: ${params.genre || '(not set)'}
+Tone: ${params.tone || '(not set)'}
+Point of view: ${params.pov || '(not set)'}
+Tense: ${params.tense || '(not set)'}
+Writing style: ${params.styleNotes || '(not set)'}
+Content preferences: ${params.contentPreferences || '(not set)'}
+Project instructions: ${params.instructions || '(none)'}
+
+## Chapter
+Chapter ${params.chapterNumber}: ${params.chapterTitle}
+Brief: ${params.chapterBrief || '(none)'}
+
+## Requested change
+${rewriteActionInstruction(params.action)}
+${params.instruction ? `Author's instruction: ${params.instruction}` : ''}
+
+## Text before the selection
+${params.before || '(The selection starts the chapter.)'}
+
+## Selected passage to replace
+${params.selection}
+
+## Text after the selection
+${params.after || '(The selection ends the chapter.)'}`;
+}
 
 export interface ParsedMemoryFact {
   kind:

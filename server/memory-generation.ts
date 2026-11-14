@@ -1,5 +1,5 @@
 import type { GenerationJob } from '../shared/types.js';
-import { countWords } from '../shared/utils.js';
+import { countWords, jobSettingsSnapshot } from '../shared/utils.js';
 import { approvedOutlineText } from './context.js';
 import { badRequest, conflict, errorMessage } from './errors.js';
 import {
@@ -277,6 +277,7 @@ export function startChapterMemoryGeneration(
     prompt: MEMORY_EXTRACTION_PROMPT,
     status: options.queued ? 'queued' : 'running',
     context: { stage: 'memory', connectionContextLength: contextLength },
+    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1100 }),
   });
   memoryPromptLimits.set(job.id, promptLimitForContext(contextLength));
   if (!options.queued) void runMemoryJob(job.id);
@@ -331,6 +332,7 @@ export function queueMemoryRebuild(projectId: string, chapterIds: string[]): Gen
       prompt: MEMORY_EXTRACTION_PROMPT,
       status: 'queued',
       context: { stage: 'memory', batch: unique.length, connectionContextLength: contextLength },
+      settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1100 }),
     }),
   );
   for (const job of jobs) {
@@ -375,6 +377,7 @@ export function startCharacterProposal(projectId: string): GenerationJob {
     model: model.model,
     prompt: CHARACTER_CASTING_PROMPT,
     context: { stage: 'characters', outlineTokens: Math.ceil(outline.length / 4) },
+    settings: jobSettingsSnapshot({ temperature: 0.7, topP: null, maxTokens: 2500 }),
   });
 
   void (async () => {

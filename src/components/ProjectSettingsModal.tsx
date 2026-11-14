@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type {
   ConnectionPublic,
   GenerationSettings,
+  ImagePromptTemplate,
   Project,
   PromptTemplate,
   ResolvedRole,
@@ -9,13 +10,14 @@ import type {
 } from '@shared/types';
 import { api, type ProjectSettingsResponse } from '../api';
 import { GenerationSettingsForm } from './GenerationSettingsForm';
+import { ImageTemplateManager } from './ImageTemplateManager';
 import { ProjectForm } from './ProjectForm';
 import { RoleEditor } from './RoleEditor';
 import { TemplateManager } from './TemplateManager';
 import { Banner, Modal, Spinner } from './ui';
 import { errorText } from '../utils';
 
-type Section = 'story' | 'generation' | 'models' | 'prompts' | 'danger';
+type Section = 'story' | 'generation' | 'models' | 'prompts' | 'images' | 'danger';
 
 export function ProjectSettingsModal({
   open,
@@ -34,6 +36,7 @@ export function ProjectSettingsModal({
 }) {
   const [section, setSection] = useState<Section>('story');
   const [data, setData] = useState<ProjectSettingsResponse | null>(null);
+  const [imageTemplates, setImageTemplates] = useState<ImagePromptTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
@@ -43,9 +46,11 @@ export function ProjectSettingsModal({
     setSection('story');
     setError(null);
     setLoading(true);
-    api
-      .getProjectSettings(project.id)
-      .then(setData)
+    Promise.all([api.getProjectSettings(project.id), api.listImageTemplates(project.id)])
+      .then(([settings, templates]) => {
+        setData(settings);
+        setImageTemplates(templates);
+      })
       .catch((err) => setError(errorText(err)))
       .finally(() => setLoading(false));
   }, [open, project.id]);
@@ -73,6 +78,10 @@ export function ProjectSettingsModal({
   const refreshTemplates = async () => {
     const templates = await api.listTemplates(project.id);
     setData((current) => (current ? { ...current, templates } : current));
+  };
+
+  const refreshImageTemplates = async () => {
+    setImageTemplates(await api.listImageTemplates(project.id));
   };
 
   const archive = async () => {
@@ -106,6 +115,7 @@ export function ProjectSettingsModal({
               ['generation', 'Generation'],
               ['models', 'Model overrides'],
               ['prompts', 'Prompt templates'],
+              ['images', 'Image prompts'],
               ['danger', 'Archive'],
             ] as Array<[Section, string]>
           ).map(([id, label]) => (
@@ -202,6 +212,25 @@ export function ProjectSettingsModal({
                 />
               </div>
             )
+          ) : null}
+
+          {section === 'images' ? (
+            <div className="settings-panel">
+              <header className="panel-header">
+                <div>
+                  <h2>Project image prompt templates</h2>
+                  <p className="muted">
+                    Add a prompt template for this novel, or use the global image prompts. The
+                    portrait studio lists both.
+                  </p>
+                </div>
+              </header>
+              <ImageTemplateManager
+                templates={imageTemplates}
+                projectId={project.id}
+                onChanged={refreshImageTemplates}
+              />
+            </div>
           ) : null}
 
           {section === 'danger' ? (

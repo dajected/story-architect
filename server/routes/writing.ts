@@ -21,7 +21,7 @@ import {
 import { buildProseContext } from '../context.js';
 import { modelContextLength } from '../store/connections.js';
 import { resolvePromptTemplate } from '../store/templates.js';
-import { startChapterGeneration, applyPartialJob } from '../generation.js';
+import { startChapterGeneration, applyPartialJob, applyRewriteJob, startContinuityReview, startRewriteGeneration } from '../generation.js';
 import { cancelJob, getJob, isTerminal, liveOutput, subscribe } from '../jobs.js';
 import type { JobEvent } from '../jobs.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
@@ -79,6 +79,7 @@ function buildContextInfo(chapterId: string, requestedPreset?: unknown): Context
     },
     sections: context.sections,
     warnings,
+    lore: context.lore,
     includedWords: context.includedWords,
     includedChapters: context.includedChapters,
     omittedChapters: context.omittedChapters,
@@ -148,6 +149,44 @@ writingRouter.get(
   '/chapters/:id/context',
   wrap((req, res) => {
     res.json(buildContextInfo(stringParam(req.params.id, 'chapter id'), req.query.preset));
+  }),
+);
+
+writingRouter.post(
+  '/chapters/:id/rewrite',
+  wrap((req, res) => {
+    const chapterId = stringParam(req.params.id, 'chapter id');
+    const body = parseBody(
+      z.object({
+        action: z.enum(['rewrite', 'expand', 'shorten', 'style']),
+        selection: z.string().min(1).max(12000),
+        start: z.number().int().min(0),
+        end: z.number().int().min(0),
+        instruction: z.string().max(8000).optional(),
+      }),
+      req.body,
+    );
+    res.status(202).json({ job: startRewriteGeneration(chapterId, body) });
+  }),
+);
+
+writingRouter.post(
+  '/chapters/:id/review',
+  wrap((req, res) => {
+    res.status(202).json({
+      job: startContinuityReview(stringParam(req.params.id, 'chapter id')),
+    });
+  }),
+);
+
+writingRouter.post(
+  '/jobs/:id/apply-rewrite',
+  wrap((req, res) => {
+    const body = parseBody(
+      z.object({ replacement: z.string().max(200000).optional() }).default({}),
+      req.body,
+    );
+    res.status(201).json(applyRewriteJob(stringParam(req.params.id, 'job id'), body.replacement));
   }),
 );
 

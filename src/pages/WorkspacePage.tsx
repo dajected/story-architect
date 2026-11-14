@@ -1,3 +1,4 @@
+import { BackupButton } from '../components/BackupButton';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type {
@@ -13,13 +14,15 @@ import { Brand, ThemeToggle, type Theme } from '../components/Chrome';
 import { ChapterEditor } from '../components/ChapterEditor';
 import { ChapterSidebar } from '../components/ChapterSidebar';
 import { CharactersPanel } from '../components/CharactersPanel';
+import { GenerationHistoryPanel } from '../components/GenerationHistoryPanel';
+import { LorePanel } from '../components/LorePanel';
 import { MemoryPanel } from '../components/MemoryPanel';
 import { OutlinePanel } from '../components/OutlinePanel';
 import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 import { Banner, EmptyState, Spinner } from '../components/ui';
 import { errorText, formatWords } from '../utils';
 
-type Tab = 'manuscript' | 'outline' | 'cast' | 'memory';
+type Tab = 'manuscript' | 'outline' | 'cast' | 'memory' | 'lore' | 'activity';
 
 export function WorkspacePage({
   theme,
@@ -210,6 +213,14 @@ export function WorkspacePage({
       ? `${proseRole.connectionName ?? 'connection'} / ${proseRole.model}`
       : null;
   const totalWords = chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
+  const selectedIndex = selectedId ? chapters.findIndex((chapter) => chapter.id === selectedId) : -1;
+  const navigateChapter = (direction: 'previous' | 'next') => {
+    if (selectedIndex < 0) return;
+    const target = chapters[selectedIndex + (direction === 'previous' ? -1 : 1)];
+    if (!target) return;
+    setTab('manuscript');
+    void selectChapter(target.id);
+  };
 
   return (
     <div className="workspace-shell">
@@ -242,6 +253,15 @@ export function WorkspacePage({
           <button className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
             Continuity
           </button>
+          <button className={tab === 'lore' ? 'active' : ''} onClick={() => setTab('lore')}>
+            Lore
+          </button>
+          <button
+            className={tab === 'activity' ? 'active' : ''}
+            onClick={() => setTab('activity')}
+          >
+            Activity
+          </button>
         </div>
 
         <div className="workspace-actions">
@@ -257,6 +277,7 @@ export function WorkspacePage({
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export
           </a>
+          <BackupButton projectId={project.id} label="Backup" />
           <button className="button button-ghost button-small" onClick={() => setSettingsOpen(true)}>
             Project settings
           </button>
@@ -349,6 +370,9 @@ export function WorkspacePage({
                 onRefreshChapter={refreshChapter}
                 onOpenOutline={() => setTab('outline')}
                 onOpenMemory={() => setTab('memory')}
+                onNavigate={navigateChapter}
+                canNavigatePrevious={selectedIndex > 0}
+                canNavigateNext={selectedIndex >= 0 && selectedIndex < chapters.length - 1}
               />
             ) : (
               <div className="workspace-scroll">
@@ -375,6 +399,7 @@ export function WorkspacePage({
                   project={project}
                   onProjectChanged={refreshAll}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  onOpenImageSettings={() => navigate('/settings?tab=image-connections')}
                 />
               </div>
             </div>
@@ -388,6 +413,22 @@ export function WorkspacePage({
                   onProjectChanged={refreshAll}
                   onOpenSettings={() => setSettingsOpen(true)}
                 />
+              </div>
+            </div>
+          ) : null}
+
+          {tab === 'lore' ? (
+            <div className="workspace-view">
+              <div className="workspace-scroll">
+                <LorePanel project={project} />
+              </div>
+            </div>
+          ) : null}
+
+          {tab === 'activity' ? (
+            <div className="workspace-view">
+              <div className="workspace-scroll">
+                <GenerationHistoryPanel project={project} />
               </div>
             </div>
           ) : null}

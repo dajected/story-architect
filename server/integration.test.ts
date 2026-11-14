@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
 
@@ -60,11 +61,26 @@ const CAST = JSON.stringify({
   ],
 });
 
+const REWRITE = 'A colder opening: the key was already warm, and the lock had turned itself.';
+
+const REVIEW =
+  'Continuity review: no conflicts found. The brass key and the observatory match accepted memory.';
+
+const IMAGE_PROMPT =
+  'A painterly portrait of Mara in a canvas coat before the observatory door, warm lamplight, ' +
+  'cinematic framing, detailed character design.';
+
+const TINY_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
 let app: Express;
 let apiServer: http.Server;
 let mockServer: http.Server;
 let baseUrl = '';
 let tempDir = '';
+let comfyPromptText = '';
+let recoveryHistoryReads = 0;
+let comfySubmissions = 0;
 
 function json(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -74,7 +90,80 @@ function json(res: http.ServerResponse, status: number, value: unknown) {
 function startMock(): Promise<void> {
   mockServer = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url?.endsWith('/models')) {
-      json(res, 200, { data: [{ id: 'mock-model', name: 'Mock model' }] });
+      json(res, 200, {
+        data: [
+          {
+            id: 'mock-model',
+            name: 'Mock model',
+            context_length: 128000,
+            pricing: { prompt: '0.000001', completion: '0.000002' },
+          },
+        ],
+      });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/images/generations') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        const parsed = JSON.parse(body) as { prompt?: string };
+        if (!parsed.prompt) {
+          json(res, 400, { error: { message: 'Prompt is required.' } });
+          return;
+        }
+        json(res, 200, {
+          created: Math.floor(Date.now() / 1000),
+          data: [{ b64_json: TINY_PNG, revised_prompt: parsed.prompt }],
+        });
+      });
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/comfy/system_stats') {
+      json(res, 200, { system: { comfyui_version: '0.3.0-test' } });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/comfy/prompt') {
+      comfySubmissions++;
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        const parsed = JSON.parse(body) as {
+          prompt?: { '6'?: { inputs?: { text?: string } } };
+        };
+        const text = parsed.prompt?.['6']?.inputs?.text ?? '';
+        if (!text) {
+          json(res, 400, { error: { message: 'The prompt node was not mapped.' } });
+          return;
+        }
+        comfyPromptText = text;
+        json(res, 200, { prompt_id: 'comfy-test-prompt', number: 1, node_errors: {} });
+      });
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/comfy/history/recovery-prompt') {
+      recoveryHistoryReads++;
+      json(res, 200, recoveryHistoryReads === 1 ? {} : {
+        'recovery-prompt': {
+          status: { completed: true, status_str: 'success' },
+          outputs: { '9': { images: [{ filename: 'portrait.png', subfolder: '', type: 'output' }] } },
+        },
+      });
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/comfy/history/comfy-test-prompt') {
+      json(res, 200, {
+        'comfy-test-prompt': {
+          status: { completed: true, status_str: 'success' },
+          outputs: {
+            '9': { images: [{ filename: 'portrait.png', subfolder: '', type: 'output' }] },
+          },
+        },
+      });
+      return;
+    }
+    if (req.method === 'GET' && req.url?.startsWith('/comfy/view')) {
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      res.end(Buffer.from(TINY_PNG, 'base64'));
       return;
     }
     if (req.method === 'POST' && req.url?.endsWith('/chat/completions')) {
@@ -88,21 +177,38 @@ function startMock(): Promise<void> {
           json(res, 500, { error: { message: 'Mock refusal.' } });
           return;
         }
-        const text = system.includes('chapter-by-chapter outline')
-          ? OUTLINE
-          : system.includes('continuity archivist')
-            ? MEMORY
-            : system.includes('casting editor')
-              ? CAST
-              : system.includes('drafting prose for a novel')
-                ? PROSE
-                : 'A mock assistant reply.';
-        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
-        }
-        res.write('data: [DONE]\n\n');
-        res.end();
+        const text = system.includes('art director')
+          ? IMAGE_PROMPT
+          : system.includes('chapter-by-chapter outline')
+            ? OUTLINE
+            : system.includes('continuity archivist')
+              ? MEMORY
+              : system.includes('casting editor')
+                ? CAST
+                : system.includes('line editor')
+                  ? REWRITE
+                  : system.includes('continuity editor')
+                    ? REVIEW
+                    : system.includes('drafting prose for a novel')
+                      ? PROSE
+                      : 'A mock assistant reply.';
+        const slow = (system + user).includes('SLOW');
+        const writeStream = () => {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
+          }
+          res.write(
+            `data: ${JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+            })}\n\n`,
+          );
+          res.write('data: [DONE]\n\n');
+          res.end();
+        };
+        if (slow) setTimeout(writeStream, 250);
+        else writeStream();
       });
       return;
     }
@@ -132,6 +238,18 @@ async function waitForJob(id: string) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error('Generation job did not finish.');
+}
+
+async function waitForImageJob(id: string) {
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const { job } = await request<{ job: { status: string; error?: string | null } }>(
+      'GET',
+      `/image-jobs/${id}`,
+    );
+    if (['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('Image job did not finish.');
 }
 
 async function waitForMemory(chapterId: string) {
@@ -554,4 +672,955 @@ describe('stage 2 memory, cast, and context', () => {
     const body = (await response.json()) as { error: string };
     expect(body.error).toMatch(/Focused|input budget/i);
   }, 20000);
+});
+
+describe('stage 3 lore and writing tools', () => {
+  it('activates lore predictably and applies a rewrite as a revision', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Lore Novel',
+      premise: 'A surveyor opens a buried observatory with a key that should not exist.',
+      chapterCount: 1,
+      targetChapterWords: 500,
+    });
+
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        {
+          id: manual.revision.chapters[0].id,
+          title: 'The Door',
+          brief: 'Mara opens the observatory door with the brass key.',
+        },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    const chapterId = chapters.chapters[0].id;
+
+    const { lorebook } = await request<{ lorebook: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/lorebooks`,
+      { name: 'Hill lore', description: 'The observatory and its history.' },
+    );
+    const always = await request<{ entry: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/lorebooks/${lorebook.id}/entries`,
+      {
+        title: 'The poisoned sea',
+        content: 'The sea below the hill has been poisoned since the flood.',
+        triggers: [],
+        alwaysInclude: true,
+        priority: 80,
+      },
+    );
+    const keyword = await request<{ entry: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/lorebooks/${lorebook.id}/entries`,
+      {
+        title: 'The buried observatory',
+        content: 'The observatory was sealed in 1904, long before the village.',
+        triggers: ['observatory'],
+        priority: 70,
+      },
+    );
+    const irrelevant = await request<{ entry: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/lorebooks/${lorebook.id}/entries`,
+      {
+        title: 'The desert road',
+        content: 'The desert road is impassable in summer.',
+        triggers: ['desert'],
+        priority: 90,
+      },
+    );
+    await request('POST', `/projects/${project.id}/lorebooks/${lorebook.id}/entries`, {
+      title: 'Never shown',
+      content: 'This entry is disabled and must not activate.',
+      triggers: ['observatory'],
+      enabled: false,
+      priority: 95,
+    });
+
+    // A reusable book created for another novel can be linked here.
+    const { project: otherProject } = await request<{ project: { id: string } }>(
+      'POST',
+      '/projects',
+      { title: 'Shared World' },
+    );
+    const { lorebook: sharedBook } = await request<{ lorebook: { id: string } }>(
+      'POST',
+      `/projects/${otherProject.id}/lorebooks`,
+      { name: 'Shared world notes' },
+    );
+    await request('POST', `/projects/${otherProject.id}/lorebooks/${sharedBook.id}/entries`, {
+      title: 'The brass key',
+      content: 'The key was cut from an alloy that does not corrode.',
+      triggers: ['brass key'],
+      priority: 60,
+    });
+    await request('POST', `/projects/${project.id}/lorebooks/${sharedBook.id}/link`, {});
+
+    const overview = await request<{
+      books: Array<{ id: string; owned: boolean }>;
+      entries: Array<{ id: string; title: string; pinned: boolean }>;
+      pinnedEntryIds: string[];
+    }>('GET', `/projects/${project.id}/lore`);
+    expect(overview.books).toHaveLength(2);
+    expect(overview.books.find((book) => book.id === sharedBook.id)?.owned).toBe(false);
+    expect(overview.entries).toHaveLength(5);
+    expect(overview.pinnedEntryIds).toHaveLength(0);
+
+    type LoreContext = {
+      estimatedTokens: number;
+      sections: Array<{ id: string; included: boolean; detail: string; tokens: number }>;
+      lore: {
+        activated: number;
+        omitted: number;
+        totalEntries: number;
+        entries: Array<{ title: string; reason: string; matched: string[] }>;
+        budgetTokens: number;
+      };
+    };
+    const baseContext = await request<LoreContext>(
+      'GET',
+      `/chapters/${chapterId}/context?preset=balanced`,
+    );
+    expect(baseContext.sections.find((section) => section.id === 'lore')?.included).toBe(true);
+    // This chapter has no memory yet, so section totals include every input token.
+    expect(baseContext.estimatedTokens).toBe(
+      baseContext.sections.reduce((total, section) => total + section.tokens, 0),
+    );
+    expect(baseContext.lore.totalEntries).toBe(5);
+    expect(baseContext.lore.activated).toBe(3);
+    const activatedTitles = baseContext.lore.entries
+      .filter((entry) => entry.reason !== 'budget')
+      .map((entry) => entry.title);
+    expect(activatedTitles).toContain('The poisoned sea');
+    expect(activatedTitles).toContain('The buried observatory');
+    expect(activatedTitles).toContain('The brass key');
+    expect(activatedTitles).not.toContain('The desert road');
+    expect(activatedTitles).not.toContain('Never shown');
+    const keywordEntry = baseContext.lore.entries.find(
+      (entry) => entry.title === 'The buried observatory',
+    );
+    expect(keywordEntry?.reason).toBe('keyword');
+    expect(keywordEntry?.matched).toContain('observatory');
+
+    // Pinning brings an otherwise irrelevant entry into the next generation.
+    await request('PUT', `/projects/${project.id}/lore/pins`, {
+      entryIds: [irrelevant.entry.id, always.entry.id],
+    });
+    const pinnedContext = await request<LoreContext>(
+      'GET',
+      `/chapters/${chapterId}/context?preset=balanced`,
+    );
+    expect(pinnedContext.lore.activated).toBe(4);
+    expect(
+      pinnedContext.lore.entries.find((entry) => entry.title === 'The desert road')?.reason,
+    ).toBe('manual');
+
+    const chapterJob = await request<{ job: { id: string } }>(
+      'POST',
+      `/chapters/${chapterId}/generate`,
+      { instructions: 'Hold the brass key in the foreground.' },
+    );
+    expect((await waitForJob(chapterJob.job.id)).status).toBe('completed');
+    await waitForMemory(chapterId);
+
+    // Pins were consumed by the generation.
+    const afterGeneration = await request<{ pinnedEntryIds: string[] }>(
+      'GET',
+      `/projects/${project.id}/lore`,
+    );
+    expect(afterGeneration.pinnedEntryIds).toHaveLength(0);
+
+    const detail = await request<{ chapter: { content: string } }>(
+      'GET',
+      `/chapters/${chapterId}`,
+    );
+    const selection = detail.chapter.content.slice(0, 40);
+    expect(selection.length).toBe(40);
+    const rewrite = await request<{ job: { id: string } }>(
+      'POST',
+      `/chapters/${chapterId}/rewrite`,
+      { action: 'rewrite', selection, start: 0, end: 40 },
+    );
+    const rewriteJob = await waitForJob(rewrite.job.id);
+    expect(rewriteJob.status).toBe('completed');
+    expect(String(rewriteJob.output)).toContain('colder opening');
+
+    const rewritten = await request<{
+      chapter: { content: string; revisions: Array<{ source: string }> };
+    }>('POST', `/jobs/${rewrite.job.id}/apply-rewrite`, { replacement: REWRITE });
+    expect(rewritten.chapter.content.startsWith('A colder opening')).toBe(true);
+    expect(rewritten.chapter.revisions.some((revision) => revision.source === 'rewrite')).toBe(
+      true,
+    );
+
+    // Applying a rewrite changes the source text, so derived memory goes stale.
+    const stale = await request<{ memory: { status: string } }>(
+      'GET',
+      `/chapters/${chapterId}/memory`,
+    );
+    expect(stale.memory.status).toBe('stale');
+
+    // Rewrites cannot be applied against a stale selection.
+    const staleApply = await fetch(`${baseUrl}/api/jobs/${rewrite.job.id}/apply-rewrite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(staleApply.status).toBe(409);
+  }, 40000);
+
+  it('runs a continuity review and manages reusable prose instructions', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Review Novel',
+      premise: 'A surveyor checks the record of a buried observatory.',
+      chapterCount: 1,
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        {
+          id: manual.revision.chapters[0].id,
+          title: 'The Record',
+          brief: 'Mara compares the survey maps against the archive.',
+        },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    const chapterId = chapters.chapters[0].id;
+
+    const generated = await request<{ job: { id: string } }>(
+      'POST',
+      `/chapters/${chapterId}/generate`,
+      {},
+    );
+    expect((await waitForJob(generated.job.id)).status).toBe('completed');
+    await waitForMemory(chapterId);
+
+    const review = await request<{ job: { id: string } }>(
+      'POST',
+      `/chapters/${chapterId}/review`,
+      {},
+    );
+    const reviewJob = await waitForJob(review.job.id);
+    expect(reviewJob.status).toBe('completed');
+    expect(String(reviewJob.output)).toContain('Continuity review');
+
+    const { instruction } = await request<{ instruction: { id: string; name: string } }>(
+      'POST',
+      `/projects/${project.id}/prose-instructions`,
+      { name: 'Terse prose', text: 'Keep sentences under twenty words.' },
+    );
+    const listed = await request<{ instructions: Array<{ id: string; name: string }> }>(
+      'GET',
+      `/projects/${project.id}/prose-instructions`,
+    );
+    expect(listed.instructions).toHaveLength(1);
+    const updated = await request<{ instruction: { name: string; text: string } }>(
+      'PATCH',
+      `/projects/${project.id}/prose-instructions/${instruction.id}`,
+      { name: 'Terse prose, revised' },
+    );
+    expect(updated.instruction.name).toBe('Terse prose, revised');
+    await request('DELETE', `/projects/${project.id}/prose-instructions/${instruction.id}`);
+    const afterDelete = await request<{ instructions: unknown[] }>(
+      'GET',
+      `/projects/${project.id}/prose-instructions`,
+    );
+    expect(afterDelete.instructions).toHaveLength(0);
+  }, 40000);
+});
+
+describe('stage 4 character image generation', () => {
+  it('expands a template and saves images through both adapters', async () => {
+    const mockPort = (globalThis as { __mockPort?: number }).__mockPort;
+    const { connections } = await request<{ connections: Array<{ id: string }> }>(
+      'GET',
+      '/connections',
+    );
+    const textConnection = connections[0];
+
+    await request('PUT', '/model-roles', {
+      scope: 'global',
+      assignments: [
+        { role: 'image_prompt', connectionId: textConnection.id, model: 'mock-model' },
+      ],
+    });
+
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Portrait Novel',
+      premise: 'A surveyor opens a buried observatory and wants a record of her face.',
+      genre: 'Gothic fantasy',
+      tone: 'Quiet, ominous',
+      styleNotes: 'Painterly and restrained.',
+      chapterCount: 1,
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        {
+          id: manual.revision.chapters[0].id,
+          title: 'The Door',
+          brief: 'Mara studies the observatory door by lamplight.',
+        },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    const chapterId = chapters.chapters[0].id;
+
+    const { character } = await request<{
+      character: { id: string; name: string; portraitAssetId: string | null };
+    }>('POST', `/projects/${project.id}/characters`, {
+      name: 'Mara Voss',
+      role: 'protagonist',
+      identity: 'A young surveyor who maps abandoned places.',
+      appearance: 'Cropped hair, ink-stained hands, a heavy canvas coat.',
+      personality: 'Patient and stubborn.',
+    });
+
+    const { template } = await request<{
+      template: { id: string; name: string; content: string };
+    }>('POST', '/image-prompt-templates', {
+      projectId: project.id,
+      name: 'Observatory portrait',
+      content:
+        'Portrait of {{character_name}} in {{clothing}}, {{scene}}. Visual style: {{visual_style}}.',
+      isDefault: true,
+    });
+    expect(template.id).toBeTruthy();
+
+    const expansion = await request<{ job: { id: string } }>(
+      'POST',
+      `/characters/${character.id}/images/prompt`,
+      {
+        chapterId,
+        templateId: template.id,
+        scene: 'Standing before the observatory door at dusk.',
+        clothing: 'A road-worn canvas coat',
+        visualStyle: 'Painterly book-cover illustration',
+      },
+    );
+    const expansionJob = await waitForJob(expansion.job.id);
+    expect(expansionJob.status).toBe('completed');
+    expect(String(expansionJob.output)).toContain('painterly portrait');
+
+    const { connection: imagesConnection } = await request<{
+      connection: { id: string; kind: string; hasApiKey: boolean };
+    }>('POST', '/image-connections', {
+      name: 'Mock image service',
+      kind: 'openai-images',
+      baseUrl: `http://127.0.0.1:${mockPort}/v1`,
+      apiKey: 'image-service-key',
+      settings: { model: 'mock-image', size: '1024x1024' },
+    });
+    expect(imagesConnection.hasApiKey).toBe(true);
+
+    const generated = await request<{ job: { id: string } }>(
+      'POST',
+      `/characters/${character.id}/images`,
+      {
+        connectionId: imagesConnection.id,
+        prompt: 'Edited portrait prompt: Mara before the observatory door, warm lamplight.',
+        negativePrompt: 'blurry, watermark',
+        chapterId,
+        templateId: template.id,
+        templateName: template.name,
+        templateContent: template.content,
+      },
+    );
+    const imageJob = await waitForImageJob(generated.job.id);
+    expect(imageJob.status, JSON.stringify(imageJob)).toBe('completed');
+
+    const overview = await request<{
+      character: { portraitAssetId: string | null; portraitUrl: string | null };
+      assets: Array<{
+        id: string;
+        url: string;
+        prompt: string;
+        negativePrompt: string;
+        templateName: string | null;
+        connectionName: string | null;
+        providerKind: string;
+        jobId: string | null;
+      }>;
+      jobs: Array<{ id: string; status: string }>;
+    }>('GET', `/characters/${character.id}/images`);
+    expect(overview.assets).toHaveLength(1);
+    expect(overview.character.portraitAssetId).toBeNull();
+    const asset = overview.assets[0];
+    expect(asset.prompt).toContain('Edited portrait prompt');
+    expect(asset.negativePrompt).toBe('blurry, watermark');
+    expect(asset.templateName).toBe('Observatory portrait');
+    expect(asset.connectionName).toBe('Mock image service');
+    expect(asset.providerKind).toBe('openai-images');
+    expect(asset.jobId).toBe(generated.job.id);
+
+    const imageResponse = await fetch(`${baseUrl}${asset.url}`);
+    expect(imageResponse.headers.get('content-type')).toContain('image/png');
+    const bytes = Buffer.from(await imageResponse.arrayBuffer());
+    expect(bytes[0]).toBe(0x89);
+
+    const portrait = await request<{
+      character: { portraitAssetId: string | null; portraitUrl: string | null };
+    }>('POST', `/characters/${character.id}/portrait`, { assetId: asset.id });
+    expect(portrait.character.portraitAssetId).toBe(asset.id);
+    expect(portrait.character.portraitUrl).toContain(asset.id);
+
+    const characters = await request<{
+      characters: Array<{ id: string; portraitAssetId: string | null }>;
+    }>('GET', `/projects/${project.id}/characters`);
+    expect(characters.characters.find((entry) => entry.id === character.id)?.portraitAssetId).toBe(
+      asset.id,
+    );
+
+    const workflow = {
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: '' } },
+      '9': { class_type: 'SaveImage', inputs: {} },
+    };
+    const { connection: comfy } = await request<{ connection: { id: string } }>(
+      'POST',
+      '/image-connections',
+      {
+        name: 'Mock ComfyUI',
+        kind: 'comfyui',
+        baseUrl: `http://127.0.0.1:${mockPort}/comfy`,
+        settings: {
+          workflow: JSON.stringify(workflow),
+          promptNode: '6',
+          promptInput: 'text',
+          outputNode: '9',
+          timeoutSeconds: 30,
+        },
+      },
+    );
+    const comfyTest = await request<{ ok: boolean; message: string }>(
+      'POST',
+      `/image-connections/${comfy.id}/test`,
+    );
+    expect(comfyTest.ok).toBe(true);
+
+    const comfyJobStart = await request<{ job: { id: string } }>(
+      'POST',
+      `/characters/${character.id}/images`,
+      {
+        connectionId: comfy.id,
+        prompt: 'A ComfyUI portrait of Mara at the observatory door.',
+        negativePrompt: 'blurry',
+        chapterId,
+      },
+    );
+    const comfyJob = await waitForImageJob(comfyJobStart.job.id);
+    expect(comfyJob.status, JSON.stringify(comfyJob)).toBe('completed');
+    expect(comfyPromptText).toBe('A ComfyUI portrait of Mara at the observatory door.');
+
+    const afterComfy = await request<{
+      assets: Array<{ jobId: string | null; providerKind: string }>;
+      jobs: Array<{ id: string; status: string; remoteId: string | null }>;
+    }>('GET', `/characters/${character.id}/images`);
+    expect(afterComfy.assets).toHaveLength(2);
+    const comfyAsset = afterComfy.assets.find((entry) => entry.jobId === comfyJobStart.job.id);
+    expect(comfyAsset?.providerKind).toBe('comfyui');
+    expect(afterComfy.jobs.find((entry) => entry.id === comfyJobStart.job.id)?.remoteId).toBe(
+      'comfy-test-prompt',
+    );
+
+    // Image connections stay separate from text models.
+    const settings = await request<{
+      roles: Array<{ role: string; connectionId: string | null; model: string | null }>;
+    }>('GET', '/settings');
+    const prose = settings.roles.find((role) => role.role === 'prose');
+    expect(prose?.connectionId).toBe(textConnection.id);
+    expect(prose?.model).toBe('mock-model');
+    const textConnections = await request<{ connections: unknown[] }>('GET', '/connections');
+    expect(textConnections.connections).toHaveLength(1);
+  }, 40000);
+});
+
+describe('stage 5 NAS operation and polish', () => {
+  it('reports schema and version on the health check', async () => {
+    const health = await request<{
+      ok: boolean;
+      version: string;
+      schemaVersion: number;
+      latestSchemaVersion: number;
+    }>('GET', '/health');
+    expect(health.ok).toBe(true);
+    expect(health.version).toBe('0.2.0');
+    expect(health.schemaVersion).toBe(health.latestSchemaVersion);
+    expect(health.schemaVersion).toBeGreaterThanOrEqual(5);
+  });
+
+  it('keeps a running job visible and refuses a duplicate paid request', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Slow Provider Novel',
+      premise: 'A long-running provider task should stay inspectable.',
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        {
+          id: manual.revision.chapters[0].id,
+          title: 'The Slow Reply',
+          brief: 'The observatory answers after a long delay.',
+        },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    const chapterId = chapters.chapters[0].id;
+
+    const started = await request<{ job: { id: string } }>(
+      'POST',
+      `/chapters/${chapterId}/generate`,
+      { instructions: 'SLOW' },
+    );
+    const running = await request<{ job: { status: string; model: string } }>(
+      'GET',
+      `/jobs/${started.job.id}`,
+    );
+    expect(['queued', 'running']).toContain(running.job.status);
+    expect(running.job.model).toBe('mock-model');
+
+    // A refreshed browser reattaches to the persisted stream and gets a snapshot.
+    const streamResponse = await fetch(`${baseUrl}/api/jobs/${started.job.id}/stream`);
+    expect(streamResponse.status).toBe(200);
+    const reader = streamResponse.body?.getReader();
+    expect(reader).toBeTruthy();
+    const firstChunk = await reader!.read();
+    const snapshot = new TextDecoder().decode(firstChunk.value);
+    expect(snapshot).toContain('event: snapshot');
+    expect(snapshot).toContain(started.job.id);
+    await reader!.cancel();
+
+    const duplicate = await fetch(`${baseUrl}/api/chapters/${chapterId}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions: 'SLOW' }),
+    });
+    expect(duplicate.status).toBe(409);
+
+    const finished = await waitForJob(started.job.id);
+    expect(finished.status).toBe('completed');
+    await waitForMemory(chapterId);
+  }, 40000);
+
+  it('records usage and cost, then restores a full project backup', async () => {
+    const { connections } = await request<{ connections: Array<{ id: string }> }>(
+      'GET',
+      '/connections',
+    );
+    const textConnection = connections[0];
+    const { connections: imageConnections } = await request<{
+      connections: Array<{ id: string; kind: string; name: string }>;
+    }>('GET', '/image-connections');
+    const imageConnection = imageConnections.find((entry) => entry.kind === 'openai-images');
+    expect(imageConnection).toBeTruthy();
+
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Backup Novel',
+      premise: 'A surveyor archives a buried observatory before the flood.',
+      genre: 'Gothic fantasy',
+      chapterCount: 2,
+      targetChapterWords: 500,
+    });
+    const manual = await request<{
+      revision: { id: string; chapters: Array<{ id: string }> };
+    }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: manual.revision.id,
+      chapters: [
+        {
+          id: manual.revision.chapters[0].id,
+          title: 'The Key',
+          brief: 'Mara finds the brass key beneath the observatory door.',
+        },
+        {
+          id: manual.revision.chapters[1]?.id ?? cryptoId(),
+          title: 'The Archive',
+          brief: 'Mara opens the sealed archive and reads the first record.',
+        },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${manual.revision.id}/approve`);
+    const chapters = await request<{ chapters: Array<{ id: string }> }>(
+      'GET',
+      `/projects/${project.id}/chapters`,
+    );
+    expect(chapters.chapters).toHaveLength(2);
+
+    for (const chapter of chapters.chapters) {
+      const generated = await request<{ job: { id: string } }>(
+        'POST',
+        `/chapters/${chapter.id}/generate`,
+        {},
+      );
+      expect((await waitForJob(generated.job.id)).status).toBe('completed');
+      await waitForMemory(chapter.id);
+    }
+
+    const memoryOverview = await request<{
+      facts: Array<{ id: string; status: string }>;
+    }>('GET', `/projects/${project.id}/memory`);
+    const proposed = memoryOverview.facts.find((fact) => fact.status === 'proposed');
+    expect(proposed).toBeTruthy();
+    await request('POST', `/facts/${proposed!.id}/accept`);
+
+    const { character } = await request<{
+      character: { id: string; name: string; portraitAssetId: string | null };
+    }>('POST', `/projects/${project.id}/characters`, {
+      name: 'Mara Voss',
+      role: 'protagonist',
+      identity: 'A surveyor of abandoned places.',
+      appearance: 'Cropped hair and a canvas coat.',
+    });
+
+    await request('POST', '/templates', {
+      projectId: project.id,
+      kind: 'prose',
+      name: 'Backup prose preset',
+      content:
+        'Write {{chapter_title}} for {{project_title}} with {{story_memory}} and {{lore}}. Target {{target_words}} words.',
+      isDefault: true,
+    });
+    const { template: imageTemplate } = await request<{ template: { id: string; name: string } }>(
+      'POST',
+      '/image-prompt-templates',
+      {
+        projectId: project.id,
+        name: 'Backup image preset',
+        content: 'Portrait of {{character_name}} in {{clothing}}, {{scene}}.',
+        isDefault: true,
+      },
+    );
+
+    const { lorebook } = await request<{ lorebook: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/lorebooks`,
+      { name: 'Archive lore', description: 'The observatory records.' },
+    );
+    await request('POST', `/projects/${project.id}/lorebooks/${lorebook.id}/entries`, {
+      title: 'The brass key',
+      content: 'The brass key was cut from an alloy that does not corrode.',
+      triggers: ['brass key'],
+      alwaysInclude: true,
+      priority: 70,
+    });
+    const { instruction } = await request<{ instruction: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/prose-instructions`,
+      { name: 'Terse voice', text: 'Keep sentences under twenty words.' },
+    );
+
+    const conversation = await request<{ conversation: { id: string } }>(
+      'POST',
+      `/projects/${project.id}/conversations`,
+      {},
+    );
+    const chat = await request<{ job: { id: string } }>(
+      'POST',
+      `/conversations/${conversation.conversation.id}/messages`,
+      { content: 'How should the archive smell?' },
+    );
+    expect((await waitForJob(chat.job.id)).status).toBe('completed');
+
+    const imageJob = await request<{ job: { id: string } }>(
+      'POST',
+      `/characters/${character.id}/images`,
+      {
+        connectionId: imageConnection!.id,
+        prompt: 'A portrait of Mara in the archive, lamplight and dust.',
+        negativePrompt: 'blurry',
+        templateId: imageTemplate.id,
+        templateName: imageTemplate.name,
+        templateContent: 'Portrait of {{character_name}} in {{clothing}}, {{scene}}.',
+      },
+    );
+    expect((await waitForImageJob(imageJob.job.id)).status).toBe('completed');
+    const gallery = await request<{ assets: Array<{ id: string; url: string }> }>(
+      'GET',
+      `/characters/${character.id}/images`,
+    );
+    expect(gallery.assets).toHaveLength(1);
+    await request('POST', `/characters/${character.id}/portrait`, {
+      assetId: gallery.assets[0].id,
+    });
+
+    const history = await request<{
+      entries: Array<{
+        id: string;
+        kind: string;
+        model: string;
+        usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | null;
+        estimatedCost: number | null;
+        settings: {
+          temperature: number | null;
+          maxTokens: number | null;
+          contextPreset?: string;
+        } | null;
+      }>;
+      summary: {
+        total: number;
+        pricedJobs: number;
+        estimatedCost: number | null;
+        promptTokens: number;
+      };
+    }>('GET', `/projects/${project.id}/generation-history`);
+    const chapterJob = history.entries.find((entry) => entry.kind === 'chapter');
+    expect(chapterJob).toBeTruthy();
+    expect(chapterJob?.model).toBe('mock-model');
+    expect(chapterJob?.usage?.promptTokens).toBe(100);
+    expect(chapterJob?.usage?.completionTokens).toBe(50);
+    expect(chapterJob?.estimatedCost).toBe(0.0002);
+    expect(chapterJob?.settings?.contextPreset).toBe('balanced');
+    expect(history.summary.pricedJobs).toBeGreaterThan(0);
+    expect(history.summary.estimatedCost).toBeGreaterThan(0);
+    expect(history.summary.promptTokens).toBeGreaterThan(0);
+
+    const backupResponse = await fetch(`${baseUrl}/api/projects/${project.id}/backup`);
+    expect(backupResponse.status).toBe(200);
+    expect(backupResponse.headers.get('content-type')).toContain('application/gzip');
+    const backupBytes = Buffer.from(await backupResponse.arrayBuffer());
+    expect(backupBytes.length).toBeGreaterThan(100);
+    const opened = zlib.gunzipSync(backupBytes);
+    expect(opened.includes(Buffer.from('secret-key'))).toBe(false);
+    expect(opened.includes(Buffer.from('image-service-key'))).toBe(false);
+    expect(opened.includes(Buffer.from('Backup Novel'))).toBe(true);
+    expect(opened.includes(Buffer.from('Backup prose preset'))).toBe(true);
+
+    const restoreResponse = await fetch(`${baseUrl}/api/projects/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/gzip' },
+      body: backupBytes,
+    });
+    const restoreText = await restoreResponse.text();
+    expect(restoreResponse.status, restoreText).toBe(201);
+    const restored = JSON.parse(restoreText) as {
+      project: { id: string; title: string; status: string };
+      stats: { chapters: number; revisions: number; characters: number; images: number };
+    };
+    expect(restored.project.id).not.toBe(project.id);
+    expect(restored.project.title).toBe('Backup Novel');
+    expect(restored.project.status).toBe('active');
+    expect(restored.stats.chapters).toBe(2);
+    expect(restored.stats.revisions).toBe(2);
+    expect(restored.stats.characters).toBe(1);
+    expect(restored.stats.images).toBe(1);
+
+    const restoredProjectId = restored.project.id;
+    const restoredChapters = await request<{ chapters: Array<{ id: string; title: string }> }>(
+      'GET',
+      `/projects/${restoredProjectId}/chapters`,
+    );
+    expect(restoredChapters.chapters).toHaveLength(2);
+    expect(restoredChapters.chapters.every((chapter) => chapter.id !== chapters.chapters[0].id)).toBe(
+      true,
+    );
+    const restoredChapter = await request<{
+      chapter: {
+        content: string;
+        currentRevisionId: string;
+        revisions: Array<{ id: string; source: string }>;
+      };
+    }>('GET', `/chapters/${restoredChapters.chapters[0].id}`);
+    expect(restoredChapter.chapter.content).toContain('observatory');
+    expect(restoredChapter.chapter.revisions).toHaveLength(1);
+    expect(restoredChapter.chapter.revisions[0].id).not.toBe(
+      (await request<{ chapter: { revisions: Array<{ id: string }> } }>(
+        'GET',
+        `/chapters/${chapters.chapters[0].id}`,
+      )).chapter.revisions[0].id,
+    );
+
+    // The second summary depends on the first chapter's ID in its fingerprint.
+    const restoredMemory = await request<{ memory: { status: string; summary: string | null } }>(
+      'GET',
+      `/chapters/${restoredChapters.chapters[1].id}/memory`,
+    );
+    expect(restoredMemory.memory.status).toBe('current');
+    expect(restoredMemory.memory.summary).toBeTruthy();
+
+    const restoredFacts = await request<{ facts: Array<{ status: string }>; counts: { establishedFacts: number } }>(
+      'GET',
+      `/projects/${restoredProjectId}/memory`,
+    );
+    expect(restoredFacts.counts.establishedFacts).toBeGreaterThan(0);
+
+    const restoredCast = await request<{
+      characters: Array<{ id: string; name: string; portraitAssetId: string | null }>;
+    }>('GET', `/projects/${restoredProjectId}/characters`);
+    expect(restoredCast.characters).toHaveLength(1);
+    expect(restoredCast.characters[0].name).toBe('Mara Voss');
+    expect(restoredCast.characters[0].portraitAssetId).toBeTruthy();
+
+    const restoredLore = await request<{
+      books: Array<{ name: string }>;
+      entries: Array<{ title: string }>;
+    }>('GET', `/projects/${restoredProjectId}/lore`);
+    expect(restoredLore.books.some((book) => book.name === 'Archive lore')).toBe(true);
+    expect(restoredLore.entries.some((entry) => entry.title === 'The brass key')).toBe(true);
+
+    const restoredInstructions = await request<{ instructions: Array<{ name: string }> }>(
+      'GET',
+      `/projects/${restoredProjectId}/prose-instructions`,
+    );
+    expect(restoredInstructions.instructions.some((entry) => entry.name === 'Terse voice')).toBe(true);
+
+    const restoredConversations = await request<{
+      conversations: Array<{ messageCount: number }>;
+    }>('GET', `/projects/${restoredProjectId}/conversations`);
+    expect(restoredConversations.conversations).toHaveLength(1);
+    expect(restoredConversations.conversations[0].messageCount).toBe(2);
+
+    const restoredTemplates = await request<{ templates: Array<{ name: string; isDefault: boolean }> }>(
+      'GET',
+      `/templates?projectId=${encodeURIComponent(restoredProjectId)}`,
+    );
+    expect(
+      restoredTemplates.templates.some(
+        (template) => template.name === 'Backup prose preset' && template.isDefault,
+      ),
+    ).toBe(true);
+    const restoredImageTemplates = await request<{
+      templates: Array<{ name: string; isDefault: boolean }>;
+    }>('GET', `/image-prompt-templates?projectId=${encodeURIComponent(restoredProjectId)}`);
+    expect(
+      restoredImageTemplates.templates.some(
+        (template) => template.name === 'Backup image preset' && template.isDefault,
+      ),
+    ).toBe(true);
+
+    const restoredOutline = await request<{
+      latest: { status: string; chapters: Array<{ id: string; title: string }> };
+    }>('GET', `/projects/${restoredProjectId}/outline`);
+    expect(restoredOutline.latest.status).toBe('approved');
+    expect(restoredOutline.latest.chapters.map((chapter) => chapter.id).sort()).toEqual(
+      restoredChapters.chapters.map((chapter) => chapter.id).sort(),
+    );
+
+    const restoredGallery = await request<{ assets: Array<{ id: string; url: string }> }>(
+      'GET',
+      `/characters/${restoredCast.characters[0].id}/images`,
+    );
+    expect(restoredGallery.assets).toHaveLength(1);
+    const imageResponse = await fetch(`${baseUrl}${restoredGallery.assets[0].url}`);
+    expect(imageResponse.status).toBe(200);
+    const imageBytes = Buffer.from(await imageResponse.arrayBuffer());
+    expect(imageBytes[0]).toBe(0x89);
+
+    const restoredHistory = await request<{ entries: unknown[] }>(
+      'GET',
+      `/projects/${restoredProjectId}/generation-history`,
+    );
+    expect(restoredHistory.entries).toHaveLength(0);
+
+    // The same archive can be restored again without colliding.
+    const secondRestore = await fetch(`${baseUrl}/api/projects/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/gzip' },
+      body: backupBytes,
+    });
+    const secondRestored = (await secondRestore.json()) as { project: { id: string; title: string } };
+    expect(secondRestore.status).toBe(201);
+    expect(secondRestored.project.title).toBe('Backup Novel');
+    expect(secondRestored.project.id).not.toBe(restoredProjectId);
+    expect(secondRestored.project.id).not.toBe(project.id);
+
+    // The original project is untouched by a restore.
+    const originalDetail = await request<{ chapter: { content: string } }>(
+      'GET',
+      `/chapters/${chapters.chapters[0].id}`,
+    );
+    expect(originalDetail.chapter.content).toContain('observatory');
+    expect(instruction.id).toBeTruthy();
+  }, 60000);
+});
+
+function cryptoId(): string {
+  return `test-${Math.random().toString(36).slice(2)}`;
+}
+
+describe('review regressions', () => {
+  it('refuses an incomplete backup when an image file is unreadable', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', { title: 'Missing image backup' });
+    const { character } = await request<{ character: { id: string } }>('POST', `/projects/${project.id}/characters`, { name: 'Mara' });
+    const { connections } = await request<{ connections: Array<{ id: string; kind: string }> }>('GET', '/image-connections');
+    const connection = connections.find((entry) => entry.kind === 'openai-images')!;
+    const { job } = await request<{ job: { id: string } }>('POST', `/characters/${character.id}/images`, { connectionId: connection.id, prompt: 'Portrait' });
+    expect((await waitForImageJob(job.id)).status).toBe('completed');
+    const { dbGet } = await import('./db.js');
+    const { imageFilePath } = await import('./store/images.js');
+    const asset = dbGet<{ file_name: string }>('SELECT file_name FROM image_assets WHERE job_id = ?', job.id)!;
+    const file = imageFilePath(asset.file_name);
+    const bytes = fs.readFileSync(file);
+    fs.unlinkSync(file);
+    try {
+      const response = await fetch(`${baseUrl}/api/projects/${project.id}/backup`);
+      expect(response.status).toBe(400);
+      expect(response.headers.get('content-type')).toContain('application/json');
+      expect((await response.json() as { error: string }).error).toContain('No incomplete backup was created');
+    } finally {
+      fs.writeFileSync(file, bytes);
+    }
+    expect((await fetch(`${baseUrl}/api/projects/${project.id}/backup`)).status).toBe(200);
+  });
+
+  it('recovers pending ComfyUI requests on startup and retry without resubmission', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', { title: 'Recovery' });
+    const { connections } = await request<{ connections: Array<{ id: string; kind: string; settings: import('../shared/types.js').ImageProviderSettings }> }>('GET', '/image-connections');
+    const connection = connections.find((entry) => entry.kind === 'comfyui')!;
+    const { createImageJob, updateImageJob, getImageJob } = await import('./store/images.js');
+    const { reconcileInterruptedImageJobs } = await import('./image-generation.js');
+    for (const mode of ['startup', 'retry']) {
+      const { character } = await request<{ character: { id: string } }>('POST', `/projects/${project.id}/characters`, { name: mode });
+      const job = createImageJob({ projectId: project.id, characterId: character.id, chapterId: null,
+        connectionId: connection.id, providerKind: 'comfyui', prompt: 'Recovered portrait', negativePrompt: '',
+        templateId: null, templateName: null, templateContent: '', settings: connection.settings });
+      updateImageJob(job.id, { status: 'interrupted', remote_id: 'recovery-prompt' });
+      recoveryHistoryReads = 0;
+      const before = comfySubmissions;
+      const recovering = mode === 'startup' ? reconcileInterruptedImageJobs() : Promise.resolve();
+      if (mode === 'retry') {
+        const retried = await request<{ job: { id: string; status: string } }>('POST', `/image-jobs/${job.id}/retry`);
+        expect(retried.job.id).toBe(job.id);
+        expect(retried.job.status).toBe('running');
+      }
+      expect(getImageJob(job.id).status).toBe('running');
+      const duplicate = await fetch(`${baseUrl}/api/characters/${character.id}/images`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connectionId: connection.id, prompt: 'Duplicate' }) });
+      expect(duplicate.status).toBe(409);
+      expect((await waitForImageJob(job.id)).status).toBe('completed');
+      await recovering;
+      expect(recoveryHistoryReads).toBeGreaterThanOrEqual(2);
+      expect(comfySubmissions).toBe(before);
+    }
+  }, 15000);
 });

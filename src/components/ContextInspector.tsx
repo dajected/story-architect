@@ -1,4 +1,18 @@
-import type { ContextInfo } from '@shared/types';
+import type { ContextInfo, LoreActivationReason } from '@shared/types';
+
+function loreReasonLabel(reason: LoreActivationReason): string {
+  if (reason === 'manual') return 'Pinned';
+  if (reason === 'always') return 'Always';
+  if (reason === 'budget') return 'Over budget';
+  return 'Keyword';
+}
+
+function loreReasonClass(reason: LoreActivationReason): string {
+  if (reason === 'budget') return 'badge-warning';
+  if (reason === 'manual') return 'badge-accent';
+  if (reason === 'always') return 'badge-success';
+  return '';
+}
 
 export function ContextInspector({ info }: { info: ContextInfo }) {
   const inputPct = Math.min(
@@ -52,6 +66,37 @@ export function ContextInspector({ info }: { info: ContextInfo }) {
           </div>
         ))}
       </div>
+
+      {info.lore.entries.length > 0 ? (
+        <div className="lore-activation">
+          <div className="lore-activation-head">
+            <span className="eyebrow">Lore activation</span>
+            <span className="muted small">
+              ≈ {info.lore.usedTokens.toLocaleString()} /{' '}
+              {info.lore.budgetTokens.toLocaleString()} lore tokens
+            </span>
+          </div>
+          <ul className="lore-activation-list">
+            {info.lore.entries.map((entry) => (
+              <li
+                key={entry.id}
+                className={entry.reason === 'budget' ? 'is-budget' : undefined}
+              >
+                <span className={`badge ${loreReasonClass(entry.reason)}`}>
+                  {loreReasonLabel(entry.reason)}
+                </span>
+                <strong>{entry.title}</strong>
+                <span className="muted small">
+                  {entry.lorebookName} · ≈ {entry.tokens.toLocaleString()} tokens
+                </span>
+                {entry.matched.length > 0 ? (
+                  <span className="muted small">matched {entry.matched.join(', ')}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {info.staleSummaries > 0 || info.pendingFacts > 0 ? (
         <div className="context-memory-flags">

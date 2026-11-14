@@ -4,6 +4,7 @@ import type {
   ChapterMemory,
   ChapterRevision,
   Character,
+  CharacterImageOverview,
   CharacterInput,
   ChatMessage,
   ConnectionKind,
@@ -12,15 +13,27 @@ import type {
   Conversation,
   Fact,
   FactInput,
+  GenerationHistory,
   GenerationJob,
+  ImageConnectionInput,
+  ImageConnectionPublic,
+  ImageJob,
+  ImagePromptTemplate,
+  ImageProviderSettings,
+  LoreEntry,
+  LoreEntryInput,
+  LoreOverview,
+  Lorebook,
   MemoryOverview,
   ModelOption,
   OutlineChapter,
   OutlineRevision,
   Project,
   ProjectSettings,
+  ProseInstruction,
   PromptTemplate,
   ResolvedRole,
+  RewriteAction,
   RoleAssignment,
   GenerationSettings,
   ContextPreset,
@@ -107,6 +120,58 @@ export interface ChapterGenerateInput {
   targetWords?: number | null;
 }
 
+export interface ChapterRewriteInput {
+  action: RewriteAction;
+  selection: string;
+  start: number;
+  end: number;
+  instruction?: string;
+}
+
+export interface LorebookInput {
+  name: string;
+  description?: string;
+}
+
+export interface ImagePromptExpansionInput {
+  chapterId?: string | null;
+  templateId?: string | null;
+  scene?: string;
+  clothing?: string;
+  visualStyle?: string;
+  instructions?: string;
+}
+
+export interface ImageGenerationInput {
+  connectionId: string;
+  prompt: string;
+  negativePrompt?: string;
+  chapterId?: string | null;
+  templateId?: string | null;
+  templateName?: string | null;
+  templateContent?: string | null;
+}
+
+export interface ImageTemplateInput {
+  projectId: string | null;
+  name: string;
+  content: string;
+  isDefault?: boolean;
+}
+
+export interface RestoreProjectResponse {
+  project: Project;
+  stats: {
+    chapters: number;
+    revisions: number;
+    characters: number;
+    facts: number;
+    loreEntries: number;
+    conversations: number;
+    images: number;
+  };
+}
+
 export const api = {
   // Connections
   listConnections: () =>
@@ -191,6 +256,30 @@ export const api = {
       generation,
     }).then((r) => r.generation),
   exportUrl: (id: string) => `/api/projects/${id}/export.md`,
+  backupUrl: (id: string) => `/api/projects/${id}/backup`,
+  getGenerationHistory: (id: string, limit = 200) =>
+    request<GenerationHistory>(
+      'GET',
+      `/projects/${id}/generation-history?limit=${encodeURIComponent(String(limit))}`,
+    ),
+  restoreProject: async (file: File): Promise<RestoreProjectResponse> => {
+    const response = await fetch('/api/projects/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/gzip' },
+      body: file,
+    });
+    if (!response.ok) {
+      let message = `Restore failed (${response.status}).`;
+      try {
+        const data = (await response.json()) as { error?: string };
+        if (data.error) message = data.error;
+      } catch {
+        // Keep the fallback message.
+      }
+      throw new ApiError(response.status, message);
+    }
+    return (await response.json()) as RestoreProjectResponse;
+  },
 
   // Outline
   getOutline: (projectId: string) => request<OutlineResponse>('GET', `/projects/${projectId}/outline`),
@@ -241,6 +330,18 @@ export const api = {
       'GET',
       `/chapters/${chapterId}/context${preset ? `?preset=${preset}` : ''}`,
     ),
+  rewriteChapter: (chapterId: string, input: ChapterRewriteInput) =>
+    request<{ job: GenerationJob }>('POST', `/chapters/${chapterId}/rewrite`, input).then(
+      (r) => r.job,
+    ),
+  applyRewrite: (jobId: string, replacement?: string) =>
+    request<{ revisionId: string; chapterId: string; chapter: ChapterDetail }>(
+      'POST',
+      `/jobs/${jobId}/apply-rewrite`,
+      replacement === undefined ? {} : { replacement },
+    ),
+  reviewChapter: (chapterId: string) =>
+    request<{ job: GenerationJob }>('POST', `/chapters/${chapterId}/review`).then((r) => r.job),
   getRevision: (revisionId: string) =>
     request<{ revision: ChapterRevision }>('GET', `/revisions/${revisionId}`).then(
       (r) => r.revision,
@@ -351,4 +452,139 @@ export const api = {
     request<{ count: number }>('POST', `/projects/${projectId}/memory/supersede-outdated`).then(
       (r) => r.count,
     ),
+
+  // Lore
+  getLore: (projectId: string) => request<LoreOverview>('GET', `/projects/${projectId}/lore`),
+  createLorebook: (projectId: string, input: LorebookInput) =>
+    request<{ lorebook: Lorebook }>('POST', `/projects/${projectId}/lorebooks`, input).then(
+      (r) => r.lorebook,
+    ),
+  updateLorebook: (projectId: string, bookId: string, input: Partial<LorebookInput>) =>
+    request<{ lorebook: Lorebook }>(
+      'PATCH',
+      `/projects/${projectId}/lorebooks/${bookId}`,
+      input,
+    ).then((r) => r.lorebook),
+  deleteLorebook: (projectId: string, bookId: string) =>
+    request<{ result: { deleted: boolean } }>(
+      'DELETE',
+      `/projects/${projectId}/lorebooks/${bookId}`,
+    ).then((r) => r.result),
+  linkLorebook: (projectId: string, bookId: string) =>
+    request<{ lorebook: Lorebook }>(
+      'POST',
+      `/projects/${projectId}/lorebooks/${bookId}/link`,
+    ).then((r) => r.lorebook),
+  unlinkLorebook: (projectId: string, bookId: string) =>
+    request<void>('POST', `/projects/${projectId}/lorebooks/${bookId}/unlink`),
+  createLoreEntry: (projectId: string, bookId: string, input: LoreEntryInput) =>
+    request<{ entry: LoreEntry }>(
+      'POST',
+      `/projects/${projectId}/lorebooks/${bookId}/entries`,
+      input,
+    ).then((r) => r.entry),
+  updateLoreEntry: (projectId: string, entryId: string, input: Partial<LoreEntryInput>) =>
+    request<{ entry: LoreEntry }>(
+      'PATCH',
+      `/projects/${projectId}/lore-entries/${entryId}`,
+      input,
+    ).then((r) => r.entry),
+  deleteLoreEntry: (projectId: string, entryId: string) =>
+    request<void>('DELETE', `/projects/${projectId}/lore-entries/${entryId}`),
+  setLorePins: (projectId: string, entryIds: string[]) =>
+    request<{ pinnedEntryIds: string[] }>('PUT', `/projects/${projectId}/lore/pins`, {
+      entryIds,
+    }).then((r) => r.pinnedEntryIds),
+  clearLorePins: (projectId: string) =>
+    request<void>('DELETE', `/projects/${projectId}/lore/pins`),
+
+  // Saved prose instructions
+  listProseInstructions: (projectId: string) =>
+    request<{ instructions: ProseInstruction[] }>(
+      'GET',
+      `/projects/${projectId}/prose-instructions`,
+    ).then((r) => r.instructions),
+  createProseInstruction: (projectId: string, input: { name: string; text: string }) =>
+    request<{ instruction: ProseInstruction }>(
+      'POST',
+      `/projects/${projectId}/prose-instructions`,
+      input,
+    ).then((r) => r.instruction),
+  updateProseInstruction: (projectId: string, id: string, input: { name?: string; text?: string }) =>
+    request<{ instruction: ProseInstruction }>(
+      'PATCH',
+      `/projects/${projectId}/prose-instructions/${id}`,
+      input,
+    ).then((r) => r.instruction),
+  deleteProseInstruction: (projectId: string, id: string) =>
+    request<void>('DELETE', `/projects/${projectId}/prose-instructions/${id}`),
+
+  // Image connections and prompt templates
+  listImageConnections: () =>
+    request<{ connections: ImageConnectionPublic[] }>('GET', '/image-connections').then(
+      (r) => r.connections,
+    ),
+  createImageConnection: (input: ImageConnectionInput) =>
+    request<{ connection: ImageConnectionPublic }>('POST', '/image-connections', input).then(
+      (r) => r.connection,
+    ),
+  updateImageConnection: (id: string, input: Partial<ImageConnectionInput>) =>
+    request<{ connection: ImageConnectionPublic }>(
+      'PATCH',
+      `/image-connections/${id}`,
+      input,
+    ).then((r) => r.connection),
+  deleteImageConnection: (id: string) =>
+    request<void>('DELETE', `/image-connections/${id}`),
+  testImageConnection: (id: string) =>
+    request<{ ok: boolean; message: string }>('POST', `/image-connections/${id}/test`),
+
+  listImageTemplates: (projectId?: string) =>
+    request<{ templates: ImagePromptTemplate[] }>(
+      'GET',
+      `/image-prompt-templates${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ).then((r) => r.templates),
+  createImageTemplate: (input: ImageTemplateInput) =>
+    request<{ template: ImagePromptTemplate }>('POST', '/image-prompt-templates', input).then(
+      (r) => r.template,
+    ),
+  updateImageTemplate: (
+    id: string,
+    input: { name?: string; content?: string; isDefault?: boolean },
+  ) =>
+    request<{ template: ImagePromptTemplate }>('PATCH', `/image-prompt-templates/${id}`, input).then(
+      (r) => r.template,
+    ),
+  deleteImageTemplate: (id: string) =>
+    request<void>('DELETE', `/image-prompt-templates/${id}`),
+  setDefaultImageTemplate: (id: string) =>
+    request<{ template: ImagePromptTemplate }>(
+      'POST',
+      `/image-prompt-templates/${id}/default`,
+    ).then((r) => r.template),
+
+  // Character images
+  getCharacterImages: (characterId: string) =>
+    request<CharacterImageOverview>('GET', `/characters/${characterId}/images`),
+  expandImagePrompt: (characterId: string, input: ImagePromptExpansionInput) =>
+    request<{ job: GenerationJob }>('POST', `/characters/${characterId}/images/prompt`, input).then(
+      (r) => r.job,
+    ),
+  generateCharacterImage: (characterId: string, input: ImageGenerationInput) =>
+    request<{ job: ImageJob }>('POST', `/characters/${characterId}/images`, input).then(
+      (r) => r.job,
+    ),
+  getImageJob: (jobId: string) =>
+    request<{ job: ImageJob }>('GET', `/image-jobs/${jobId}`).then((r) => r.job),
+  cancelImageJob: (jobId: string) =>
+    request<{ job: ImageJob }>('POST', `/image-jobs/${jobId}/cancel`).then((r) => r.job),
+  retryImageJob: (jobId: string) =>
+    request<{ job: ImageJob }>('POST', `/image-jobs/${jobId}/retry`).then((r) => r.job),
+  setCharacterPortrait: (characterId: string, assetId: string | null) =>
+    request<{ character: Character }>('POST', `/characters/${characterId}/portrait`, {
+      assetId,
+    }).then((r) => r.character),
+  deleteImageAsset: (assetId: string) => request<void>('DELETE', `/image-assets/${assetId}`),
 };
+
+export type { ImageProviderSettings };

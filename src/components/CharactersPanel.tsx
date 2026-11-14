@@ -3,6 +3,7 @@ import type { Character, CharacterInput, GenerationJob, Project } from '@shared/
 import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate } from '../utils';
+import { ImageStudio } from './ImageStudio';
 import { Banner, EmptyState, Modal, Spinner } from './ui';
 
 const EMPTY_FORM: CharacterInput = {
@@ -20,10 +21,12 @@ export function CharactersPanel({
   project,
   onProjectChanged,
   onOpenSettings,
+  onOpenImageSettings,
 }: {
   project: Project;
   onProjectChanged: () => Promise<void>;
   onOpenSettings: () => void;
+  onOpenImageSettings: () => void;
 }) {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +35,7 @@ export function CharactersPanel({
   const [editing, setEditing] = useState<{ id: string | null; form: CharacterInput } | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [studioCharacter, setStudioCharacter] = useState<Character | null>(null);
   const finishedRef = useRef<(job: GenerationJob) => void>(() => {});
   const stream = useJobStream((job) => finishedRef.current(job));
   const outputRef = useRef<HTMLDivElement | null>(null);
@@ -142,6 +146,13 @@ export function CharactersPanel({
     } finally {
       setBusyId(null);
     }
+  };
+
+  const handleCharacterUpdated = (updated: Character) => {
+    setCharacters((current) =>
+      current.map((character) => (character.id === updated.id ? updated : character)),
+    );
+    setStudioCharacter((current) => (current?.id === updated.id ? updated : current));
   };
 
   const active = characters.filter((character) => character.status === 'active');
@@ -314,17 +325,26 @@ export function CharactersPanel({
             {active.map((character) => (
               <article className="cast-card" key={character.id}>
                 <div className="cast-card-head">
-                  <div>
-                    <h3>{character.name}</h3>
-                    <span className="muted small">
-                      {character.role || 'Unassigned role'} · {character.factCount} linked{' '}
-                      {character.factCount === 1 ? 'fact' : 'facts'}
-                    </span>
+                  <div className="cast-identity">
+                    <CharacterPortrait character={character} />
+                    <div>
+                      <h3>{character.name}</h3>
+                      <span className="muted small">
+                        {character.role || 'Unassigned role'} · {character.factCount} linked{' '}
+                        {character.factCount === 1 ? 'fact' : 'facts'}
+                      </span>
+                    </div>
                   </div>
                   <span className="badge badge-accent">Active</span>
                 </div>
                 <ProfileSummary character={character} />
                 <div className="row-actions">
+                  <button
+                    className="button button-small"
+                    onClick={() => setStudioCharacter(character)}
+                  >
+                    Portrait &amp; gallery
+                  </button>
                   <button
                     className="button button-ghost button-small"
                     onClick={() => setEditing({ id: character.id, form: toForm(character) })}
@@ -466,7 +486,41 @@ export function CharactersPanel({
           </div>
         ) : null}
       </Modal>
+
+      <ImageStudio
+        open={studioCharacter !== null}
+        project={project}
+        character={studioCharacter}
+        onClose={() => setStudioCharacter(null)}
+        onCharacterUpdated={handleCharacterUpdated}
+        onOpenSettings={() => {
+          setStudioCharacter(null);
+          onOpenSettings();
+        }}
+        onOpenImageSettings={() => {
+          setStudioCharacter(null);
+          onOpenImageSettings();
+        }}
+      />
     </div>
+  );
+}
+
+function CharacterPortrait({ character }: { character: Character }) {
+  if (character.portraitUrl) {
+    return (
+      <img
+        className="cast-portrait-thumb"
+        src={character.portraitUrl}
+        alt={`${character.name} portrait`}
+        loading="lazy"
+      />
+    );
+  }
+  return (
+    <span className="cast-portrait-placeholder" aria-hidden="true">
+      {character.name.slice(0, 1).toUpperCase()}
+    </span>
   );
 }
 

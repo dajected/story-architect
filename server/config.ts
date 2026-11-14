@@ -13,9 +13,13 @@ function resolveRootDir(): string {
 
 const rootDir = resolveRootDir();
 
+const dataDir = path.resolve(process.env.DATA_DIR || path.join(rootDir, 'data'));
+
 export const config = {
   rootDir,
-  dataDir: path.resolve(process.env.DATA_DIR || path.join(rootDir, 'data')),
+  dataDir,
+  backupsDir: path.join(dataDir, 'backups'),
+  imagesDir: path.join(dataDir, 'images'),
   port: Number(process.env.PORT || 3000),
   host: process.env.HOST || '0.0.0.0',
   publicUrl: process.env.PUBLIC_URL || '',
@@ -25,7 +29,11 @@ export const config = {
 
 export function ensureDataDirs(): void {
   fs.mkdirSync(config.dataDir, { recursive: true });
+  fs.mkdirSync(config.backupsDir, { recursive: true });
+  fs.mkdirSync(config.imagesDir, { recursive: true });
 }
 
 export const dbPath = path.join(config.dataDir, 'story-architect.db');
 export const keyPath = path.join(config.dataDir, 'secret.key');
+export const backupsDir = path.join(config.dataDir, 'backups');
+export const imagesDir = path.join(config.dataDir, 'images');
