@@ -12,12 +12,14 @@ import { AssistantPanel } from '../components/AssistantPanel';
 import { Brand, ThemeToggle, type Theme } from '../components/Chrome';
 import { ChapterEditor } from '../components/ChapterEditor';
 import { ChapterSidebar } from '../components/ChapterSidebar';
+import { CharactersPanel } from '../components/CharactersPanel';
+import { MemoryPanel } from '../components/MemoryPanel';
 import { OutlinePanel } from '../components/OutlinePanel';
 import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 import { Banner, EmptyState, Spinner } from '../components/ui';
 import { errorText, formatWords } from '../utils';
 
-type Tab = 'manuscript' | 'outline';
+type Tab = 'manuscript' | 'outline' | 'cast' | 'memory';
 
 export function WorkspacePage({
   theme,
@@ -234,6 +236,12 @@ export function WorkspacePage({
           <button className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
             Outline
           </button>
+          <button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>
+            Cast
+          </button>
+          <button className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
+            Continuity
+          </button>
         </div>
 
         <div className="workspace-actions">
@@ -340,6 +348,7 @@ export function WorkspacePage({
                 onChapterUpdated={handleChapterUpdated}
                 onRefreshChapter={refreshChapter}
                 onOpenOutline={() => setTab('outline')}
+                onOpenMemory={() => setTab('memory')}
               />
             ) : (
               <div className="workspace-scroll">
@@ -358,6 +367,30 @@ export function WorkspacePage({
               </div>
             )}
           </div>
+
+          {tab === 'cast' ? (
+            <div className="workspace-view">
+              <div className="workspace-scroll">
+                <CharactersPanel
+                  project={project}
+                  onProjectChanged={refreshAll}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {tab === 'memory' ? (
+            <div className="workspace-view">
+              <div className="workspace-scroll">
+                <MemoryPanel
+                  project={project}
+                  onProjectChanged={refreshAll}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <AssistantPanel

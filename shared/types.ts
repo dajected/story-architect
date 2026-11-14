@@ -16,7 +16,7 @@ export const ROLE_HINTS: Record<TaskRole, string> = {
   default: 'Used by any task that has no override.',
   outline: 'Plans the novel and its chapter outline.',
   prose: 'Drafts chapters and powers the assistant chat.',
-  memory: 'Reserved for summaries and continuity once stage 2 ships.',
+  memory: 'Writes chapter summaries, proposes continuity facts, and casts characters from the outline.',
   image_prompt: 'Reserved for image prompt expansion once stage 4 ships.',
 };
 
@@ -34,20 +34,23 @@ export const CONTEXT_PRESETS: ContextPresetInfo[] = [
   {
     id: 'focused',
     label: 'Focused',
-    description: 'Project instructions, the current brief and a short run of recent prose.',
-    budgetTokens: 2500,
+    description:
+      'The brief, key character facts and the last summary or two, with a short run of recent prose.',
+    budgetTokens: 4000,
   },
   {
     id: 'balanced',
     label: 'Balanced',
-    description: 'The default. A few pages of recent prose alongside the brief.',
-    budgetTokens: 6000,
+    description:
+      'The default. Chapter summaries, active characters and continuity facts plus a few pages of recent prose.',
+    budgetTokens: 8000,
   },
   {
     id: 'broad',
     label: 'Broad',
-    description: 'A larger slice of preceding prose for sweeping continuity.',
-    budgetTokens: 12000,
+    description:
+      'A larger memory and prose window for sweeping continuity across many chapters.',
+    budgetTokens: 16000,
   },
 ];
 
@@ -191,7 +194,7 @@ export interface ChapterDetail extends Chapter {
   latestJob: GenerationJob | null;
 }
 
-export type GenerationJobKind = 'outline' | 'chapter' | 'chat';
+export type GenerationJobKind = 'outline' | 'chapter' | 'chat' | 'memory' | 'characters';
 
 export type GenerationJobStatus =
   | 'queued'
@@ -257,6 +260,174 @@ export interface PromptTemplate {
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export type CharacterStatus = 'proposed' | 'active' | 'archived';
+
+export type CharacterSource = 'manual' | 'outline' | 'memory';
+
+export interface Character {
+  id: string;
+  projectId: string;
+  name: string;
+  role: string;
+  identity: string;
+  appearance: string;
+  personality: string;
+  goals: string;
+  relationships: string;
+  notes: string;
+  status: CharacterStatus;
+  source: CharacterSource;
+  factCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CharacterInput {
+  name: string;
+  role?: string;
+  identity?: string;
+  appearance?: string;
+  personality?: string;
+  goals?: string;
+  relationships?: string;
+  notes?: string;
+}
+
+export type MemoryStatus = 'current' | 'stale' | 'missing' | 'pending' | 'empty';
+
+export interface ChapterMemory {
+  chapterId: string;
+  projectId: string;
+  chapterTitle: string;
+  orderIndex: number;
+  wordCount: number;
+  summary: string | null;
+  sourceRevisionId: string | null;
+  sourceWordCount: number;
+  generatedAt: string | null;
+  updatedAt: string | null;
+  status: MemoryStatus;
+  staleReasons: string[];
+  activeJobId: string | null;
+  proposedFactCount: number;
+}
+
+export type FactKind =
+  | 'character_development'
+  | 'relationship'
+  | 'timeline'
+  | 'plot_thread'
+  | 'world';
+
+export const FACT_KIND_LABELS: Record<FactKind, string> = {
+  character_development: 'Character development',
+  relationship: 'Relationship',
+  timeline: 'Timeline event',
+  plot_thread: 'Unresolved thread',
+  world: 'World detail',
+};
+
+/** Authored world facts, established events, and future plans are kept distinct. */
+export type FactClass = 'authored' | 'established' | 'plan';
+
+export const FACT_CLASS_LABELS: Record<FactClass, string> = {
+  authored: 'World fact',
+  established: 'Established',
+  plan: 'Plan',
+};
+
+export type FactStatus = 'proposed' | 'established' | 'superseded' | 'rejected';
+
+export type FactOrigin = 'authored' | 'extracted';
+
+export interface Fact {
+  id: string;
+  projectId: string;
+  kind: FactKind;
+  factClass: FactClass;
+  statement: string;
+  characterId: string | null;
+  characterName: string | null;
+  chapterId: string | null;
+  chapterTitle: string | null;
+  chapterOrder: number | null;
+  scopeChapterId: string | null;
+  scopeChapterTitle: string | null;
+  scopeChapterOrder: number | null;
+  sourceRevisionId: string | null;
+  sourceOutdated: boolean;
+  status: FactStatus;
+  origin: FactOrigin;
+  acceptedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FactInput {
+  kind?: FactKind;
+  factClass?: FactClass;
+  statement?: string;
+  characterId?: string | null;
+  scopeChapterId?: string | null;
+  chapterId?: string | null;
+}
+
+export interface MemoryCounts {
+  chapters: number;
+  current: number;
+  stale: number;
+  missing: number;
+  pending: number;
+  proposedFacts: number;
+  establishedFacts: number;
+  outdatedFacts: number;
+  activeCharacters: number;
+  proposedCharacters: number;
+}
+
+export interface MemoryOverview {
+  projectId: string;
+  chapters: ChapterMemory[];
+  characters: Character[];
+  facts: Fact[];
+  counts: MemoryCounts;
+  activeJobs: GenerationJob[];
+  recentJobs: GenerationJob[];
+  memoryRole: { connectionId: string; connectionName: string | null; model: string } | null;
+}
+
+export interface ContextSection {
+  id: string;
+  label: string;
+  tokens: number;
+  included: boolean;
+  detail: string;
+  note?: string;
+}
+
+export interface ContextInfo {
+  preset: ContextPreset;
+  budgetTokens: number;
+  reservedOutputTokens: number;
+  availableInputTokens: number;
+  requiredTokens: number;
+  estimatedTokens: number;
+  totalEstimatedTokens: number;
+  tokenEstimate: 'approximate';
+  model: {
+    connectionName: string | null;
+    model: string | null;
+    contextLength: number | null;
+  };
+  sections: ContextSection[];
+  warnings: string[];
+  includedWords: number;
+  includedChapters: number;
+  omittedChapters: number;
+  staleSummaries: number;
+  pendingFacts: number;
 }
 
 export interface ProjectDraft {

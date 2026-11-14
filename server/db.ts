@@ -168,6 +168,63 @@ const migrations: Array<() => void> = [
       CREATE INDEX idx_jobs_chapter ON generation_jobs(chapter_id, created_at);
     `);
   },
+  () => {
+    db.exec(`
+      CREATE TABLE characters (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT '',
+        identity TEXT NOT NULL DEFAULT '',
+        appearance TEXT NOT NULL DEFAULT '',
+        personality TEXT NOT NULL DEFAULT '',
+        goals TEXT NOT NULL DEFAULT '',
+        relationships TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE chapter_memory (
+        chapter_id TEXT PRIMARY KEY REFERENCES chapters(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        summary TEXT NOT NULL,
+        source_revision_id TEXT,
+        source_content_hash TEXT NOT NULL DEFAULT '',
+        source_word_count INTEGER NOT NULL DEFAULT 0,
+        preceding_signature TEXT NOT NULL DEFAULT '',
+        generated_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        job_id TEXT
+      );
+
+      CREATE TABLE facts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        fact_class TEXT NOT NULL DEFAULT 'established',
+        statement TEXT NOT NULL,
+        character_id TEXT REFERENCES characters(id) ON DELETE SET NULL,
+        chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
+        scope_chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
+        source_revision_id TEXT,
+        source_content_hash TEXT,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        origin TEXT NOT NULL DEFAULT 'extracted',
+        accepted_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_characters_project ON characters(project_id, status, name COLLATE NOCASE);
+      CREATE INDEX idx_chapter_memory_project ON chapter_memory(project_id);
+      CREATE INDEX idx_facts_project ON facts(project_id, status, created_at);
+      CREATE INDEX idx_facts_chapter ON facts(chapter_id);
+      CREATE INDEX idx_facts_character ON facts(character_id);
+    `);
+  },
 ];
 
 function migrate(): void {

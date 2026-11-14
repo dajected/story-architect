@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { ContextInfo, ContextPreset } from '../../shared/types.js';
 import {
   getChapter,
   getChapterDetail,
@@ -12,14 +13,79 @@ import {
   getChapterRow,
 } from '../store/chapters.js';
 import { getProject } from '../store/projects.js';
-import { isContextPreset, getProjectGeneration } from '../store/settings.js';
+import {
+  isContextPreset,
+  getProjectGeneration,
+  resolveRoles,
+} from '../store/settings.js';
 import { buildProseContext } from '../context.js';
+import { modelContextLength } from '../store/connections.js';
+import { resolvePromptTemplate } from '../store/templates.js';
 import { startChapterGeneration, applyPartialJob } from '../generation.js';
 import { cancelJob, getJob, isTerminal, liveOutput, subscribe } from '../jobs.js';
 import type { JobEvent } from '../jobs.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const writingRouter = Router();
+
+function buildContextInfo(chapterId: string, requestedPreset?: unknown): ContextInfo {
+  const chapterRow = getChapterRow(chapterId);
+  const project = getProject(chapterRow.project_id);
+  const chapter = getChapter(chapterId);
+  const settings = getProjectGeneration(project.id);
+  const preset: ContextPreset = isContextPreset(requestedPreset)
+    ? requestedPreset
+    : settings.contextPreset;
+  const targetWords = settings.targetWords ?? project.targetChapterWords ?? 1800;
+  const roles = resolveRoles(project.id);
+  const proseRole = roles.find((role) => role.role === 'prose');
+  const memoryRole = roles.find((role) => role.role === 'memory');
+  const contextLength =
+    proseRole?.connectionId && proseRole.model
+      ? modelContextLength(proseRole.connectionId, proseRole.model)
+      : null;
+  const template = resolvePromptTemplate(project.id, 'prose');
+  const context = buildProseContext(project, chapter, {
+    preset,
+    targetWords,
+    templateContent: template.content,
+    modelContextLength: contextLength,
+    maxTokens: settings.maxTokens,
+  });
+
+  const warnings = [...context.warnings];
+  if (!proseRole?.connectionId || !proseRole.model) {
+    warnings.push('No prose model is configured. Assign one in Settings before generating.');
+  }
+  if (!memoryRole?.connectionId || !memoryRole.model) {
+    warnings.push(
+      'No memory model is configured, so chapter summaries and fact extraction cannot run automatically.',
+    );
+  }
+
+  return {
+    preset,
+    budgetTokens: context.budgetTokens,
+    reservedOutputTokens: context.reservedOutputTokens,
+    availableInputTokens: context.availableInputTokens,
+    requiredTokens: context.requiredTokens,
+    estimatedTokens: context.estimatedTokens,
+    totalEstimatedTokens: context.estimatedTokens + context.reservedOutputTokens,
+    tokenEstimate: 'approximate',
+    model: {
+      connectionName: proseRole?.connectionName ?? null,
+      model: proseRole?.model ?? null,
+      contextLength,
+    },
+    sections: context.sections,
+    warnings,
+    includedWords: context.includedWords,
+    includedChapters: context.includedChapters,
+    omittedChapters: context.omittedChapters,
+    staleSummaries: context.staleSummaries,
+    pendingFacts: context.pendingFacts,
+  };
+}
 
 writingRouter.get(
   '/projects/:id/chapters',
@@ -81,23 +147,7 @@ writingRouter.post(
 writingRouter.get(
   '/chapters/:id/context',
   wrap((req, res) => {
-    const chapterId = stringParam(req.params.id, 'chapter id');
-    const chapterRow = getChapterRow(chapterId);
-    const project = getProject(chapterRow.project_id);
-    const chapter = getChapter(chapterId);
-    const requested = req.query.preset;
-    const preset = isContextPreset(requested)
-      ? requested
-      : getProjectGeneration(project.id).contextPreset;
-    const context = buildProseContext(project, chapter, preset);
-    res.json({
-      preset,
-      budgetTokens: context.budgetTokens,
-      estimatedTokens: context.estimatedTokens,
-      includedWords: context.includedWords,
-      includedChapters: context.includedChapters,
-      omittedChapters: context.omittedChapters,
-    });
+    res.json(buildContextInfo(stringParam(req.params.id, 'chapter id'), req.query.preset));
   }),
 );
 

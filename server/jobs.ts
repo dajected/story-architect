@@ -78,6 +78,7 @@ export function createJob(params: {
   model: string;
   prompt: string;
   context?: unknown;
+  status?: 'queued' | 'running';
 }): GenerationJob {
   const id = crypto.randomUUID();
   const at = timestamp();
@@ -85,10 +86,11 @@ export function createJob(params: {
     `INSERT INTO generation_jobs (
        id, project_id, kind, status, chapter_id, conversation_id, connection_id, model,
        prompt, context_json, output, error, usage, revision_id, created_at, started_at, finished_at
-     ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, '', NULL, NULL, NULL, ?, ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, NULL, NULL, ?, ?, NULL)`,
     id,
     params.projectId,
     params.kind,
+    params.status ?? 'running',
     params.chapterId ?? null,
     params.conversationId ?? null,
     params.connectionId,
@@ -96,7 +98,7 @@ export function createJob(params: {
     params.prompt,
     params.context ? JSON.stringify(params.context) : null,
     at,
-    at,
+    params.status === 'queued' ? null : at,
   );
   return getJob(id);
 }
@@ -146,6 +148,42 @@ export function activeChatJob(conversationId: string): GenerationJob | null {
   return row ? mapJob(row) : null;
 }
 
+export function activeJobForChapterKind(
+  chapterId: string,
+  kind: GenerationJobKind,
+): GenerationJob | null {
+  const row = dbGet<JobRow>(
+    `SELECT * FROM generation_jobs WHERE chapter_id = ? AND kind = ? AND status IN ('queued', 'running')
+     ORDER BY created_at DESC LIMIT 1`,
+    chapterId,
+    kind,
+  );
+  return row ? mapJob(row) : null;
+}
+
+export function activeProjectJobKind(
+  projectId: string,
+  kind: GenerationJobKind,
+): GenerationJob | null {
+  const row = dbGet<JobRow>(
+    `SELECT * FROM generation_jobs WHERE project_id = ? AND kind = ? AND status IN ('queued', 'running')
+     ORDER BY created_at DESC LIMIT 1`,
+    projectId,
+    kind,
+  );
+  return row ? mapJob(row) : null;
+}
+
+export function listActiveJobs(projectId: string): GenerationJob[] {
+  const rows = dbAll<JobRow>(
+    `SELECT * FROM generation_jobs
+      WHERE project_id = ? AND status IN ('queued', 'running')
+      ORDER BY created_at ASC`,
+    projectId,
+  );
+  return rows.map(mapJob);
+}
+
 export function listProjectJobs(projectId: string, limit = 20): GenerationJob[] {
   const rows = dbAll<JobRow>(
     'SELECT * FROM generation_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?',
@@ -157,7 +195,12 @@ export function listProjectJobs(projectId: string, limit = 20): GenerationJob[] 
 
 export function updateJob(
   id: string,
-  patch: Partial<Pick<JobRow, 'status' | 'output' | 'error' | 'usage' | 'revision_id' | 'finished_at'>>,
+  patch: Partial<
+    Pick<
+      JobRow,
+      'status' | 'output' | 'error' | 'usage' | 'revision_id' | 'finished_at' | 'started_at'
+    >
+  >,
 ): GenerationJob {
   const fields: string[] = [];
   const values: Array<string | null> = [];
@@ -184,6 +227,10 @@ export function updateJob(
   if (patch.finished_at !== undefined) {
     fields.push('finished_at = ?');
     values.push(patch.finished_at);
+  }
+  if (patch.started_at !== undefined) {
+    fields.push('started_at = ?');
+    values.push(patch.started_at);
   }
   if (fields.length > 0) {
     dbRun(`UPDATE generation_jobs SET ${fields.join(', ')} WHERE id = ?`, ...values, id);

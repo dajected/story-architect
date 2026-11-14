@@ -1,7 +1,7 @@
-# Stage 1 implementation notes
+# Stage 1–2 implementation notes
 
-Status: stage 1 implemented and runnable. These notes are for maintainers and the
-next stage; the product requirements live in
+Status: stages 1 and 2 implemented and runnable. These notes are for maintainers
+and the next stage; the product requirements live in
 [PRODUCT_PLAN.md](PRODUCT_PLAN.md).
 
 ## Layout
@@ -57,10 +57,22 @@ Core tables:
 - `conversations` and `messages` — assistant history, separate from prose;
   `incomplete` marks a recovered partial reply.
 - `generation_jobs` — kind, status, model, prompt, context metadata, streamed
-  output, error, usage, and resulting revision.
+  output, error, usage, and resulting revision. Kinds are `outline`, `chapter`,
+  `chat`, `memory`, and `characters`.
+- `characters` — stable project-scoped IDs, profile fields, status
+  (`proposed`/`active`/`archived`), and source (`manual`/`outline`/`memory`).
+- `chapter_memory` — one derived summary per chapter, with its source revision,
+  a short content hash (so in-place autosave edits are noticed), source word
+  count, the preceding-text fingerprint at generation time, and the producing
+  job. Staleness is computed by comparing these to the current manuscript.
+- `facts` — reviewable continuity records with kind, class
+  (`authored`/`established`/`plan`), status
+  (`proposed`/`established`/`superseded`/`rejected`), origin, optional character,
+  source chapter, source revision, source content hash, and optional chapter
+  scope.
 
-Reserved for later stages: memory/continuity records, characters, lorebooks, and
-image assets. The role rows for `memory` and `image_prompt` already exist.
+Reserved for later stages: lorebooks and image assets. The `image_prompt` role
+row already exists.
 
 ## Revision semantics
 
@@ -94,11 +106,61 @@ image assets. The role rows for `memory` and `image_prompt` already exist.
 7. Cancellation aborts the provider request; existing chapter text is untouched,
    and the partial output remains on the job.
 
-The context builder uses presets of roughly 2,500 / 6,000 / 12,000 tokens. It
-reserves room for project metadata and the brief, then keeps the most recent
-preceding prose, trimming at a line boundary and recording how many chapters were
-dropped. Token counts are estimates (four characters per token) and are labelled
-as such in the interface.
+## Context assembly
+
+The context builder works in two layers:
+
+1. **Required input** — project metadata, standing instructions, the chapter
+   brief, additional instructions, and the prompt template. Estimated tokens for
+   this layer are checked first. Output capacity is reserved from the smaller of
+   the configured max-output tokens or roughly 1.5 tokens per target word, with a
+   800-token floor.
+2. **Optional memory and prose** — within the remaining input budget, capped by
+   the selected model's known context window when available:
+   - chapter summaries (most recent first, rendered chronologically);
+   - active character profiles ranked by mention in the brief, recent summaries,
+     and linked facts;
+   - established, in-scope facts. Facts from later chapters and plans scoped to
+     later chapters are excluded;
+   - recent preceding prose trimmed at a line boundary.
+
+Presets are roughly 4,000 / 8,000 / 16,000 input tokens for Focused, Balanced,
+and Broad. A single oversized section is shed rather than allowed to overflow.
+If required input cannot fit, generation returns a 409 with the estimate, the
+preset or model window, and the reserved output capacity instead of silently
+dropping instructions. All token counts are estimates (four characters per
+token) and are labelled as such in the interface.
+
+The inspector response and the job's `context_json` record each section's
+included state, token estimate, item counts, omissions, stale-summary count, and
+pending-fact count. Custom prose templates without `{{story_memory}}` still
+receive the memory block, appended after rendering.
+
+## Memory flow
+
+1. When a generated or recovered chapter draft becomes current, an automatic
+   `memory` job starts if a memory role resolves. Editing, restoring, or choosing
+   an alternative does not auto-run; staleness is shown and rebuild is explicit.
+2. The memory job reads the current chapter revision plus preceding summaries,
+   established facts, and cast names, and requests JSON with a summary and facts.
+3. The summary is saved against the source revision and a fingerprint of every
+   preceding chapter revision. Unparseable output keeps the job and raw reply for
+   retry; a prose-only reply can still be saved as a summary.
+4. Facts are inserted as `proposed`. Identical statements already proposed,
+   established, or rejected in that chapter are skipped; superseded facts may be
+   proposed again after a rebuild.
+5. Staleness is computed, not stored: a summary is stale when its source
+   revision or source content hash changed, or its preceding-text fingerprint no
+   longer matches. Later summaries become stale when an earlier chapter changes,
+   including in-place autosave edits. Facts expose `sourceOutdated` when their
+   source revision or content hash differs from the chapter's current text.
+6. `POST /projects/:id/memory/rebuild` queues stale or missing chapters as
+   `queued` jobs and runs one at a time per project. Queued jobs survive a
+   restart as `interrupted` through the existing boot recovery.
+
+The memory role also powers outline casting. Proposals are stored as
+`proposed` characters and are excluded from context until accepted. Existing
+names are never overwritten.
 
 ## API surface
 
@@ -125,6 +187,15 @@ All routes are under `/api`; responses are JSON except Markdown export and SSE.
   `POST /projects/:id/conversations`, `DELETE /conversations/:id`,
   `GET /conversations/:id/messages`, `POST /conversations/:id/messages`.
 - Suggestions: `POST /suggest`.
+- Characters: `GET/POST /projects/:id/characters`,
+  `POST /projects/:id/characters/propose`, `PATCH /characters/:id`,
+  `POST /characters/:id/accept|archive`.
+- Memory: `GET /projects/:id/memory`, `GET /chapters/:id/memory`,
+  `POST /chapters/:id/memory/rebuild`, `PATCH /chapters/:id/memory`,
+  `POST /projects/:id/memory/rebuild`,
+  `POST /projects/:id/memory/supersede-outdated`,
+  `GET/POST /projects/:id/memory/facts`, `GET/PATCH/DELETE /facts/:id`,
+  `POST /facts/:id/accept|reject|supersede`.
 - Health: `GET /health`.
 
 ## Provider adapter contract
@@ -140,14 +211,17 @@ servers without discovery.
 Sampling fields are omitted when unset so each provider's defaults apply. Usage
 is recorded when the provider reports prompt and completion tokens.
 
-## Stage 2 preparation
+## Stage 3 preparation
 
-- Add migrations; do not rewrite migration 1.
-- Memory roles already resolve through the same routing table.
-- The context builder is the place to insert summaries, character facts, and
-  lore with explicit provenance and budgets.
-- Outline revisions and chapter revisions carry stable IDs suitable for source
-  references from derived memory.
-- Editing/restoring a chapter currently does not mark derived memory stale
-  because that feature does not exist yet; the revision IDs are the anchor for
-  adding it.
+- Add migration 3; do not rewrite migrations 1 or 2.
+- Lore can use the same section shape as memory in the context builder: a
+  labelled, trimmed section with provenance in the inspector.
+- `facts` already carries class, scope, source revision, and review status;
+  lorebook entries should stay separate from canon facts rather than overloading
+  this table.
+- Selected-text rewrite actions should flow through the existing persisted job
+  and revision pipeline, and should mark affected chapter memory stale exactly as
+  an ordinary edit does.
+- The prose template already exposes `{{story_memory}}`; add lore through an
+  explicit placeholder or an appended section so custom templates do not silently
+  lose it.

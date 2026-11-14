@@ -157,3 +157,14 @@ export function connectionName(id: string | null): string | null {
   const row = dbGet<{ name: string }>('SELECT name FROM connections WHERE id = ?', id);
   return row?.name ?? null;
 }
+
+export function modelContextLength(connectionId: string, model: string): number | null {
+  try {
+    const row = getConnectionRow(connectionId);
+    const entry = parseModels(row.models).find((option) => option.id === model);
+    const length = entry?.contextLength;
+    return typeof length === 'number' && Number.isFinite(length) && length > 0 ? length : null;
+  } catch {
+    return null;
+  }
+}

@@ -6,8 +6,9 @@ A self-hosted AI writing workspace for novels. Plan a premise, approve a chapter
 outline, draft chapters with a model of your choice, revise with full history,
 talk ideas through with an assistant, and export the manuscript as Markdown.
 
-Stage 1 is implemented: the complete outline-to-chapter workflow described in
-[docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
+Stage 2 is implemented: persistent story memory, a reviewable cast, continuity
+facts, and revision-aware stale-memory handling on top of the stage 1 workflow
+described in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
 
 ## What is in stage 1
 
@@ -33,15 +34,41 @@ Stage 1 is implemented: the complete outline-to-chapter workflow described in
 - **Revision history** — preview any version, use a generated alternative as the
   current text, or restore an old version as a new revision. Generated drafts
   never silently replace existing prose.
-- **Simple context presets** — Focused, Balanced, and Broad, assembled from
-  project instructions, the current brief, and recent preceding prose within a
-  token budget. The estimated context size is shown before generation.
+- **Simple context presets** — Focused, Balanced, and Broad, with a token budget
+  applied to every chapter request. Stage 2 adds memory and the full inspector.
 - **Assistant chat** — conversations saved separately from the manuscript, with
   streaming replies. Suggestions enter the manuscript only through an explicit
   "Insert into chapter" action.
 - **Markdown export** — current chapter text in manuscript order.
 - **Docker** — a Linux amd64 image and Compose file with persistent `/data`
   storage for the TrueNAS host.
+
+## What stage 2 adds
+
+- **Cast** — characters created manually or proposed from the approved outline.
+  Proposals stay separate until accepted. Profiles cover identity, appearance,
+  personality, goals, relationships, and notes, and feed chapter context.
+- **Memory role** — the assigned memory model writes summaries, extracts
+  continuity facts, and casts characters, routing separately from prose.
+- **Chapter summaries** — the memory role summarises a chapter after its draft
+  becomes current. You can rebuild or hand-edit a summary at any time.
+- **Continuity facts** — character developments, relationships, timeline events,
+  unresolved threads, and world details are proposed for review with their source
+  chapter and revision. Only accepted facts enter new prompts; superseded facts
+  stop entering immediately.
+- **Class and scope** — authored world facts, established events, and future
+  plans are labelled distinctly. Facts can be story-wide or scoped to a chapter,
+  so later developments never read as established history in earlier scenes.
+- **Revision-aware stale memory** — editing or restoring an earlier chapter marks
+  its summary stale and later dependent summaries as potentially outdated.
+  Rebuilds update derived information against the current revision; later prose
+  is never rewritten silently.
+- **Context inspector** — shows the selected model, its context window, the
+  required and optional sections, token estimates, trimming, stale summaries,
+  and facts awaiting review before a chapter is generated.
+- **Budget safety** — output capacity is reserved up front. If the required brief
+  and instructions cannot fit, generation is refused with an explanation rather
+  than dropping essential instructions.
 
 ## Get the code
 
@@ -197,9 +224,14 @@ chats are unaffected and remain readable.
    needed, then edit the draft in the manuscript.
 6. Open **History** to compare revisions, use a generated alternative, or
    restore an older version as a new revision.
-7. Ask the assistant for help. Use **Insert into chapter** only when you want a
+7. Open **Cast** to add characters or propose them from the outline. Accept the
+   proposals you want in the story.
+8. After a chapter becomes current, open **Continuity** to review its summary
+   and proposed facts. Accept the facts that are canon, supersede anything the
+   new text has made obsolete, and rebuild stale summaries after editing.
+9. Ask the assistant for help. Use **Insert into chapter** only when you want a
    message to become manuscript text.
-8. **Export** downloads the current manuscript as Markdown.
+10. **Export** downloads the current manuscript as Markdown.
 
 ## How generation behaves
 
@@ -209,10 +241,20 @@ chats are unaffected and remain readable.
 - The latest outline revision must be approved before drafting. Saving changes
   to an approved outline creates a new revision and pauses drafting until that
   revision is approved. Removing a chapter that already has text is refused.
-- Chapter context uses project instructions, the chapter brief, and the current
-  text of preceding chapters. The context preset sets an approximate budget;
-  the inspector line before generation shows estimated tokens and how many
-  earlier chapters were trimmed.
+- Chapter context uses required project instructions and the current brief,
+  accepted character profiles, preceding chapter summaries, established facts,
+  and a bounded run of recent prose. The preset sets an approximate input budget;
+  the context inspector shows required tokens, sections, trimming, the model's
+  known window, and how much output capacity is reserved.
+- Editing or restoring a chapter changes its revision ID. Its summary is marked
+  stale, and later summaries whose preceding revisions changed are marked
+  potentially outdated. Rebuilding replaces the derived memory from the current
+  text; later chapters are never rewritten automatically.
+- Only accepted facts enter prompts. Proposed facts wait in Continuity, and
+  superseded or rejected facts are excluded. Facts scoped to a later chapter, and
+  plans without a scope, are kept out of earlier scenes.
+- The memory role also proposes the cast from the approved outline. Proposed
+  characters are excluded from context until accepted.
 - Generation never overwrites current prose. If the chapter is empty, the new
   draft becomes current; otherwise it is stored as an alternative revision that
   can be previewed and explicitly made current.
@@ -256,13 +298,14 @@ npm test
 npm run build
 ```
 
-`npm test` includes unit tests for outline parsing and word counting plus an
-in-process end-to-end workflow against a mock OpenAI-compatible provider. A
-manual pass can use any real endpoint. The stage 1 completion criteria are listed
-in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
+`npm test` includes unit tests for outline and continuity parsing plus an
+in-process end-to-end workflow against a mock OpenAI-compatible provider covering
+both the stage 1 drafting loop and stage 2 memory, cast, staleness, fact review,
+and context budgeting. A manual pass can use any real endpoint. The stage
+completion criteria are listed in [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md).
 
-## Deferred beyond stage 1
+## Deferred beyond stage 2
 
-Memory and character tracking, lorebooks, rewrite tools, image generation, and
-backup tooling are planned in later stages. The data model reserves roles and
-tables for them, but the stage 1 interface does not expose those features.
+Lorebooks, selected-text rewrite tools, image generation, and backup tooling are
+planned in later stages. The data model reserves roles and tables for them, but
+the interface does not expose those features yet.

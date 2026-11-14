@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChapterDetail,
+  ChapterMemory,
   ChapterRevisionMeta,
   ContextPreset,
   GenerationJob,
@@ -12,6 +13,7 @@ import { countWords } from '@shared/utils';
 import { api, type ContextInfo } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate, formatWords } from '../utils';
+import { ContextInspector } from './ContextInspector';
 import { Markdown } from './Markdown';
 import { RevisionHistory } from './RevisionHistory';
 import { Banner, Modal, Spinner } from './ui';
@@ -23,6 +25,7 @@ export function ChapterEditor({
   onChapterUpdated,
   onRefreshChapter,
   onOpenOutline,
+  onOpenMemory,
 }: {
   project: Project;
   chapter: ChapterDetail;
@@ -30,6 +33,7 @@ export function ChapterEditor({
   onChapterUpdated: (chapter: ChapterDetail) => void;
   onRefreshChapter: () => Promise<void>;
   onOpenOutline: () => void;
+  onOpenMemory: () => void;
 }) {
   const [content, setContent] = useState(chapter.content);
   const [savedContent, setSavedContent] = useState(chapter.content);
@@ -46,6 +50,7 @@ export function ChapterEditor({
   );
   const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
+  const [memory, setMemory] = useState<ChapterMemory | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [alternativeRevisionId, setAlternativeRevisionId] = useState<string | null>(null);
@@ -91,6 +96,7 @@ export function ChapterEditor({
           setSavedContent(snapshot);
           setSavedAt(new Date().toISOString());
           onChapterUpdated(updated);
+          refreshMemory();
         } catch (err) {
           setSaveError(errorText(err));
         } finally {
@@ -107,6 +113,19 @@ export function ChapterEditor({
         void api.saveChapterContent(chapter.id, contentRef.current).catch(() => undefined);
       }
     };
+  }, [chapter.id]);
+
+  const refreshMemory = () => {
+    api
+      .getChapterMemory(chapter.id)
+      .then((result) => setMemory(result.memory))
+      .catch(() => undefined);
+  };
+
+  useEffect(() => {
+    refreshMemory();
+    // Memory status is per chapter; reload when the editor switches chapters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id]);
 
   useEffect(() => {
@@ -158,6 +177,12 @@ export function ChapterEditor({
       }
     } catch {
       await onRefreshChapter();
+    }
+    refreshMemory();
+    if (job.status === 'completed') {
+      // A summary may have been queued automatically after this draft.
+      window.setTimeout(refreshMemory, 5000);
+      window.setTimeout(refreshMemory, 20000);
     }
   };
 
@@ -290,6 +315,9 @@ export function ChapterEditor({
           <button className="button button-ghost button-small" onClick={onOpenOutline}>
             Edit outline
           </button>
+          <button className="button button-ghost button-small" onClick={onOpenMemory}>
+            Continuity
+          </button>
           <button className="button button-ghost button-small" onClick={() => setHistoryOpen(true)}>
             History
           </button>
@@ -365,6 +393,23 @@ export function ChapterEditor({
           </span>
         </div>
         <p>{chapter.brief || 'No brief has been written for this chapter yet.'}</p>
+        {memory ? (
+          <div className="brief-memory">
+            <span className={`badge ${memoryBadgeClass(memory.status)}`}>
+              Memory: {memoryLabel(memory.status)}
+            </span>
+            {memory.summary ? (
+              <span className="muted small">{clampSummary(memory.summary)}</span>
+            ) : (
+              <span className="muted small">
+                No summary yet. The memory model builds one after this chapter becomes current.
+              </span>
+            )}
+            <button className="button button-ghost button-small" onClick={onOpenMemory}>
+              Review
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {showGenerate ? (
@@ -411,19 +456,15 @@ export function ChapterEditor({
           </div>
 
           {contextInfo ? (
-            <p className="context-note">
-              ≈ {contextInfo.estimatedTokens.toLocaleString()} / {contextInfo.budgetTokens.toLocaleString()}{' '}
-              estimated input tokens · {formatWords(contextInfo.includedWords)} words of recent prose
-              {contextInfo.omittedChapters > 0
-                ? ` · ${contextInfo.omittedChapters} earlier chapter${contextInfo.omittedChapters === 1 ? '' : 's'} trimmed`
-                : ''}
-            </p>
-          ) : null}
+            <ContextInspector info={contextInfo} />
+          ) : (
+            <p className="context-note">Estimating the context…</p>
+          )}
           {contextError ? <p className="field-hint error-text">{contextError}</p> : null}
           <p className="field-hint">
-            Context is assembled from project instructions, this brief, and preceding prose.
-            Existing text is never overwritten; a draft becomes current only when the chapter is
-            empty.
+            Context is assembled from required project instructions, derived story memory, and
+            preceding prose within the preset budget. Outdated summaries are labelled rather than
+            dropped, and proposed facts are excluded until you accept them.
           </p>
 
           {generateError ? (
@@ -578,4 +619,24 @@ export function ChapterEditor({
 
 function presetDescription(preset: ContextPreset): string {
   return CONTEXT_PRESETS.find((entry) => entry.id === preset)?.description ?? '';
+}
+
+function memoryBadgeClass(status: ChapterMemory['status']): string {
+  if (status === 'current') return 'badge-success';
+  if (status === 'stale') return 'badge-warning';
+  if (status === 'pending') return 'badge-accent';
+  return '';
+}
+
+function memoryLabel(status: ChapterMemory['status']): string {
+  if (status === 'current') return 'current';
+  if (status === 'stale') return 'stale';
+  if (status === 'pending') return 'rebuilding';
+  if (status === 'empty') return 'no text';
+  return 'not built';
+}
+
+function clampSummary(summary: string): string {
+  const text = summary.replace(/\s+/g, ' ').trim();
+  return text.length > 220 ? `${text.slice(0, 219)}…` : text;
 }

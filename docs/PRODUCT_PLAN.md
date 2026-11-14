@@ -1,6 +1,6 @@
 # Story Architect product plan
 
-Status: stage 1 implemented. See [README](../README.md) and
+Status: stages 1 and 2 implemented. See [README](../README.md) and
 [IMPLEMENTATION.md](IMPLEMENTATION.md); later stages remain planned.
 
 ## Agreed direction

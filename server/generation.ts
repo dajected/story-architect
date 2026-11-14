@@ -18,6 +18,9 @@ import {
   createRevisionFromJob,
   getChapter,
 } from './store/chapters.js';
+import { memoryPromptText } from './store/memory.js';
+import { modelContextLength } from './store/connections.js';
+import { autoStartChapterMemory } from './memory-generation.js';
 import {
   addMessage,
   getConversation,
@@ -207,8 +210,15 @@ export function startChapterGeneration(
       ? Math.round(Number(options.targetWords))
       : settings.targetWords ?? project.targetChapterWords ?? 1800;
 
-  const context = buildProseContext(project, getChapter(chapterId), preset);
   const template = resolvePromptTemplate(project.id, 'prose');
+  const context = buildProseContext(project, getChapter(chapterId), {
+    preset,
+    additionalInstructions: instructions,
+    targetWords,
+    templateContent: template.content,
+    modelContextLength: modelContextLength(model.connectionId, model.model),
+    maxTokens: settings.maxTokens,
+  });
   const chapters = listChapters(project.id);
   const prompt = renderTemplate(template.content, {
     project_title: project.title,
@@ -225,10 +235,24 @@ export function startChapterGeneration(
     chapter_title: chapter.title,
     chapter_brief: chapter.brief,
     target_words: targetWords,
+    story_memory: context.memoryText || '(No story memory yet.)',
     recent_prose: context.recentProse,
     additional_instructions: instructions || 'None.',
     context_preset: preset,
   });
+  // Custom templates created before stage 2 have no story-memory placeholder;
+  // append the memory block rather than silently dropping it.
+  const promptWithMemory =
+    context.memoryText && !/\{\{\s*story_memory\s*\}\}/.test(template.content)
+      ? `${prompt}\n\n${context.memoryText}`
+      : prompt;
+
+  // Reserve the reply capacity that the context budget assumed, even when the
+  // provider would otherwise apply an unbounded default.
+  const generationSettings = {
+    ...settings,
+    maxTokens: settings.maxTokens ?? context.reservedOutputTokens,
+  };
 
   const job = createJob({
     projectId: project.id,
@@ -236,14 +260,26 @@ export function startChapterGeneration(
     chapterId,
     connectionId: model.connectionId,
     model: model.model,
-    prompt,
+    prompt: promptWithMemory,
     context: {
       preset,
-      fixedTokens: context.fixedTokens,
+      budgetTokens: context.budgetTokens,
+      availableInputTokens: context.availableInputTokens,
+      reservedOutputTokens: context.reservedOutputTokens,
+      requiredTokens: context.requiredTokens,
       estimatedTokens: context.estimatedTokens,
       includedWords: context.includedWords,
       includedChapters: context.includedChapters,
       omittedChapters: context.omittedChapters,
+      includedSummaries: context.includedSummaries,
+      totalSummaries: context.totalSummaries,
+      includedCharacters: context.includedCharacters,
+      totalCharacters: context.totalCharacters,
+      includedFacts: context.includedFacts,
+      totalFacts: context.totalFacts,
+      staleSummaries: context.staleSummaries,
+      pendingFacts: context.pendingFacts,
+      sections: context.sections,
       targetWords,
     },
   });
@@ -253,13 +289,13 @@ export function startChapterGeneration(
       job,
       model.provider,
       [
-        { role: 'system', content: prompt },
+        { role: 'system', content: promptWithMemory },
         {
           role: 'user',
           content: `Write Chapter ${chapter.order_index + 1}, "${chapter.title}", now. Return prose only.`,
         },
       ],
-      settings,
+      generationSettings,
     );
     if (!result) return;
     try {
@@ -269,8 +305,14 @@ export function startChapterGeneration(
         });
         return;
       }
-      const { revision } = createRevisionFromJob(chapterId, result.content, job.id, 'generated');
+      const { revision, applied } = createRevisionFromJob(
+        chapterId,
+        result.content,
+        job.id,
+        'generated',
+      );
       finalizeJob(job.id, 'completed', { revisionId: revision.id, usage: result.usage });
+      if (applied) autoStartChapterMemory(chapterId);
     } catch (error) {
       finalizeJob(job.id, 'failed', { error: errorMessage(error) });
     }
@@ -296,14 +338,31 @@ export function startChatGeneration(params: {
   const model = resolveTaskModel(project.id, 'prose');
 
   let chapterContext = '';
+  let storyMemory = '';
+  let memoryChapterId: string | null = null;
   if (params.chapterId) {
     const chapter = getChapterRow(params.chapterId);
     if (chapter.project_id !== project.id) throw badRequest('That chapter belongs to another project.');
     chapterContext = buildChatChapterContext(getChapter(chapter.id));
+    memoryChapterId = chapter.id;
   } else {
     const chapters = listChapters(project.id).filter((chapter) => chapter.currentRevisionId);
     const last = chapters[chapters.length - 1];
-    if (last) chapterContext = buildChatChapterContext(last);
+    if (last) {
+      chapterContext = buildChatChapterContext(last);
+      memoryChapterId = last.id;
+    }
+  }
+  if (memoryChapterId) {
+    try {
+      const text = memoryPromptText(project.id, memoryChapterId);
+      storyMemory =
+        text.length > 14000
+          ? `${text.slice(0, 14000)}\n[Earlier story memory trimmed for the assistant.]`
+          : text;
+    } catch {
+      storyMemory = '';
+    }
   }
 
   const systemPrompt = buildChatSystemPrompt({
@@ -318,6 +377,7 @@ export function startChatGeneration(params: {
     instructions: project.instructions,
     outlineSummary: approvedOutlineText(project.id),
     chapterContext,
+    storyMemory,
   });
 
   const existingMessages = listMessages(conversation.id);
@@ -409,6 +469,7 @@ export function applyPartialJob(jobId: string): {
     'recovered',
   );
   updateJob(job.id, { revision_id: revision.id });
+  if (applied) autoStartChapterMemory(job.chapterId);
   return { revisionId: revision.id, applied, chapterId: job.chapterId };
 }
 

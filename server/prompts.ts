@@ -49,6 +49,9 @@ Content preferences: {{content_preferences}}
 ## Project instructions
 {{instructions}}
 
+## Story memory
+{{story_memory}}
+
 ## Recent preceding prose
 {{recent_prose}}
 
@@ -202,6 +205,7 @@ export function buildChatSystemPrompt(params: {
   instructions: string;
   outlineSummary: string;
   chapterContext: string;
+  storyMemory?: string;
 }): string {
   return `You are the writing assistant inside Story Architect, a self-hosted novel workspace.
 Speak as a sharp, practical developmental editor and co-writer. Be concrete and concise.
@@ -216,11 +220,182 @@ Style: ${params.styleNotes || '(not set)'}
 Content preferences: ${params.contentPreferences || '(not set)'}
 Project instructions: ${params.instructions || '(none)'}
 
-Approved outline:
+Approved outline (future beats are plans, not history):
 ${params.outlineSummary || '(no approved outline yet)'}
+
+Story memory (verified summaries, character profiles, established facts):
+${params.storyMemory || '(no chapter summaries or established facts yet)'}
 
 Current chapter context:
 ${params.chapterContext || '(no chapter selected)'}
 
 The manuscript is the author's source of truth. You can brainstorm, analyse, and suggest revisions, but your messages never change the manuscript unless the author explicitly inserts them. Do not claim that you edited anything.`;
+}
+
+/** Instruction block for the memory role. The chapter text is supplied by the caller. */
+export const MEMORY_EXTRACTION_PROMPT = `You are the continuity archivist for a novel. Read one chapter and produce a short summary plus reviewable continuity facts.
+
+Rules:
+- Summarise only what actually happens in the supplied chapter text. The brief is a plan: do not present unrealised intentions as events.
+- The summary should be 90 to 180 words, written in the past tense, naming the important characters and the causal turn.
+- Facts must be concrete and checkable. Prefer five to twelve useful facts over a long list.
+- Use kind "character_development" for a lasting change to a character, "relationship" for a shift between named characters, "timeline" for an ordered event, "plot_thread" for an unresolved question or promise, and "world" for a stable world detail.
+- Use scope "story" when the fact remains true for the rest of the novel. Use "chapter" when it is only true or known at this point in the story.
+- Do not repeat facts already listed under "Known facts". Do not invent details that are absent from the text.
+
+Return only valid JSON, with no commentary and no code fences:
+{"summary":"...","facts":[{"kind":"character_development","statement":"...","characters":["Name"],"scope":"story"}]}`;
+
+export const CHARACTER_CASTING_PROMPT = `You are a casting editor for a novel. Read the premise and the approved outline and propose the recurring cast.
+
+Rules:
+- Propose only characters who appear in, speak in, or are clearly required by the outline.
+- Aim for three to twelve characters, most important first.
+- Keep names exactly as they appear in the outline when a name is given. Otherwise propose a fitting name.
+- Describe each character compactly: identity, appearance, personality, goals, and relationships. Leave a field empty if the outline does not support an answer; do not invent elaborate backstory.
+- These are proposals for the author to accept, not established canon yet.
+
+Return only valid JSON, with no commentary and no code fences:
+{"characters":[{"name":"...","role":"protagonist","identity":"...","appearance":"...","personality":"...","goals":"...","relationships":"..."}]}`;
+
+export interface ParsedMemoryFact {
+  kind:
+    | 'character_development'
+    | 'relationship'
+    | 'timeline'
+    | 'plot_thread'
+    | 'world';
+  statement: string;
+  characters: string[];
+  scope: 'chapter' | 'story';
+}
+
+export interface ParsedMemory {
+  summary: string;
+  facts: ParsedMemoryFact[];
+  parsed: boolean;
+}
+
+const MEMORY_KINDS: ParsedMemoryFact['kind'][] = [
+  'character_development',
+  'relationship',
+  'timeline',
+  'plot_thread',
+  'world',
+];
+
+function jsonCandidates(raw: string): string[] {
+  const candidates: string[] = [];
+  for (const match of raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    candidates.push(match[1]);
+  }
+  const objectStart = raw.indexOf('{');
+  const objectEnd = raw.lastIndexOf('}');
+  if (objectStart !== -1 && objectEnd > objectStart) {
+    candidates.push(raw.slice(objectStart, objectEnd + 1));
+  }
+  candidates.push(raw.trim());
+  return candidates;
+}
+
+function normaliseString(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function normaliseStringList(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+/** Tolerant parser for the memory role's summary/fact reply. */
+export function parseMemoryExtraction(raw: string): ParsedMemory {
+  for (const candidate of jsonCandidates(raw)) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (!parsed || typeof parsed !== 'object') continue;
+      const record = parsed as Record<string, unknown>;
+      const summary = normaliseString(record.summary ?? record.chapterSummary, 12000);
+      const rawFacts = Array.isArray(record.facts) ? record.facts : [];
+      const facts: ParsedMemoryFact[] = [];
+      for (const entry of rawFacts) {
+        if (!entry || typeof entry !== 'object') continue;
+        const fact = entry as Record<string, unknown>;
+        const statement = normaliseString(fact.statement ?? fact.fact ?? fact.text, 4000);
+        if (!statement) continue;
+        const kind = MEMORY_KINDS.includes(fact.kind as ParsedMemoryFact['kind'])
+          ? (fact.kind as ParsedMemoryFact['kind'])
+          : 'timeline';
+        const scope = fact.scope === 'chapter' ? 'chapter' : 'story';
+        facts.push({
+          kind,
+          statement,
+          characters: normaliseStringList(fact.characters ?? fact.character),
+          scope,
+        });
+      }
+      if (summary || facts.length > 0) {
+        return { summary, facts, parsed: true };
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  // Last resort: keep the prose so the author can edit it into a summary.
+  const fallback = raw
+    .replace(/```[a-z]*\s*([\s\S]*?)```/gi, '$1')
+    .replace(/^\s*\{[\s\S]*\}\s*$/, '')
+    .trim()
+    .slice(0, 12000);
+  return { summary: fallback, facts: [], parsed: false };
+}
+
+export interface ParsedCharacter {
+  name: string;
+  role: string;
+  identity: string;
+  appearance: string;
+  personality: string;
+  goals: string;
+  relationships: string;
+}
+
+/** Tolerant parser for the casting role's character proposals. */
+export function parseCharacterProposals(raw: string): ParsedCharacter[] {
+  for (const candidate of jsonCandidates(raw)) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      const list = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === 'object'
+          ? ((parsed as Record<string, unknown>).characters as unknown)
+          : null;
+      if (!Array.isArray(list)) continue;
+      const characters: ParsedCharacter[] = [];
+      for (const entry of list) {
+        if (!entry || typeof entry !== 'object') continue;
+        const record = entry as Record<string, unknown>;
+        const name = normaliseString(record.name, 160);
+        if (!name) continue;
+        characters.push({
+          name,
+          role: normaliseString(record.role, 120),
+          identity: normaliseString(record.identity, 4000),
+          appearance: normaliseString(record.appearance, 4000),
+          personality: normaliseString(record.personality, 4000),
+          goals: normaliseString(record.goals, 4000),
+          relationships: normaliseString(record.relationships, 4000),
+        });
+        if (characters.length >= 40) break;
+      }
+      if (characters.length > 0) return characters;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return [];
 }

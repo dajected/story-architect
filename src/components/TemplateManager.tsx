@@ -20,8 +20,10 @@ const PLACEHOLDERS = [
   'chapter_title',
   'chapter_brief',
   'target_words',
+  'story_memory',
   'recent_prose',
   'additional_instructions',
+  'context_preset',
 ];
 
 interface EditorState {

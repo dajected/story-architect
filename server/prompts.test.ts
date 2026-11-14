@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseOutline, renderTemplate } from './prompts.js';
+import {
+  parseCharacterProposals,
+  parseMemoryExtraction,
+  parseOutline,
+  renderTemplate,
+} from './prompts.js';
 
 describe('parseOutline', () => {
   it('reads a fenced JSON outline', () => {
@@ -47,5 +52,54 @@ describe('parseOutline', () => {
 describe('renderTemplate', () => {
   it('substitutes placeholders and blanks missing values', () => {
     expect(renderTemplate('A {{one}} B {{two}}', { one: 'x' })).toBe('A x B ');
+  });
+});
+
+describe('parseMemoryExtraction', () => {
+  it('reads a fenced summary and facts', () => {
+    const raw = [
+      '```json',
+      JSON.stringify({
+        summary: 'Mara opens the door.',
+        facts: [
+          { kind: 'plot_thread', statement: 'The key opens the hill.', characters: ['Mara'], scope: 'story' },
+          { kind: 'nonsense', statement: 'The hill is old.', scope: 'chapter' },
+        ],
+      }),
+      '```',
+    ].join('\n');
+    const parsed = parseMemoryExtraction(raw);
+    expect(parsed.parsed).toBe(true);
+    expect(parsed.summary).toBe('Mara opens the door.');
+    expect(parsed.facts).toHaveLength(2);
+    expect(parsed.facts[0].characters).toEqual(['Mara']);
+    expect(parsed.facts[1].kind).toBe('timeline');
+    expect(parsed.facts[1].scope).toBe('chapter');
+  });
+
+  it('keeps prose when the reply is not JSON', () => {
+    const parsed = parseMemoryExtraction('Mara opens the door. The hill is old.');
+    expect(parsed.parsed).toBe(false);
+    expect(parsed.summary).toContain('Mara opens the door');
+    expect(parsed.facts).toHaveLength(0);
+  });
+});
+
+describe('parseCharacterProposals', () => {
+  it('reads a character list and skips nameless entries', () => {
+    const raw = JSON.stringify({
+      characters: [
+        { name: 'Mara', role: 'protagonist', identity: 'A surveyor.' },
+        { role: 'rival', identity: 'No name.' },
+      ],
+    });
+    const characters = parseCharacterProposals(raw);
+    expect(characters).toHaveLength(1);
+    expect(characters[0].name).toBe('Mara');
+    expect(characters[0].role).toBe('protagonist');
+  });
+
+  it('returns nothing for an unreadable reply', () => {
+    expect(parseCharacterProposals('No cast available.')).toEqual([]);
   });
 });

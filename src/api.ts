@@ -1,12 +1,19 @@
 import type {
   Chapter,
   ChapterDetail,
+  ChapterMemory,
   ChapterRevision,
+  Character,
+  CharacterInput,
   ChatMessage,
   ConnectionKind,
   ConnectionPublic,
+  ContextInfo,
   Conversation,
+  Fact,
+  FactInput,
   GenerationJob,
+  MemoryOverview,
   ModelOption,
   OutlineChapter,
   OutlineRevision,
@@ -19,6 +26,8 @@ import type {
   ContextPreset,
   TaskRole,
 } from '@shared/types';
+
+export type { ContextInfo } from '@shared/types';
 
 export class ApiError extends Error {
   status: number;
@@ -96,15 +105,6 @@ export interface ChapterGenerateInput {
   instructions?: string;
   contextPreset?: ContextPreset;
   targetWords?: number | null;
-}
-
-export interface ContextInfo {
-  preset: ContextPreset;
-  budgetTokens: number;
-  estimatedTokens: number;
-  includedWords: number;
-  includedChapters: number;
-  omittedChapters: number;
 }
 
 export const api = {
@@ -285,5 +285,70 @@ export const api = {
       'POST',
       `/conversations/${conversationId}/messages`,
       { content, chapterId },
+    ),
+
+  // Characters
+  listCharacters: (projectId: string) =>
+    request<{ characters: Character[]; activeJob: GenerationJob | null }>(
+      'GET',
+      `/projects/${projectId}/characters`,
+    ),
+  createCharacter: (projectId: string, input: CharacterInput) =>
+    request<{ character: Character }>('POST', `/projects/${projectId}/characters`, input).then(
+      (r) => r.character,
+    ),
+  updateCharacter: (id: string, input: Partial<CharacterInput>) =>
+    request<{ character: Character }>('PATCH', `/characters/${id}`, input).then(
+      (r) => r.character,
+    ),
+  acceptCharacter: (id: string) =>
+    request<{ character: Character }>('POST', `/characters/${id}/accept`).then(
+      (r) => r.character,
+    ),
+  archiveCharacter: (id: string) =>
+    request<{ character: Character }>('POST', `/characters/${id}/archive`).then(
+      (r) => r.character,
+    ),
+  proposeCharacters: (projectId: string) =>
+    request<{ job: GenerationJob }>('POST', `/projects/${projectId}/characters/propose`).then(
+      (r) => r.job,
+    ),
+
+  // Memory and continuity
+  getProjectMemory: (projectId: string) =>
+    request<MemoryOverview>('GET', `/projects/${projectId}/memory`),
+  getChapterMemory: (chapterId: string) =>
+    request<{ memory: ChapterMemory; activeJob: GenerationJob | null }>(
+      'GET',
+      `/chapters/${chapterId}/memory`,
+    ),
+  rebuildChapterMemory: (chapterId: string) =>
+    request<{ job: GenerationJob }>('POST', `/chapters/${chapterId}/memory/rebuild`).then(
+      (r) => r.job,
+    ),
+  rebuildMemory: (projectId: string, chapterIds?: string[]) =>
+    request<{ jobs: GenerationJob[] }>('POST', `/projects/${projectId}/memory/rebuild`, {
+      chapterIds,
+    }).then((r) => r.jobs),
+  saveChapterMemorySummary: (chapterId: string, summary: string) =>
+    request<{ memory: ChapterMemory }>('PATCH', `/chapters/${chapterId}/memory`, {
+      summary,
+    }).then((r) => r.memory),
+  createFact: (projectId: string, input: FactInput) =>
+    request<{ fact: Fact }>('POST', `/projects/${projectId}/memory/facts`, input).then(
+      (r) => r.fact,
+    ),
+  updateFact: (id: string, input: Partial<FactInput>) =>
+    request<{ fact: Fact }>('PATCH', `/facts/${id}`, input).then((r) => r.fact),
+  acceptFact: (id: string) =>
+    request<{ fact: Fact }>('POST', `/facts/${id}/accept`).then((r) => r.fact),
+  rejectFact: (id: string) =>
+    request<{ fact: Fact }>('POST', `/facts/${id}/reject`).then((r) => r.fact),
+  supersedeFact: (id: string) =>
+    request<{ fact: Fact }>('POST', `/facts/${id}/supersede`).then((r) => r.fact),
+  deleteFact: (id: string) => request<void>('DELETE', `/facts/${id}`),
+  supersedeOutdatedFacts: (projectId: string) =>
+    request<{ count: number }>('POST', `/projects/${projectId}/memory/supersede-outdated`).then(
+      (r) => r.count,
     ),
 };
