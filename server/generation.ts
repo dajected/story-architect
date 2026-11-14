@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   ChapterDetail,
   ContextPreset,
@@ -15,6 +16,7 @@ import { getProjectGeneration, resolveTaskModel } from './store/settings.js';
 import { resolvePromptTemplate } from './store/templates.js';
 import {
   renderTemplate,
+  renderContextTemplate,
   outlinePromptValues,
   parseOutline,
   buildChatSystemPrompt,
@@ -54,6 +56,7 @@ import {
   isCancellation,
   outputSoFar,
   updateJob,
+  recordPreparedRequest,
 } from './jobs.js';
 import { streamChat, ProviderError } from './providers.js';
 import type { ProviderConnection, ProviderMessage } from './providers.js';
@@ -67,6 +70,7 @@ function ensureAdditionalInstructions(value: string | undefined): string {
 interface StreamOutcome {
   content: string;
   usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | null;
+  finishReason: string | null;
 }
 
 async function runStream(
@@ -77,6 +81,7 @@ async function runStream(
     temperature: number | null;
     topP: number | null;
     maxTokens: number | null;
+    inputBudgetTokens?: number;
   },
 ): Promise<StreamOutcome | null> {
   const runtime = createRuntime(job.id);
@@ -87,9 +92,18 @@ async function runStream(
       temperature: settings.temperature,
       topP: settings.topP,
       maxTokens: settings.maxTokens,
+      inputBudgetTokens: settings.inputBudgetTokens,
       signal: runtime.controller.signal,
       onDelta: (text) => appendOutput(job.id, text),
+      onPrepared: (request) => recordPreparedRequest(job.id, request),
     });
+    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
+      finalizeJob(job.id, 'failed', {
+        error: 'The model reached its reply token limit. Partial output is kept. Lower the requested output length or increase max output tokens within the model limits.',
+        usage: result.usage,
+      });
+      return null;
+    }
     return result;
   } catch (error) {
     if (isCancellation(error, runtime.controller.signal)) {
@@ -137,12 +151,15 @@ export function startOutlineGeneration(
   projectId: string,
   additionalInstructions?: string,
 ): GenerationJob {
-  getProject(projectId);
+  const project = getProject(projectId);
   const active = activeOutlineJob(projectId);
   if (active) throw conflict('An outline is already being generated for this project.');
   const instructions = ensureAdditionalInstructions(additionalInstructions);
   const model = resolveTaskModel(projectId, 'outline');
-  const settings = getProjectGeneration(projectId);
+  const configuredSettings = getProjectGeneration(projectId);
+  const settings = { ...configuredSettings,
+    maxTokens: configuredSettings.maxTokens ?? Math.max(2048, (project.chapterCount ?? 20) * 220 + 512),
+  };
   const { prompt, userMessage } = renderOutlinePrompt(projectId, instructions);
 
   const job = createJob({
@@ -240,7 +257,7 @@ export function startChapterGeneration(
     maxTokens: settings.maxTokens,
   });
   const chapters = listChapters(project.id);
-  const prompt = renderTemplate(template.content, {
+  const promptMessage = renderContextTemplate(template.content, {
     project_title: project.title,
     premise: project.premise,
     genre: project.genre,
@@ -260,24 +277,27 @@ export function startChapterGeneration(
     recent_prose: context.recentProse,
     additional_instructions: instructions || 'None.',
     context_preset: preset,
+  }, {
+    story_memory: { label: 'Story memory', priority: 90, maxTokens: Math.floor(context.availableInputTokens * 0.55) },
+    lore: { label: 'Lore', priority: 70, maxTokens: 3000, trim: 'omit' },
+    recent_prose: { label: 'Recent preceding prose', priority: 100, maxTokens: 2400, trim: 'tail' },
   });
   // Custom templates created before stage 2 have no story-memory placeholder;
   // append the memory block rather than silently dropping it. Stage 3 lore is
   // appended the same way when a template lacks {{lore}}.
-  const promptWithMemory =
-    context.memoryText && !/\{\{\s*story_memory\s*\}\}/.test(template.content)
-      ? `${prompt}\n\n${context.memoryText}`
-      : prompt;
-  const promptWithLore =
-    context.loreText && !/\{\{\s*lore\s*\}\}/.test(template.content)
-      ? `${promptWithMemory}\n\n${context.loreText}`
-      : promptWithMemory;
+  if (context.memoryText && !/\{\{\s*story_memory\s*\}\}/.test(template.content)) {
+    promptMessage.contextParts!.push({ label: 'Story memory', text: context.memoryText, priority: 90 });
+  }
+  if (context.loreText && !/\{\{\s*lore\s*\}\}/.test(template.content)) {
+    promptMessage.contextParts!.push({ label: 'Lore', text: context.loreText, priority: 70, maxTokens: 3000, trim: 'omit' });
+  }
 
   // Reserve the reply capacity that the context budget assumed, even when the
   // provider would otherwise apply an unbounded default.
   const generationSettings = {
     ...settings,
     maxTokens: settings.maxTokens ?? context.reservedOutputTokens,
+    inputBudgetTokens: context.availableInputTokens,
   };
 
   const job = createJob({
@@ -286,7 +306,7 @@ export function startChapterGeneration(
     chapterId,
     connectionId: model.connectionId,
     model: model.model,
-    prompt: promptWithLore,
+    prompt: template.content,
     context: {
       preset,
       budgetTokens: context.budgetTokens,
@@ -324,7 +344,7 @@ export function startChapterGeneration(
       job,
       model.provider,
       [
-        { role: 'system', content: promptWithLore },
+        promptMessage,
         {
           role: 'user',
           content: `Write Chapter ${chapter.order_index + 1}, "${chapter.title}", now. Return prose only.`,
@@ -391,11 +411,7 @@ export function startChatGeneration(params: {
   }
   if (memoryChapterId) {
     try {
-      const text = memoryPromptText(project.id, memoryChapterId);
-      storyMemory =
-        text.length > 14000
-          ? `${text.slice(0, 14000)}\n[Earlier story memory trimmed for the assistant.]`
-          : text;
+      storyMemory = memoryPromptText(project.id, memoryChapterId);
     } catch {
       storyMemory = '';
     }
@@ -411,9 +427,9 @@ export function startChatGeneration(params: {
     styleNotes: project.styleNotes,
     contentPreferences: project.contentPreferences,
     instructions: project.instructions,
-    outlineSummary: approvedOutlineText(project.id),
-    chapterContext,
-    storyMemory,
+    outlineSummary: '',
+    chapterContext: '',
+    storyMemory: '',
   });
 
   const existingMessages = listMessages(conversation.id);
@@ -426,10 +442,14 @@ export function startChatGeneration(params: {
     setConversationTitle(conversation.id, content.slice(0, 80));
   }
 
-  const history = [...existingMessages, userMessage].slice(-24).map((message) => ({
-    role: message.role as 'user' | 'assistant',
-    content: message.content,
-  }));
+  let turn = 0;
+  const history: ProviderMessage[] = existingMessages.flatMap((message) => {
+    if (message.role === 'user') turn += 1;
+    if (turn === 0) return [];
+    return [{ role: message.role as 'user' | 'assistant', content: message.content,
+      contextGroup: { id: String(turn), priority: 100 + turn / (existingMessages.length + 1) } }];
+  });
+  history.push({ role: 'user', content: userMessage.content });
 
   const settings = getProjectGeneration(project.id);
   const job = createJob({
@@ -447,7 +467,11 @@ export function startChatGeneration(params: {
     const result = await runStream(
       job,
       model.provider,
-      [{ role: 'system', content: systemPrompt }, ...history],
+      [{ role: 'system', content: systemPrompt, contextParts: [
+        { label: 'Current chapter context', text: chapterContext, priority: 120, maxTokens: 1600, trim: 'tail' },
+        { label: 'Story memory', text: storyMemory, priority: 90, maxTokens: 3000 },
+        { label: 'Approved outline (future beats are plans, not history)', text: approvedOutlineText(project.id), priority: 80, maxTokens: 1800, trim: 'both' },
+      ] }, ...history],
       settings,
     );
     const output = outputSoFar(job.id);
@@ -530,6 +554,8 @@ export function startRewriteGeneration(
   const settings = getProjectGeneration(project.id);
   const before = text.slice(Math.max(0, start - 1500), start);
   const after = text.slice(end, end + 1500);
+  const beforeSlot = `__SA_BEFORE_${randomUUID()}__`;
+  const afterSlot = `__SA_AFTER_${randomUUID()}__`;
   const system = buildRewriteSystemPrompt({
     action,
     title: project.title,
@@ -544,9 +570,9 @@ export function startRewriteGeneration(
     chapterNumber: chapter.order_index + 1,
     chapterTitle: chapter.title,
     chapterBrief: chapter.brief,
-    before,
+    before: before ? beforeSlot : '',
     selection,
-    after,
+    after: after ? afterSlot : '',
     instruction,
   });
 
@@ -571,7 +597,10 @@ export function startRewriteGeneration(
       job,
       model.provider,
       [
-        { role: 'system', content: system },
+        { role: 'system', content: system, contextParts: [
+          ...(before ? [{ label: 'Before the selection', text: before, slot: beforeSlot, priority: 100, maxTokens: 500, trim: 'tail' as const }] : []),
+          ...(after ? [{ label: 'After the selection', text: after, slot: afterSlot, priority: 100, maxTokens: 500 }] : []),
+        ] },
         { role: 'user', content: 'Return only the replacement passage for the selected text now.' },
       ],
       rewriteSettings,
@@ -639,13 +668,6 @@ export function applyRewriteJob(
   return { revisionId: revision.id, chapterId: job.chapterId, chapter };
 }
 
-function trimForReview(text: string, limit = 42000): string {
-  if (text.length <= limit) return text;
-  const head = Math.floor(limit * 0.6);
-  const tail = limit - head;
-  return `${text.slice(0, head)}\n\n[Middle of the chapter omitted to fit the review.]\n\n${text.slice(-tail)}`;
-}
-
 /** Advisory continuity check for one chapter using the memory role. */
 export function startContinuityReview(chapterId: string): GenerationJob {
   const chapter = getChapterRow(chapterId);
@@ -659,8 +681,6 @@ export function startContinuityReview(chapterId: string): GenerationJob {
   }
   const model = resolveTaskModel(project.id, 'memory');
   const memory = memoryPromptText(project.id, chapterId);
-  const trimmedMemory =
-    memory.length > 18000 ? `${memory.slice(0, 18000)}\n[Earlier story memory trimmed.]` : memory;
   const job = createJob({
     projectId: project.id,
     kind: 'review',
@@ -668,7 +688,7 @@ export function startContinuityReview(chapterId: string): GenerationJob {
     connectionId: model.connectionId,
     model: model.model,
     prompt: CONTINUITY_REVIEW_PROMPT,
-    context: { stage: 'review', memoryChars: trimmedMemory.length },
+    context: { stage: 'review', memoryChars: memory.length },
     settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1200 }),
   });
 
@@ -678,19 +698,16 @@ Premise: ${project.premise || '(not set)'}
 Chapter ${chapter.order_index + 1}: ${chapter.title}
 Brief (a plan, not evidence): ${chapter.brief || '(none)'}
 
-## Accepted story memory
-${trimmedMemory || '(No summaries, facts, or cast have been accepted yet.)'}
-
-## Chapter text
-${trimForReview(text)}
-
 Review this chapter's continuity now. Report only concrete conflicts and possible inconsistencies.`;
     const result = await runStream(
       job,
       model.provider,
       [
         { role: 'system', content: CONTINUITY_REVIEW_PROMPT },
-        { role: 'user', content: user },
+        { role: 'user', content: user, contextParts: [
+          { label: 'Chapter text', text, priority: 100, minTokens: 512, maxTokens: 9000, trim: 'both' },
+          { label: 'Accepted story memory', text: memory, priority: 90, minTokens: 512, maxTokens: 3000 },
+        ] },
       ],
       { temperature: 0.2, topP: null, maxTokens: 1200 },
     );

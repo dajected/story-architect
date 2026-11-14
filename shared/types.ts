@@ -49,7 +49,7 @@ export const CONTEXT_PRESETS: ContextPresetInfo[] = [
     id: 'broad',
     label: 'Broad',
     description:
-      'A larger memory and prose window for sweeping continuity across many chapters.',
+      'More chapter summaries, character profiles and continuity facts, plus the ending of the preceding chapter.',
     budgetTokens: 16000,
   },
 ];
@@ -74,6 +74,7 @@ export interface ModelOption {
   id: string;
   name: string;
   contextLength?: number;
+  maxOutputTokens?: number;
   promptPrice?: string;
   completionPrice?: string;
 }
@@ -240,6 +241,16 @@ export interface JobPricing {
   currency: 'USD';
 }
 
+export interface RequestBudgetInfo {
+  contextLength: number;
+  contextLengthKnown: boolean;
+  inputBudgetTokens: number;
+  estimatedInputTokens: number;
+  reservedOutputTokens: number;
+  safetyTokens: number;
+  sections: Array<{ label: string; included: boolean; trimmed: boolean; tokens: number }>;
+}
+
 export interface GenerationJob {
   id: string;
   projectId: string;
@@ -253,6 +264,7 @@ export interface GenerationJob {
   error: string | null;
   usage: TokenUsage | null;
   settings: JobSettingsSnapshot | null;
+  requestBudget?: RequestBudgetInfo | null;
   pricing: JobPricing | null;
   estimatedCost: number | null;
   revisionId: string | null;
@@ -271,6 +283,7 @@ export interface GenerationHistoryEntry {
   chapterTitle: string | null;
   chapterOrder: number | null;
   settings: JobSettingsSnapshot | null;
+  requestBudget?: RequestBudgetInfo | null;
   usage: TokenUsage | null;
   estimatedCost: number | null;
   error: string | null;

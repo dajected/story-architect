@@ -442,9 +442,26 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
   revision is approved. Removing a chapter that already has text is refused.
 - Chapter context uses required project instructions and the current brief,
   accepted character profiles, preceding chapter summaries, established facts,
-  and a bounded run of recent prose. The preset sets an approximate input budget;
+  and at most the preceding drafted chapter's ending (800/1,600/2,400 tokens for
+  Focused/Balanced/Broad). Older chapters enter through memory rather than full
+  prose. The preset sets an approximate input budget;
   the context inspector shows required tokens, sections, trimming, the model's
-  known window, and how much output capacity is reserved.
+  known window, and how much output capacity is reserved. Automatic chapter output
+  capacity allows two tokens per target word plus 512 tokens; known model windows
+  also leave 5% (at least 256 tokens) for estimation and message overhead. Replies
+  that reach a token limit are flagged as failed with recoverable partial output
+  rather than applied as complete chapters.
+- Every language-model request is budgeted again after rendering, including all
+  messages, custom-template substitutions, reply capacity, and message overhead.
+  Chat, memory, reviews, rewrites, casting, and image prompts share this check.
+  Essential instructions and the latest task stay intact; optional background is
+  fitted by priority, source excerpts get a minimum allowance, and old chat turns
+  are omitted as whole turns. Missing model metadata uses a conservative
+  16,000-token total window; advertised reply limits are checked separately.
+  Requests whose essential input cannot fit are rejected before contacting the
+  provider. Generation history's Context details show what was included,
+  excerpted, or omitted. Token-limit replies remain partial instead of being
+  applied as completed chapters, memory, rewrites, or image prompts.
 - Editing or restoring a chapter changes its revision ID. Its summary is marked
   stale, and later summaries whose preceding revisions changed are marked
   potentially outdated. Rebuilding replaces the derived memory from the current

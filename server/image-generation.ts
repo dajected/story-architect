@@ -21,6 +21,7 @@ import {
   createRuntime,
   finalizeJob,
   isCancellation,
+  recordPreparedRequest,
 } from './jobs.js';
 import {
   generateImage,
@@ -29,7 +30,7 @@ import {
 } from './image-providers.js';
 import type { GeneratedImage } from './image-providers.js';
 import { ProviderError } from './providers.js';
-import { IMAGE_PROMPT_SYSTEM, imagePromptValues, renderTemplate } from './prompts.js';
+import { IMAGE_PROMPT_SYSTEM, imagePromptValues, renderContextTemplate } from './prompts.js';
 import { getCharacter, getCharacterRow, listCharacters } from './store/characters.js';
 import { currentChapterText, getChapter } from './store/chapters.js';
 import {
@@ -65,9 +66,16 @@ import {
 import { getProject } from './store/projects.js';
 import { getProjectGeneration, resolveRoles, resolveTaskModel, getProjectVisualStyle } from './store/settings.js';
 import { streamChat } from './providers.js';
-import type { ProviderConnection } from './providers.js';
+import type { ProviderConnection, ProviderMessage } from './providers.js';
+import type { RequestContextPart } from './request-context.js';
 
 const imageRuntimes = new Map<string, AbortController>();
+const IMAGE_BACKGROUND_FIELDS: Record<string, Omit<RequestContextPart, 'text' | 'slot'>> = {
+  personality: { label: 'Personality', priority: 50, maxTokens: 500 },
+  goals: { label: 'Goals', priority: 40, maxTokens: 500 },
+  notes: { label: 'Character notes', priority: 30, maxTokens: 700 },
+  project_style: { label: 'Story style', priority: 20, maxTokens: 500 },
+};
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
   'image/png': 'png',
@@ -115,16 +123,14 @@ export function startImagePromptGeneration(
   const chapterText = chapter ? currentChapterText(chapter.id) : '';
   const sceneText = [
     scene || chapter?.brief || '(No scene was specified; use an evocative portrait setting.)',
-    chapterText.trim()
-      ? `Depict the ${input.moment ?? 'end'} of the chapter. Use only appearance established at that point.\n${input.moment === 'start' ? chapterText.slice(0, 4000) : chapterExcerpt(chapterText, 7000)}`
-      : '',
+    chapterText.trim() ? `Depict the ${input.moment ?? 'end'} of the chapter. Use only appearance established at that point.` : '',
   ]
     .filter(Boolean)
     .join('\n\n');
 
   const visualStyleValue = visualStyle || getProjectVisualStyle(project.id) || 'cinematic character portrait';
   const clothingValue = clothing || '(not specified)';
-  const rendered = renderTemplate(
+  const promptMessage = renderContextTemplate(
     template.content,
     imagePromptValues({
       novelTitle: project.title,
@@ -145,7 +151,12 @@ export function startImagePromptGeneration(
       visualStyle: visualStyleValue,
       additionalInstructions: instructions || 'None.',
     }),
+    IMAGE_BACKGROUND_FIELDS,
   );
+  if (chapterText.trim()) promptMessage.contextParts!.push({
+    label: 'Chapter reference', text: chapterText, priority: 100, minTokens: 256, maxTokens: 1600,
+    trim: input.moment === 'start' ? 'head' : 'both',
+  });
   const reference = referenceDetailsBlock(template.content, [
     { key: 'novel_title', label: 'Novel', value: project.title },
     { key: 'genre', label: 'Genre', value: project.genre },
@@ -168,11 +179,12 @@ export function startImagePromptGeneration(
       label: 'Additional instructions',
       value: instructions || 'None.',
     },
-  ]);
+  ], promptMessage.contextParts!);
 
   const model = resolveTaskModel(project.id, 'image_prompt');
   const settings = getProjectGeneration(project.id);
-  const system = [IMAGE_PROMPT_SYSTEM, rendered, reference].filter(Boolean).join('\n\n');
+  promptMessage.content = [IMAGE_PROMPT_SYSTEM, promptMessage.content, reference].filter(Boolean).join('\n\n');
+  const system = promptMessage.content;
 
   const job = createJob({
     projectId: project.id,
@@ -208,7 +220,7 @@ export function startImagePromptGeneration(
       const result = await streamChat(model.provider, {
         model: job.model,
         messages: [
-          { role: 'system', content: system },
+          promptMessage,
           { role: 'user', content: 'Write the final image prompt now. Return only the prompt.' },
         ],
         temperature: settings.temperature ?? 0.7,
@@ -216,7 +228,12 @@ export function startImagePromptGeneration(
         maxTokens: 700,
         signal: runtime.controller.signal,
         onDelta: (text) => appendOutput(job.id, text),
+        onPrepared: (request) => recordPreparedRequest(job.id, request),
       });
+      if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
+        finalizeJob(job.id, 'failed', { error: 'The model reached its reply token limit. The partial image prompt is kept for editing.', usage: result.usage });
+        return;
+      }
       if (!result.content.trim()) {
         finalizeJob(job.id, 'failed', {
           error: 'The image-prompt model returned an empty reply. Try again or write the prompt by hand.',
@@ -333,15 +350,22 @@ interface PromptReferenceDetail {
 function referenceDetailsBlock(
   templateContent: string,
   details: PromptReferenceDetail[],
+  contextParts: RequestContextPart[],
 ): string {
   const used = new Set<string>();
   for (const match of templateContent.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g)) {
     const key = match[1];
     if (key) used.add(key);
   }
-  const missing = details.filter(
-    (detail) => !used.has(detail.key) && (detail.value ?? '').trim().length > 0,
-  );
+  const missing = details.filter((detail) => {
+    if (used.has(detail.key) || !(detail.value ?? '').trim()) return false;
+    const background = IMAGE_BACKGROUND_FIELDS[detail.key];
+    if (background) {
+      contextParts.push({ ...background, text: detail.value! });
+      return false;
+    }
+    return true;
+  });
   if (missing.length === 0) return '';
   return [
     '## Character and scene reference',
@@ -367,16 +391,6 @@ function looksLikeClarificationRequest(text: string): boolean {
   if (!trimmed) return false;
   if (/\?\s*$/.test(trimmed)) return true;
   return CLARIFICATION_PATTERNS.some((pattern) => pattern.test(trimmed));
-}
-
-/** Keep both the opening and the closing of a chapter, weighted to the ending. */
-function chapterExcerpt(text: string, limit = 7000): string {
-  if (text.length <= limit) return text.trim();
-  const head = Math.floor(limit * 0.2);
-  const tail = limit - head;
-  return `${text.slice(0, head).trim()}\n\n[Middle of the chapter omitted.]\n\n${text
-    .slice(-tail)
-    .trim()}`;
 }
 
 function chapterEndChanges(chapterId: string, characterId: string): string[] {
@@ -436,8 +450,6 @@ export function startChapterPortraitRequest(
           .join('\n')}`
       : 'No explicit physical changes were recorded. Use the established appearance, plus anything the closing text clearly shows.',
     '',
-    `Chapter reference (for clothing, injuries, condition, setting, mood and lighting):\n${moment === 'start' ? text.slice(0, 7000) : chapterExcerpt(text)}`,
-    '',
     `Show ${character.name} exactly as they appear at the requested moment. Do not anticipate later events.`,
   ].join('\n');
 
@@ -449,7 +461,7 @@ export function startChapterPortraitRequest(
     instructions ||
     `A solo character portrait with a clear view of the face and upper body. No other people, captions or text. Reflect the requested ${moment} moment.`;
 
-  const rendered = renderTemplate(
+  const promptMessage = renderContextTemplate(
     template.content,
     imagePromptValues({
       novelTitle: project.title,
@@ -470,7 +482,10 @@ export function startChapterPortraitRequest(
       visualStyle: visualStyleValue,
       additionalInstructions: additionalInstructionsValue,
     }),
+    IMAGE_BACKGROUND_FIELDS,
   );
+  promptMessage.contextParts!.push({ label: 'Chapter reference', text, priority: 100,
+    minTokens: 256, maxTokens: 1750, trim: moment === 'start' ? 'head' : 'both' });
   const reference = referenceDetailsBlock(template.content, [
     { key: 'novel_title', label: 'Novel', value: project.title },
     { key: 'genre', label: 'Genre', value: project.genre },
@@ -493,9 +508,10 @@ export function startChapterPortraitRequest(
       label: 'Additional instructions',
       value: additionalInstructionsValue,
     },
-  ]);
+  ], promptMessage.contextParts!);
 
-  const system = [IMAGE_PROMPT_SYSTEM, rendered, reference].filter(Boolean).join('\n\n');
+  promptMessage.content = [IMAGE_PROMPT_SYSTEM, promptMessage.content, reference].filter(Boolean).join('\n\n');
+  const system = promptMessage.content;
   const job = createJob({
     projectId: project.id,
     kind: 'image_prompt',
@@ -531,6 +547,7 @@ export function startChapterPortraitRequest(
   void runChapterPortrait(job, request, {
     provider: model.provider,
     system,
+    promptMessage,
     connectionId: connection.id,
     templateId: template.id,
     templateName: template.name,
@@ -550,6 +567,7 @@ async function runChapterPortrait(
   options: {
     provider: ProviderConnection;
     system: string;
+    promptMessage: ProviderMessage;
     connectionId: string;
     templateId: string | null;
     templateName: string;
@@ -565,7 +583,7 @@ async function runChapterPortrait(
     const result = await streamChat(options.provider, {
       model: job.model,
       messages: [
-        { role: 'system', content: options.system },
+        options.promptMessage,
         {
           role: 'user',
           content:
@@ -577,7 +595,14 @@ async function runChapterPortrait(
       maxTokens: 900,
       signal: runtime.controller.signal,
       onDelta: (text) => appendOutput(job.id, text),
+      onPrepared: (request) => recordPreparedRequest(job.id, request),
     });
+    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
+      const error = 'The model reached its reply token limit. The partial portrait prompt is kept; no image was submitted.';
+      finalizeJob(job.id, 'failed', { error, usage: result.usage });
+      updatePortraitRequest(request.id, { status: 'failed', error });
+      return;
+    }
     if (!result.content.trim()) {
       finalizeJob(job.id, 'failed', {
         error: 'The image-prompt model returned an empty reply. Try again.',

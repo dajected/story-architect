@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { PreparedRequest } from './request-context.js';
 import type {
   GenerationHistory,
   GenerationHistoryEntry,
@@ -9,6 +10,7 @@ import type {
   JobPricing,
   JobSettingsSnapshot,
   TokenUsage,
+  RequestBudgetInfo,
 } from '../shared/types.js';
 import { dbAll, dbGet, dbRun, timestamp } from './db.js';
 import { AppError, conflict, notFound } from './errors.js';
@@ -92,6 +94,13 @@ export function estimateJobCost(
   return Math.round(cost * 1_000_000) / 1_000_000;
 }
 
+function requestBudget(row: JobRow): RequestBudgetInfo | null {
+  try {
+    const budget = row.context_json ? JSON.parse(row.context_json)?.requestBudget : null;
+    return budget && Array.isArray(budget.sections) && typeof budget.estimatedInputTokens === 'number' ? budget : null;
+  } catch { return null; }
+}
+
 export function mapJob(row: JobRow): GenerationJob {
   const usage = parseUsage(row.usage);
   const pricing = parsePricing(row.pricing);
@@ -108,6 +117,7 @@ export function mapJob(row: JobRow): GenerationJob {
     error: row.error,
     usage,
     settings: parseSettings(row.settings),
+    requestBudget: requestBudget(row),
     pricing,
     estimatedCost:
       row.estimated_cost === null || row.estimated_cost === undefined
@@ -306,6 +316,7 @@ export function projectGenerationHistory(projectId: string, limit = 200): Genera
       chapterTitle: row.chapter_title,
       chapterOrder: row.chapter_order === null ? null : Number(row.chapter_order),
       settings: parseSettings(row.settings),
+      requestBudget: requestBudget(row),
       usage,
       estimatedCost:
         row.estimated_cost === null || row.estimated_cost === undefined
@@ -552,4 +563,16 @@ export function assertJobTerminal(job: GenerationJob): void {
 
 export function isCancellation(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted || (error instanceof Error && error.name === 'AbortError');
+}
+
+/** Keep the actual request and trimming decisions inspectable in job history. */
+export function recordPreparedRequest(jobId: string, request: PreparedRequest): void {
+  const row = getJobRow(jobId);
+  let context: Record<string, unknown> = {};
+  try { context = row.context_json ? JSON.parse(row.context_json) : {}; } catch { /* Legacy context. */ }
+  const settings = parseSettings(row.settings);
+  dbRun('UPDATE generation_jobs SET prompt = ?, context_json = ?, settings = ? WHERE id = ?',
+    request.messages.map((message) => `## ${message.role}\n${message.content}`).join('\n\n'),
+    JSON.stringify({ ...context, requestBudget: request.report }),
+    JSON.stringify({ ...settings, maxTokens: request.maxTokens }), jobId);
 }

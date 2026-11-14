@@ -1,4 +1,6 @@
 import type { ConnectionKind, ModelOption } from '../shared/types.js';
+import { prepareRequest } from './request-context.js';
+import type { PreparedRequest, RequestMessage } from './request-context.js';
 
 export interface ProviderConnection {
   id: string;
@@ -6,12 +8,10 @@ export interface ProviderConnection {
   kind: ConnectionKind;
   baseUrl: string;
   apiKey: string | null;
+  models?: ModelOption[];
 }
 
-export interface ProviderMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
+export interface ProviderMessage extends RequestMessage {}
 
 export interface ChatParams {
   model: string;
@@ -19,8 +19,10 @@ export interface ChatParams {
   temperature: number | null;
   topP: number | null;
   maxTokens: number | null;
+  inputBudgetTokens?: number;
   signal: AbortSignal;
   onDelta: (text: string) => void;
+  onPrepared?: (request: PreparedRequest) => void;
 }
 
 export interface ChatUsage {
@@ -32,6 +34,7 @@ export interface ChatUsage {
 export interface ChatResult {
   content: string;
   usage: ChatUsage | null;
+  finishReason: string | null;
 }
 
 export class ProviderError extends Error {
@@ -118,14 +121,22 @@ function extractText(value: unknown): string {
 }
 
 export async function streamChat(connection: ProviderConnection, params: ChatParams): Promise<ChatResult> {
+  const model = connection.models?.find((entry) => entry.id === params.model);
+  const prepared = prepareRequest(params.messages, {
+    contextLength: model?.contextLength,
+    maxOutputTokens: model?.maxOutputTokens,
+    maxTokens: params.maxTokens,
+    inputBudgetTokens: params.inputBudgetTokens,
+  });
+  params.onPrepared?.(prepared);
   const body: Record<string, unknown> = {
     model: params.model,
-    messages: params.messages,
+    messages: prepared.messages,
     stream: true,
   };
   if (params.temperature !== null) body.temperature = params.temperature;
   if (params.topP !== null) body.top_p = params.topP;
-  if (params.maxTokens !== null) body.max_tokens = params.maxTokens;
+  body.max_tokens = prepared.maxTokens;
   if (connection.kind === 'openrouter') {
     body.stream_options = { include_usage: true };
   }
@@ -146,6 +157,7 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
   let buffer = '';
   let content = '';
   let usage: ChatUsage | null = null;
+  let finishReason: string | null = null;
   let done = false;
 
   const processLine = (line: string) => {
@@ -171,6 +183,7 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
     for (const choice of choices) {
       if (!choice || typeof choice !== 'object') continue;
       const record = choice as Record<string, unknown>;
+      if (typeof record.finish_reason === 'string') finishReason = record.finish_reason;
       const delta = record.delta as Record<string, unknown> | undefined;
       const text = extractText(delta?.content ?? record.text);
       if (text) {
@@ -208,9 +221,9 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
 
   const resolvedUsage = usage as ChatUsage | null;
   if (!resolvedUsage || resolvedUsage.promptTokens === undefined || resolvedUsage.completionTokens === undefined) {
-    return { content, usage: null };
+    return { content, usage: null, finishReason };
   }
-  return { content, usage: resolvedUsage };
+  return { content, usage: resolvedUsage, finishReason };
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
@@ -252,6 +265,7 @@ export async function fetchModels(
     const id = typeof record.id === 'string' ? record.id : null;
     if (!id) continue;
     const pricing = (record.pricing ?? null) as Record<string, unknown> | null;
+    const topProvider = record.top_provider as Record<string, unknown> | undefined;
     models.push({
       id,
       name: typeof record.name === 'string' ? record.name : id,
@@ -263,6 +277,7 @@ export async function fetchModels(
             : undefined,
       promptPrice: typeof pricing?.prompt === 'string' ? pricing.prompt : undefined,
       completionPrice: typeof pricing?.completion === 'string' ? pricing.completion : undefined,
+      maxOutputTokens: numberOrUndefined(topProvider?.max_completion_tokens ?? record.max_output_tokens),
     });
   }
 

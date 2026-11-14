@@ -139,12 +139,13 @@ export function GenerationSettingsForm({
               setMaxTokens(event.target.value);
               setSaved(false);
             }}
-            placeholder="Provider default"
+            placeholder="Automatic for chapter length"
           />
         </div>
       </div>
       <p className="field-hint">
-        Empty sampling fields are omitted from the provider request so the model's own defaults apply.
+        Empty temperature and Top P fields use the provider defaults. For chapters, an empty max output
+        field reserves room automatically from the target word count.
       </p>
       </details><div className="form-actions inline">
         <button type="submit" className="button button-primary button-small" disabled={saving}>

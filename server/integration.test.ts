@@ -6,6 +6,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
+import type { RequestBudgetInfo } from '../shared/types.js';
 
 const OUTLINE = JSON.stringify({
   chapters: [
@@ -210,6 +211,7 @@ function startMock(): Promise<void> {
           for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
           }
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: (system + user).includes('TRUNCATE_CHAPTER') ? 'length' : 'stop' }] })}\n\n`);
           res.write(
             `data: ${JSON.stringify({
               choices: [],
@@ -492,6 +494,106 @@ describe('stage 1 workflow', () => {
 });
 
 describe('stage 2 memory, cast, and context', () => {
+  it('fits combined memory, review, chat history, and drafting to a small model window', async () => {
+    const { listConnections, saveConnectionModels } = await import('./store/connections.js');
+    const { addMessage } = await import('./store/chat.js');
+    const { getJobRow } = await import('./jobs.js');
+    const connection = listConnections()[0];
+    saveConnectionModels(connection.id, connection.models.map((model) => ({ ...model, contextLength: 6000 })));
+    try {
+      const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+        title: 'Large Context Novel', chapterCount: 2,
+      });
+      const outline = await request<{ job: { id: string } }>('POST', `/projects/${project.id}/outline/generate`, {});
+      expect((await waitForJob(outline.job.id)).status).toBe('completed');
+      const { latest } = await request<{ latest: { id: string } }>('GET', `/projects/${project.id}/outline`);
+      await request('POST', `/projects/${project.id}/outline/${latest.id}/approve`);
+      const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+      await request('PUT', `/chapters/${chapters[0].id}/content`, {
+        content: 'OPENING of the search. ' + 'Mara maps the observatory and follows the brass key. '.repeat(2500) + ' ENDING of the search.',
+      });
+      const assertBudget = async (id: string) => {
+        const job = await waitForJob(id);
+        expect(job.status).toBe('completed');
+        const budget = job.requestBudget as RequestBudgetInfo;
+        expect(budget.contextLengthKnown).toBe(true);
+        expect(budget.contextLength).toBe(6000);
+        expect(budget.estimatedInputTokens + budget.reservedOutputTokens + budget.safetyTokens).toBeLessThanOrEqual(6000);
+        expect(getJobRow(id).prompt).not.toContain('__SA_CONTEXT_');
+        return budget;
+      };
+      const memory = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[0].id}/memory/rebuild`, {});
+      const memoryBudget = await assertBudget(memory.job.id);
+      expect(memoryBudget.sections.find((section) => section.label === 'Chapter text')?.trimmed).toBe(true);
+      for (let index = 0; index < 20; index++) {
+        await request('POST', `/projects/${project.id}/memory/facts`, {
+          statement: `World fact ${index}: ` + 'The observatory walls contain survey marks. '.repeat(25),
+          kind: 'world', factClass: 'authored',
+        });
+      }
+      const review = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[0].id}/review`, {});
+      const reviewBudget = await assertBudget(review.job.id);
+      expect(reviewBudget.sections.find((section) => section.label === 'Accepted story memory')?.included).toBe(true);
+      expect(reviewBudget.sections.some((section) => section.trimmed)).toBe(true);
+
+      const { conversation } = await request<{ conversation: { id: string } }>('POST', `/projects/${project.id}/conversations`, {});
+      for (let index = 0; index < 20; index++) {
+        addMessage({ conversationId: conversation.id, role: 'user', content: `Question ${index}: ` + 'Old discussion. '.repeat(100) });
+        addMessage({ conversationId: conversation.id, role: 'assistant', content: `Answer ${index}: ` + 'Earlier explanation. '.repeat(100) });
+      }
+      const chat = await request<{ job: { id: string } }>('POST', `/conversations/${conversation.id}/messages`, {
+        content: 'LATEST REQUEST: explain the brass key.', chapterId: chapters[0].id,
+      });
+      const chatBudget = await assertBudget(chat.job.id);
+      expect(chatBudget.sections.some((section) => section.label.startsWith('Conversation turn') && !section.included)).toBe(true);
+      expect(getJobRow(chat.job.id).prompt).toContain('LATEST REQUEST: explain the brass key.');
+      expect(getJobRow(chat.job.id).prompt).toContain('Answer 19:');
+      expect(getJobRow(chat.job.id).prompt).not.toContain('Answer 0:');
+
+      const chapter = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[1].id}/generate`, {});
+      await assertBudget(chapter.job.id);
+      await waitForMemory(chapters[1].id);
+    } finally {
+      saveConnectionModels(connection.id, connection.models);
+    }
+  }, 30000);
+
+  it('keeps a token-limited chapter recoverable without replacing existing prose or building memory', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Truncated Chapter', chapterCount: 2,
+    });
+    const { job } = await request<{ job: { id: string } }>(
+      'POST', `/projects/${project.id}/outline/generate`, {},
+    );
+    expect((await waitForJob(job.id)).status).toBe('completed');
+    const { latest } = await request<{ latest: { id: string } }>(
+      'GET', `/projects/${project.id}/outline`,
+    );
+    await request('POST', `/projects/${project.id}/outline/${latest.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>(
+      'GET', `/projects/${project.id}/chapters`,
+    );
+    await request('PUT', `/chapters/${chapters[0].id}/content`, { content: 'Existing complete draft.' });
+    // Check both regeneration over an existing draft and a first draft.
+    for (const [index, chapter] of chapters.entries()) {
+      const { job: chapterJob } = await request<{ job: { id: string } }>(
+        'POST', `/chapters/${chapter.id}/generate`, { instructions: 'TRUNCATE_CHAPTER' },
+      );
+      const finished = await waitForJob(chapterJob.id);
+      expect(finished.status).toBe('failed');
+      expect(finished.error).toMatch(/token limit/i);
+      expect(finished.output).toBe(PROSE);
+      expect(finished.revisionId).toBeNull();
+      expect(finished.usage).toMatchObject({ completionTokens: 50 });
+      const { chapter: detail } = await request<{ chapter: { content: string } }>(
+        'GET', `/chapters/${chapter.id}`,
+      );
+      expect(detail.content).toBe(index === 0 ? 'Existing complete draft.' : '');
+      const memory = await request<{ activeJob: unknown }>('GET', `/chapters/${chapter.id}/memory`);
+      expect(memory.activeJob).toBeNull();
+    }
+  });
+
   it('summarises chapters, reviews facts, scopes plans, and marks edited memory stale', async () => {
     const { connections } = await request<{ connections: Array<{ id: string }> }>(
       'GET',

@@ -16,6 +16,7 @@ import { latestOutlineRevision } from './store/outline.js';
 import { memoryForPrompt } from './store/memory.js';
 import { listLoreEntries } from './store/lore.js';
 import { conflict } from './errors.js';
+import { FALLBACK_CONTEXT_LENGTH } from './request-context.js';
 
 export interface ProseContext {
   recentProse: string;
@@ -53,7 +54,13 @@ export interface ContextBuildOptions {
   maxTokens?: number | null;
 }
 
-const OMITTED_MARKER = '[Earlier story context was trimmed to fit the selected context preset.]\n\n';
+// Raw prose provides the immediate handoff; summaries and facts carry the story
+// beyond that. Never fill spare context with the entire manuscript.
+const RECENT_PROSE_TOKENS: Record<ContextPreset, number> = {
+  focused: 800,
+  balanced: 1600,
+  broad: 2400,
+};
 
 export function presetBudget(preset: ContextPreset): number {
   return CONTEXT_PRESETS.find((entry) => entry.id === preset)?.budgetTokens ?? 8000;
@@ -61,6 +68,7 @@ export function presetBudget(preset: ContextPreset): number {
 
 function projectFixedText(project: Project, brief: string, additionalInstructions: string): string {
   return [
+    project.title,
     project.premise,
     project.genre,
     project.tone,
@@ -297,12 +305,12 @@ export function buildProseContext(
   const targetWords = options.targetWords ?? project.targetChapterWords ?? 1800;
   const reservedOutputTokens = Math.max(
     800,
-    Math.round(options.maxTokens ?? targetWords * 1.5),
+    Math.round(options.maxTokens ?? targetWords * 2 + 512),
   );
 
   const requiredText = projectFixedText(
     project,
-    chapter.brief,
+    `${chapter.title}\n${chapter.brief}`,
     options.additionalInstructions ?? '',
   );
   const requiredTokens =
@@ -310,34 +318,36 @@ export function buildProseContext(
   const modelContextLength =
     options.modelContextLength && options.modelContextLength > 0
       ? options.modelContextLength
-      : null;
+      : FALLBACK_CONTEXT_LENGTH;
 
   const warnings: string[] = [];
   let availableInputTokens = presetTokens;
+  if (!options.modelContextLength) {
+    warnings.push("The selected model's context window is unknown. A conservative 16,000-token window is used, including space for the reply. Token counts are estimates.");
+  }
   if (modelContextLength) {
-    const modelInput = modelContextLength - reservedOutputTokens;
+    // Token counts are approximate, and chat framing and the final user message
+    // also occupy context. Leave room beyond the requested output allowance.
+    const safetyTokens = Math.max(256, Math.ceil(modelContextLength * 0.05));
+    const modelInput = modelContextLength - reservedOutputTokens - safetyTokens;
     if (modelInput <= 0) {
       throw conflict(
-        `The selected model has a ${modelContextLength.toLocaleString()}-token context, but about ${reservedOutputTokens.toLocaleString()} tokens must be reserved for the reply. Choose a model with a larger context window or lower the target length and max output tokens.`,
+        `The selected model has a ${modelContextLength.toLocaleString()}-token context, but about ${reservedOutputTokens.toLocaleString()} tokens must be reserved for the reply plus ${safetyTokens.toLocaleString()} for estimation and message overhead. Choose a model with a larger context window or lower the target length and max output tokens.`,
       );
     }
     if (modelInput < presetTokens) {
       availableInputTokens = modelInput;
       warnings.push(
-        `The model's ${modelContextLength.toLocaleString()}-token window limits input to about ${modelInput.toLocaleString()} tokens after reserving ${reservedOutputTokens.toLocaleString()} for the reply.`,
+        `The model's ${modelContextLength.toLocaleString()}-token window limits input to about ${modelInput.toLocaleString()} tokens after reserving ${reservedOutputTokens.toLocaleString()} for the reply and ${safetyTokens.toLocaleString()} for token estimation and message overhead.`,
       );
     }
-  } else {
-    warnings.push(
-      "The selected model's context window is unknown, so the preset budget alone is used. Token counts are estimates.",
-    );
   }
 
   if (requiredTokens > availableInputTokens) {
     const presetLabel = CONTEXT_PRESETS.find((entry) => entry.id === preset)?.label ?? preset;
-    if (modelContextLength && requiredTokens + reservedOutputTokens > modelContextLength) {
+    if (modelContextLength && availableInputTokens < presetTokens) {
       throw conflict(
-        `This chapter's brief, instructions and prompt need about ${requiredTokens.toLocaleString()} input tokens, plus about ${reservedOutputTokens.toLocaleString()} reserved for the reply. That exceeds the selected model's ${modelContextLength.toLocaleString()}-token context. Choose a larger-context model or shorten the brief, project instructions, and generation instructions.`,
+        `This chapter's brief, instructions and prompt need about ${requiredTokens.toLocaleString()} input tokens, but the selected model's ${modelContextLength.toLocaleString()}-token context allows about ${availableInputTokens.toLocaleString()} after reserving ${reservedOutputTokens.toLocaleString()} for the reply and allowing for estimation and message overhead. Choose a larger-context model or shorten the brief, project instructions, and generation instructions.`,
       );
     }
     throw conflict(
@@ -400,10 +410,6 @@ export function buildProseContext(
             ? ` (${omittedSummaries} earlier ${omittedSummaries === 1 ? 'summary' : 'summaries'} omitted to fit the preset)`
             : ''
         }\n${body}`,
-      );
-    } else if (memory.summaries.length > 0) {
-      memoryParts.push(
-        `### Chapter summaries\n(${memory.summaries.length} summaries omitted to fit the preset budget.)`,
       );
     }
     if (keptCharacters.length > 0) {
@@ -477,47 +483,51 @@ export function buildProseContext(
     );
   }
 
-  const proseTokens = Math.max(0, remaining - loreTokens - memoryTokens);
-  const pieces: Array<{ title: string; text: string }> = [];
-  for (const entry of chapters) {
-    if (entry.orderIndex >= chapter.orderIndex || !entry.currentRevisionId) continue;
-    const text = currentChapterText(entry.id);
-    if (text.trim()) pieces.push({ title: entry.title, text });
+  const proseTokens = Math.min(
+    RECENT_PROSE_TOKENS[preset],
+    Math.max(0, remaining - loreTokens - memoryTokens),
+  );
+  const preceding = chapters.filter(
+    (entry) => entry.orderIndex < chapter.orderIndex && entry.currentRevisionId && entry.status === 'drafted',
+  );
+  const previous = preceding.at(-1);
+  const summarisedIds = new Set(memory.summaries.map((entry) => entry.chapterId));
+  const missingSummaries = preceding.filter((entry) => !summarisedIds.has(entry.id)).length;
+  if (missingSummaries > 0) {
+    warnings.push(
+      `${missingSummaries} preceding drafted ${missingSummaries === 1 ? 'chapter has' : 'chapters have'} no summary. Rebuild chapter memory to carry older events forward; only the preceding chapter's ending is included as raw prose.`,
+    );
   }
-
-  let recentProse = pieces
-    .map((piece) => `### Previous chapter — ${piece.title}\n${piece.text.trim()}`)
-    .join('\n\n');
-  const proseChars = proseTokens * 4;
-  let omittedChapters = 0;
-  if (recentProse.length > proseChars) {
-    if (proseChars < 400) {
-      recentProse = '';
+  const previousText = previous ? currentChapterText(previous.id).trim() : '';
+  const heading = previous ? `### Previous chapter — ${previous.title}\n` : '';
+  const tailHeading = `${heading}[Ending excerpt; earlier prose omitted.]\n`;
+  let recentProse = '';
+  let proseText = '';
+  let proseTrimmed = false;
+  if (previousText) {
+    if (estimateTokens(heading + previousText) <= proseTokens) {
+      proseText = previousText;
+      recentProse = heading + proseText;
     } else {
-      const keepFrom = recentProse.length - proseChars;
-      const boundary = recentProse.indexOf('\n', keepFrom);
-      recentProse = recentProse.slice(boundary === -1 ? keepFrom : boundary + 1);
-      recentProse = OMITTED_MARKER + recentProse;
-    }
-    const headingsKept = (recentProse.match(/^### Previous chapter/gm) ?? []).length;
-    omittedChapters = Math.max(1, pieces.length - headingsKept);
-    if (!recentProse) {
-      omittedChapters = pieces.length;
-      warnings.push('Recent prose was omitted to keep the required context within the budget.');
+      // Count the heading and omission marker inside the cap. Preserve the
+      // ending even when the chapter is a single very long paragraph.
+      const tailChars = proseTokens * 4 - tailHeading.length;
+      if (tailChars >= 100) {
+        proseText = previousText.slice(-tailChars);
+        const boundary = proseText.search(/\s/);
+        if (boundary >= 0) proseText = proseText.slice(boundary + 1).trimStart();
+        recentProse = tailHeading + proseText;
+        proseTrimmed = true;
+      }
     }
   }
-  if (!recentProse) {
-    recentProse = pieces.length
-      ? ''
-      : '(This is the opening chapter. There is no preceding prose yet.)';
+  const includedChapters = recentProse ? 1 : 0;
+  const omittedChapters = preceding.length - includedChapters;
+  if (previousText && !recentProse) {
+    warnings.push('Recent prose was omitted to keep the required context within the budget.');
   }
-
-  const includedChapters = Math.max(0, pieces.length - omittedChapters);
-  const proseBody =
-    recentProse ||
-    (pieces.length > 0 ? '(Recent prose omitted to fit the selected context preset.)' : recentProse);
-  const proseTokensActual = estimateTokens(proseBody);
-  const includedWords = countWords(includedChapters > 0 ? recentProse : '');
+  const proseTokensActual = estimateTokens(recentProse);
+  const includedWords = countWords(proseText);
 
   const sections: ContextSection[] = [
     {
@@ -584,17 +594,15 @@ export function buildProseContext(
       included: includedChapters > 0,
       detail:
         includedChapters > 0
-          ? `${includedChapters} preceding ${
-              includedChapters === 1 ? 'chapter' : 'chapters'
-            } included${omittedChapters > 0 ? `, ${omittedChapters} trimmed` : ''}.`
-          : pieces.length > 0
-            ? 'Preceding prose omitted or trimmed by the context budget.'
+          ? `${proseTrimmed ? 'Ending excerpt from' : 'Text from'} the preceding drafted chapter; ${omittedChapters} older chapters excluded from raw prose. Older continuity uses summaries and facts.`
+          : preceding.length > 0
+            ? 'Preceding prose omitted by the context budget.'
             : 'No preceding prose yet.',
     },
   ];
 
   return {
-    recentProse: recentProse || '(No preceding prose is included for this chapter.)',
+    recentProse,
     memoryText,
     loreText,
     lore,

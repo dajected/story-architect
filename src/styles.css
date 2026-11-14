@@ -4004,6 +4004,12 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.history-tokens details {
+  max-width: 24rem;
+  white-space: normal;
+  font-family: var(--font-body);
+}
+
 .history-error {
   max-width: 190px;
   margin-top: 5px;

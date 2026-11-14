@@ -80,6 +80,7 @@ export function getProviderConnection(id: string): ProviderConnection {
     kind: row.kind,
     baseUrl: row.base_url,
     apiKey,
+    models: parseModels(row.models),
   };
 }
 

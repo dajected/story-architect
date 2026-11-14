@@ -12,6 +12,7 @@ import {
   activeJobForChapterKind,
   activeProjectJobKind,
   updateJob,
+  recordPreparedRequest,
 } from './jobs.js';
 import {
   CHARACTER_CASTING_PROMPT,
@@ -20,6 +21,7 @@ import {
   parseMemoryExtraction,
 } from './prompts.js';
 import { streamChat, ProviderError } from './providers.js';
+import type { ProviderMessage } from './providers.js';
 import { currentChapterText, getChapter, getChapterRow } from './store/chapters.js';
 import { addProposedCharacters } from './store/characters.js';
 import {
@@ -35,19 +37,6 @@ import { resolveTaskModel } from './store/settings.js';
 import { getProviderConnection, modelContextLength } from './store/connections.js';
 
 const memoryQueues = new Map<string, Promise<void>>();
-const memoryPromptLimits = new Map<string, number>();
-
-function promptLimitForContext(contextLength: number | null): number {
-  if (!contextLength) return 52000;
-  return Math.max(8000, Math.min(52000, Math.floor((contextLength - 1800) * 4)));
-}
-
-function trimForPrompt(text: string, maxChars = 52000): string {
-  if (text.length <= maxChars) return text;
-  const head = Math.floor(maxChars * 0.6);
-  const tail = maxChars - head;
-  return `${text.slice(0, head)}\n\n[Middle of the chapter omitted so the extraction fits the memory model's context.]\n\n${text.slice(-tail)}`;
-}
 
 interface RunResult {
   content: string;
@@ -57,7 +46,7 @@ interface RunResult {
 async function runJobStream(
   job: GenerationJob,
   system: string,
-  user: string,
+  user: string | ProviderMessage,
   options: { temperature: number | null; maxTokens: number | null },
 ): Promise<RunResult | null> {
   let provider;
@@ -70,18 +59,24 @@ async function runJobStream(
   updateJob(job.id, { status: 'running', started_at: new Date().toISOString() });
   const runtime = createRuntime(job.id);
   try {
-    return await streamChat(provider, {
+    const result = await streamChat(provider, {
       model: job.model,
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: user },
+        typeof user === 'string' ? { role: 'user', content: user } : user,
       ],
       temperature: options.temperature,
       topP: null,
       maxTokens: options.maxTokens,
       signal: runtime.controller.signal,
       onDelta: (text) => appendOutput(job.id, text),
+      onPrepared: (request) => recordPreparedRequest(job.id, request),
     });
+    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
+      finalizeJob(job.id, 'failed', { error: 'The model reached its reply token limit. Partial output is kept; no incomplete memory or character proposals were applied.', usage: result.usage });
+      return null;
+    }
+    return result;
   } catch (error) {
     if (isCancellation(error, runtime.controller.signal)) {
       finalizeJob(job.id, 'cancelled', {
@@ -128,26 +123,28 @@ function chapterContextForExtraction(projectId: string, chapterId: string): stri
         .join(', ')}`,
     );
   }
-  const text = parts.join('\n\n');
-  return text.length > 20000 ? `${text.slice(0, 20000)}\n[Earlier continuity notes trimmed.]` : text;
+  return parts.join('\n\n');
 }
 
 function buildMemoryUserMessage(
   projectId: string,
   chapterId: string,
   text: string,
-  maxChars: number,
-): string {
+): ProviderMessage {
   const project = getProject(projectId);
   const chapter = getChapter(chapterId);
   const previous = chapterContextForExtraction(projectId, chapterId);
-  return `Novel: ${project.title}
+  return { role: 'user', content: `Novel: ${project.title}
 Premise: ${project.premise || '(not set)'}
 Chapter ${chapter.orderIndex + 1}: ${chapter.title}
 Brief for this chapter (a plan, not evidence): ${chapter.brief || '(none)'}
 
-${previous ? `${previous}\n\n` : ''}## Chapter text
-${trimForPrompt(text, maxChars)}`;
+Summarise the supplied chapter excerpt. Earlier continuity is background, not evidence of new events.`,
+    contextParts: [
+      { label: 'Chapter text', text, priority: 100, minTokens: 512, maxTokens: 10000, trim: 'both' },
+      { label: 'Earlier continuity', text: previous, priority: 20, maxTokens: 2000 },
+    ],
+  };
 }
 
 async function runMemoryJob(jobId: string): Promise<void> {
@@ -160,7 +157,6 @@ async function runMemoryJob(jobId: string): Promise<void> {
   const chapter = getChapterRow(job.chapterId);
   const text = currentChapterText(chapter.id);
   if (!text.trim()) {
-    memoryPromptLimits.delete(jobId);
     finalizeJob(jobId, 'failed', {
       error: 'This chapter has no current text to summarise.',
     });
@@ -173,7 +169,6 @@ async function runMemoryJob(jobId: string): Promise<void> {
     chapter.project_id,
     chapter.id,
     text,
-    memoryPromptLimits.get(job.id) ?? 52000,
   );
   const result = await runJobStream(
     job,
@@ -182,7 +177,6 @@ async function runMemoryJob(jobId: string): Promise<void> {
     { temperature: 0.2, maxTokens: 1100 },
   );
   if (!result) {
-    memoryPromptLimits.delete(job.id);
     return;
   }
   await finishMemoryJob(
@@ -194,7 +188,6 @@ async function runMemoryJob(jobId: string): Promise<void> {
     sourceContentHash,
     signature,
   );
-  memoryPromptLimits.delete(job.id);
 }
 
 async function finishMemoryJob(
@@ -279,7 +272,6 @@ export function startChapterMemoryGeneration(
     context: { stage: 'memory', connectionContextLength: contextLength },
     settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1100 }),
   });
-  memoryPromptLimits.set(job.id, promptLimitForContext(contextLength));
   if (!options.queued) void runMemoryJob(job.id);
   return job;
 }
@@ -335,10 +327,6 @@ export function queueMemoryRebuild(projectId: string, chapterIds: string[]): Gen
       settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1100 }),
     }),
   );
-  for (const job of jobs) {
-    memoryPromptLimits.set(job.id, promptLimitForContext(contextLength));
-  }
-
   const previous = memoryQueues.get(projectId) ?? Promise.resolve();
   const next = previous
     .catch(() => undefined)
@@ -346,7 +334,6 @@ export function queueMemoryRebuild(projectId: string, chapterIds: string[]): Gen
       for (const job of jobs) {
         const latest = getJob(job.id);
         if (!['queued', 'running'].includes(latest.status)) {
-          memoryPromptLimits.delete(job.id);
           continue;
         }
         await runMemoryJob(job.id).catch(() => undefined);
@@ -381,16 +368,15 @@ export function startCharacterProposal(projectId: string): GenerationJob {
   });
 
   void (async () => {
-    const user = `Novel: ${project.title}
+    const user: ProviderMessage = { role: 'user', content: `Novel: ${project.title}
 Premise: ${project.premise || '(not set)'}
 Genre: ${project.genre || '(not set)'}
 Tone: ${project.tone || '(not set)'}
 Point of view: ${project.pov || '(not set)'}
 
-Approved outline:
-${outline}
-
-Propose the cast now. Return only the JSON object.`;
+Propose the cast from the approved outline now. Return only the JSON object.`,
+      contextParts: [{ label: 'Approved outline', text: outline, priority: 100, minTokens: 256, maxTokens: 9000, trim: 'both' }],
+    };
     const result = await runJobStream(job, CHARACTER_CASTING_PROMPT, user, {
       temperature: 0.7,
       maxTokens: 2500,

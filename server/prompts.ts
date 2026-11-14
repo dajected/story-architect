@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { RequestContextPart, RequestMessage } from './request-context.js';
 import type { OutlineChapter, RewriteAction } from '../shared/types.js';
 
 export const OUTLINE_TEMPLATE_DEFAULT = `You are Story Architect, an experienced developmental editor and novelist.
@@ -162,6 +163,23 @@ export function renderTemplate(template: string, values: PromptValues): string {
   });
 }
 
+/** Preserve custom template layout while making background variables budgetable. */
+export function renderContextTemplate(
+  template: string,
+  values: PromptValues,
+  optional: Record<string, Omit<RequestContextPart, 'text' | 'slot'>>,
+): RequestMessage {
+  const contextParts: RequestContextPart[] = [];
+  const content = template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
+    const value = values[key] == null ? '' : String(values[key]);
+    if (!optional[key] || !value.trim()) return value;
+    const slot = `__SA_CONTEXT_${crypto.randomUUID()}__`;
+    contextParts.push({ ...optional[key], text: value, slot });
+    return slot;
+  });
+  return { role: 'system', content, contextParts };
+}
+
 export function outlinePromptValues(params: {
   title: string;
   premise: string;
@@ -302,15 +320,7 @@ Style: ${params.styleNotes || '(not set)'}
 Content preferences: ${params.contentPreferences || '(not set)'}
 Project instructions: ${params.instructions || '(none)'}
 
-Approved outline (future beats are plans, not history):
-${params.outlineSummary || '(no approved outline yet)'}
-
-Story memory (verified summaries, character profiles, established facts):
-${params.storyMemory || '(no chapter summaries or established facts yet)'}
-
-Current chapter context:
-${params.chapterContext || '(no chapter selected)'}
-
+${params.outlineSummary ? `Approved outline (future beats are plans, not history):\n${params.outlineSummary}\n\n` : ''}${params.storyMemory ? `Story memory (verified summaries, character profiles, established facts):\n${params.storyMemory}\n\n` : ''}${params.chapterContext ? `Current chapter context:\n${params.chapterContext}\n\n` : ''}
 The manuscript is the author's source of truth. You can brainstorm, analyse, and suggest revisions, but your messages never change the manuscript unless the author explicitly inserts them. Do not claim that you edited anything.`;
 }
 
