@@ -2606,3 +2606,16 @@ describe('review regressions', () => {
     }
   }, 15000);
 });
+
+
+describe('library deletion', () => {
+  it('permanently removes an archived story and leaves other stories intact', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', { title: 'Delete me' });
+    const { project: other } = await request<{ project: { id: string } }>('POST', '/projects', { title: 'Keep me' });
+    await request('POST', `/projects/${project.id}/archive`);
+    const deleted = await fetch(`${baseUrl}/api/projects/${project.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(204);
+    expect((await fetch(`${baseUrl}/api/projects/${project.id}`)).status).toBe(404);
+    expect((await fetch(`${baseUrl}/api/projects/${other.id}`)).status).toBe(200);
+  });
+});

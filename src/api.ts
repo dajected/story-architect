@@ -280,6 +280,7 @@ export const api = {
     request<{ project: Project }>('GET', `/projects/${id}`).then((r) => r.project),
   updateProject: (id: string, input: Record<string, unknown>) =>
     request<{ project: Project }>('PATCH', `/projects/${id}`, input).then((r) => r.project),
+  deleteProject: (id: string) => request<void>('DELETE', `/projects/${id}`),
   archiveProject: (id: string) =>
     request<{ project: Project }>('POST', `/projects/${id}/archive`).then((r) => r.project),
   unarchiveProject: (id: string) =>

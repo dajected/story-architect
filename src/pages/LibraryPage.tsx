@@ -18,8 +18,6 @@ export function LibraryPage({
 }) {
   const navigate = useNavigate();
   const [sort, setSort] = useState(() => localStorage.getItem('library-sort') ?? 'recent');
-  const [compact, setCompact] = useState(() => localStorage.getItem('library-compact') === 'true');
-  const [ready, setReady] = useState({text:false, image:false});
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +42,6 @@ export function LibraryPage({
 
   useEffect(() => {
     void load();
-    void Promise.all([api.getSettings(), api.listImageConnections()]).then(([settings, images]) => setReady({text: settings.roles.some(r => r.role === 'default' && Boolean(r.model && r.connectionId)), image: images.length > 0})).catch(() => {});
   }, [load]);
 
   const active = projects.filter((project) => project.status === 'active');
@@ -77,6 +74,15 @@ export function LibraryPage({
     } catch (err) {
       setError(errorText(err));
     }
+  };
+
+  const remove = async (project: Project) => {
+    if (!await confirmAction(`Permanently delete "${project.title}"? This deletes its chapters, revisions, and other story data. This cannot be undone.`)) return;
+    try {
+      await api.deleteProject(project.id);
+      setProjects(current => current.filter(entry => entry.id !== project.id));
+      setError(null);
+    } catch (err) { setError(errorText(err)); }
   };
 
   const restore = async (project: Project) => {
@@ -150,7 +156,6 @@ export function LibraryPage({
           />
           <div className="library-toolbar-right">
             <select aria-label="Sort novels" value={sort} onChange={e => {setSort(e.target.value); localStorage.setItem('library-sort',e.target.value);}}><option value="recent">Recently updated</option><option value="title">Title</option><option value="words">Word count</option></select>
-            <button className="button button-small" aria-pressed={compact} onClick={() => {setCompact(v => !v);localStorage.setItem('library-compact',String(!compact));}}>{compact ? 'Card view' : 'Compact view'}</button>
             <span className="muted">
               {active.length} active {active.length === 1 ? 'novel' : 'novels'}
             </span>
@@ -202,19 +207,19 @@ export function LibraryPage({
               : 'Try a different phrase or clear the search.'}
           </EmptyState>
         ) : (
-          <div className={`project-grid ${compact ? 'compact-library' : ''}`}>
+          <div className="library-shelf"><div className="library-shelf-heading"><h2>My stories</h2><span>{filtered.length} {filtered.length === 1 ? 'story' : 'stories'}</span></div><div className="project-grid library-list">
             {sorted.map((project) => (
-              <ProjectCard key={project.id} project={project} onArchive={archive} />
+              <ProjectCard key={project.id} project={project} onArchive={archive} onDelete={remove} />
             ))}
-          </div>
+          </div></div>
         )}
 
         {showArchived && archived.length > 0 ? (
           <section className="archive-section">
             <h2>Archive</h2>
-            <div className={`project-grid ${compact ? 'compact-library' : ''}`}>
+            <div className="project-grid library-list">
               {archived.map((project) => (
-                <ProjectCard key={project.id} project={project} onRestore={restore} />
+                <ProjectCard key={project.id} project={project} onRestore={restore} onDelete={remove} />
               ))}
             </div>
           </section>
@@ -240,10 +245,12 @@ function ProjectCard({
   project,
   onArchive,
   onRestore,
+  onDelete,
 }: {
   project: Project;
   onArchive?: (project: Project) => void;
   onRestore?: (project: Project) => void;
+  onDelete: (project: Project) => void;
 }) {
   let lastChapter: { title: string; orderIndex: number } | null = null;
   try { lastChapter = JSON.parse(localStorage.getItem(`last-chapter-${project.id}`) ?? 'null'); } catch { /* Ignore old browser data. */ }
@@ -282,6 +289,7 @@ function ProjectCard({
             Restore
           </button>
         ) : null}
+        <button className="button button-ghost button-small library-delete" onClick={() => onDelete(project)}>Delete</button>
       </div>
     </article>
   );

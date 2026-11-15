@@ -14,7 +14,8 @@ import { projectGenerationHistory } from '../jobs.js';
 import { activeProjectPortraitBatches } from '../store/portrait-batches.js';
 import { activeChapterBatch } from '../store/chapter-batches.js';
 import { createProjectBackup, restoreProjectBackup } from '../backup.js';
-import { badRequest } from '../errors.js';
+import { badRequest, conflict } from '../errors.js';
+import { dbAll, dbGet, dbRun } from '../db.js';
 import fs from 'node:fs';
 import { listProjectImageAssets, getImageAssetRow, imageFilePath } from '../store/images.js';
 import { listCharacters } from '../store/characters.js';
@@ -89,6 +90,19 @@ projectsRouter.get(
     res.json({ project: getProject(stringParam(req.params.id, 'project id')) });
   }),
 );
+
+projectsRouter.delete('/projects/:id', wrap((req, res) => {
+  const id = stringParam(req.params.id, 'project id');
+  getProject(id);
+  const busy = dbGet<{ count: number }>(`SELECT (SELECT COUNT(*) FROM generation_jobs WHERE project_id = ? AND status IN ('queued', 'running')) + (SELECT COUNT(*) FROM image_jobs WHERE project_id = ? AND status IN ('queued', 'running')) + (SELECT COUNT(*) FROM chapter_batches WHERE project_id = ? AND status = 'running') + (SELECT COUNT(*) FROM portrait_batches WHERE project_id = ? AND status = 'running') AS count`, id, id, id, id);
+  if (busy?.count) throw conflict('Wait for this story?s active generation to finish before deleting it.');
+  const files = dbAll<{ file_name: string }>('SELECT file_name FROM image_assets WHERE project_id = ?', id);
+  dbRun('DELETE FROM projects WHERE id = ?', id);
+  for (const file of files) {
+    try { fs.rmSync(imageFilePath(file.file_name), { force: true }); } catch { /* Database deletion remains valid if a file is already unavailable. */ }
+  }
+  res.status(204).end();
+}));
 
 projectsRouter.patch(
   '/projects/:id',
