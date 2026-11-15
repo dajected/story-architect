@@ -5,6 +5,7 @@ import type {
   ChapterBatch,
   ChapterBatchMode,
   GenerationJob,
+  ImageAsset,
   OutlineChapter,
   OutlineRevision,
   Project,
@@ -13,19 +14,24 @@ import { countWords } from '@shared/utils';
 import { api, type OutlineResponse } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate, formatWords, newId } from '../utils';
-import { Banner, EmptyState, Spinner } from './ui';
+import { Banner, EmptyState, Modal, Spinner } from './ui';
 
 export function OutlinePanel({
   project,
+  active = true,
   onProjectChanged,
   onOpenManuscript,
   onOpenChapter,
 }: {
   project: Project;
+  active?: boolean;
   onProjectChanged: () => Promise<void>;
   onOpenManuscript: () => void;
   onOpenChapter?: (chapterId: string) => void;
 }) {
+  const [images, setImages] = useState<ImageAsset[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [viewImage, setViewImage] = useState<ImageAsset | null>(null);
   const [outline, setOutline] = useState<OutlineResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -46,6 +52,34 @@ export function OutlinePanel({
   const finishedRef = useRef<(job: GenerationJob) => void>(() => {});
   const stream = useJobStream((job) => finishedRef.current(job));
   const outputRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const assets = await api.listProjectImages(project.id);
+        if (!cancelled) {setImages(assets); setImageError(null);}
+      } catch (err) {
+        if (!cancelled) setImageError(errorText(err));
+      }
+    };
+    void refresh();
+    // Portrait jobs can finish independently of chapter drafting.
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => {cancelled = true; window.clearInterval(timer);};
+  }, [active, project.id, project.updatedAt]);
+
+  const chapterImages = (chapterId: string, title: string) => {
+    const assets = images.filter(image => image.chapterId === chapterId)
+      .sort((a, b) => Number(b.selectedForChapter) - Number(a.selectedForChapter) || b.createdAt.localeCompare(a.createdAt));
+    return <aside className="outline-chapter-images" aria-label={`Images for ${title}`}>
+      {assets.length ? assets.map(asset => <button key={asset.id} className="chapter-image-thumb" onClick={() => setViewImage(asset)} aria-label={`View ${title} image${asset.selectedForChapter ? ', selected for chapter' : ''}`}>
+        <img src={asset.url} alt={`Generated image for ${title}`} loading="lazy" />
+        {asset.selectedForChapter ? <span>Selected</span> : null}
+      </button>) : <span className="muted small">No chapter images yet</span>}
+    </aside>;
+  };
 
   const latest = outline?.latest ?? null;
   const viewed = outline?.revisions.find((revision) => revision.id === viewedId) ?? latest;
@@ -438,6 +472,10 @@ export function OutlinePanel({
 
       {error ? <Banner tone="danger">{error}</Banner> : null}
       {notice ? <Banner tone="success">{notice}</Banner> : null}
+      {imageError ? <Banner tone="warning">Chapter images could not load: {imageError}</Banner> : null}
+      <Modal open={Boolean(viewImage)} title="Chapter image" onClose={() => setViewImage(null)} width="wide">
+        {viewImage ? <img className="chapter-image-full" src={viewImage.url} alt="Generated chapter image" /> : null}
+      </Modal>
 
       {!latest && !showGenerator ? (
         <EmptyState
@@ -624,6 +662,7 @@ export function OutlinePanel({
                         aria-label={`Chapter ${index + 1} brief`}
                       />
                     </div>
+                    {chapterImages(chapter.id, chapter.title)}
                     <details className="outline-chapter-actions action-menu"><summary className="button button-small" aria-label={`Actions for chapter ${index + 1}`}>Edit order</summary><div className="action-menu-content">
                       <button
                         className="icon-button"
@@ -667,6 +706,7 @@ export function OutlinePanel({
                       <h3>{chapter.title}</h3>
                       <p>{chapter.brief || 'No brief.'}</p>
                     </div>
+                    {chapterImages(chapter.id, chapter.title)}
                   </article>
                 ))}
                 {viewed?.chapters.length === 0 ? <p className="muted">This revision has no chapters.</p> : null}

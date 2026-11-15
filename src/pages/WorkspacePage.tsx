@@ -260,9 +260,6 @@ export function WorkspacePage({
     <div className={`workspace-shell ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
       <header className="workspace-topbar">
         <div className="workspace-topbar-left">
-          <Link className="button button-ghost button-small back-link" to="/">
-            Library
-          </Link>
           <div className="workspace-title">
             <h1>{project.title}</h1>
             <div className="workspace-subtitle">
@@ -311,6 +308,7 @@ export function WorkspacePage({
           <button className="button button-small" aria-pressed={focusMode} onClick={() => {setTab('manuscript'); setFocusMode(v => !v);}}>{focusMode ? 'Exit focus' : 'Focus'}</button>
           <button className="button button-small" onClick={() => openSettings()}>Settings</button>
           <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content">
+          <Link className="button button-small" to="/">Library</Link>
           <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export HTML (chapter images)</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export Markdown
@@ -368,6 +366,7 @@ export function WorkspacePage({
           <div className={`workspace-view ${tab === 'outline' ? '' : 'is-hidden'}`}>
             <div className="workspace-scroll">
               <OutlinePanel
+                active={tab === 'outline'}
                 project={project}
                 onProjectChanged={refreshAll}
                 onOpenManuscript={() => setTab('manuscript')}
