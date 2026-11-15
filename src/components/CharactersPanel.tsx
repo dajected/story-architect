@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Character, CharacterInput, GenerationJob, Project } from '@shared/types';
+import type { Chapter, ImageAsset, Character, CharacterInput, GenerationJob, Project } from '@shared/types';
 import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate } from '../utils';
+import { ImageGallery } from './ImageGallery';
 import { ImageStudio } from './ImageStudio';
 import { Banner, EmptyState, Modal, Spinner } from './ui';
 
@@ -30,8 +31,16 @@ export function CharactersPanel({
   onOpenImageSettings: () => void;
   onOpenTimeline: (characterId: string) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [assets, setAssets] = useState<ImageAsset[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [managing, setManaging] = useState<Character | null>(null);
+  const loadPortraits = async () => {
+    const [images, list] = await Promise.all([api.listProjectImages(project.id), api.listChapters(project.id)]);
+    setAssets(images); setChapters(list);
+  };
+  useEffect(() => { void loadPortraits().catch(err => setError(errorText(err))); }, [project.id]);
+  const firstChapter = [...chapters].sort((a,b) => a.orderIndex - b.orderIndex)[0];
+  const portrait = (character: Character) => assets.filter(a => a.characterId === character.id && a.chapterId === firstChapter?.id).sort((a,b) => Number(b.selectedForChapter) - Number(a.selectedForChapter) || b.createdAt.localeCompare(a.createdAt))[0];
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -159,7 +168,7 @@ export function CharactersPanel({
     setStudioCharacter((current) => (current?.id === updated.id ? updated : current));
   };
 
-  const visible = characters.filter(c => `${c.name} ${c.role} ${c.identity}`.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'missing' ? !c.portraitUrl : c.status === filter)));
+  const visible = characters;
   const active = visible.filter((character) => character.status === 'active');
   const proposed = visible.filter((character) => character.status === 'proposed');
   const archived = visible.filter((character) => character.status === 'archived');
@@ -208,7 +217,7 @@ export function CharactersPanel({
           </button>
         </div>
       </header>
-        <div className="row-actions"><input type="search" aria-label="Search cast" placeholder="Find a character" value={query} onChange={e => setQuery(e.target.value)} /><select aria-label="Filter cast" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All characters</option><option value="active">Accepted</option><option value="proposed">Proposed</option><option value="archived">Archived</option><option value="missing">Missing portrait</option></select></div>
+
 
       {error ? (
         <Banner
@@ -256,6 +265,7 @@ export function CharactersPanel({
           <div className="cast-grid">
             {proposed.map((character) => (
               <article className="cast-card proposed" key={character.id}>
+                <CharacterPortrait character={character} asset={portrait(character)} />
                 <div className="cast-card-head">
                   <div>
                     <h3>{character.name}</h3>
@@ -330,9 +340,10 @@ export function CharactersPanel({
           <div className="cast-grid">
             {active.map((character) => (
               <article className="cast-card" key={character.id}>
+                <CharacterPortrait character={character} asset={portrait(character)} />
                 <div className="cast-card-head">
                   <div className="cast-identity">
-                    <CharacterPortrait character={character} />
+                    
                     <div>
                       <h3>{character.name}</h3>
                       <span className="muted small">
@@ -349,21 +360,16 @@ export function CharactersPanel({
                     className="button button-small"
                     onClick={() => setStudioCharacter(character)}
                   >
-                    Portrait studio
+                    Create portrait
                   </button>
+                  <button className="button button-small" onClick={() => setManaging(character)}>Manage portraits</button>
                   <button
                     className="button button-ghost button-small"
                     onClick={() => setEditing({ id: character.id, form: toForm(character) })}
                   >
                     Edit profile
                   </button>
-                  <button
-                    className="button button-ghost button-small"
-                    onClick={() => void updateStatus(character.id, 'archive')}
-                    disabled={busyId === character.id}
-                  >
-                    Archive
-                  </button>
+
                 </div>
               </article>
             ))}
@@ -493,11 +499,17 @@ export function CharactersPanel({
         ) : null}
       </Modal>
 
+      <Modal open={Boolean(managing)} title={`Manage portraits ? ${managing?.name ?? ''}`} onClose={() => setManaging(null)} width="wide">
+        {managing ? <ImageGallery assets={assets.filter(a => a.characterId === managing.id)} characters={characters} chapters={chapters} onChanged={async () => { await loadPortraits(); await load(); }} /> : null}
+        {managing && !assets.some(a => a.characterId === managing.id) ? <EmptyState title="No portraits yet">Use Create portrait on the character card to make their first portrait.</EmptyState> : null}
+      </Modal>
       <ImageStudio
+        creationOnly
+        initialChapterId={firstChapter?.id}
         open={studioCharacter !== null}
         project={project}
         character={studioCharacter}
-        onClose={() => setStudioCharacter(null)}
+        onClose={() => { setStudioCharacter(null); void loadPortraits().catch(err => setError(errorText(err))); }}
         onCharacterUpdated={handleCharacterUpdated}
         onOpenSettings={() => {
           setStudioCharacter(null);
@@ -512,20 +524,11 @@ export function CharactersPanel({
   );
 }
 
-function CharacterPortrait({ character }: { character: Character }) {
-  if (character.portraitUrl) {
-    return (
-      <img
-        className="cast-portrait-thumb"
-        src={character.portraitUrl}
-        alt={`${character.name} portrait`}
-        loading="lazy"
-      />
-    );
-  }
-  return (
-    <img className="cast-portrait-thumb" alt={`${character.name} placeholder portrait`} src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Crect width='128' height='128' fill='%2339465c'/%3E%3Ccircle cx='64' cy='44' r='23' fill='%23afbdd2'/%3E%3Cellipse cx='64' cy='120' rx='46' ry='46' fill='%23afbdd2'/%3E%3C/svg%3E" />
-  );
+function CharacterPortrait({ character, asset }: { character: Character; asset?: ImageAsset }) {
+  return <figure className="cast-cover">
+    {asset ? <img src={asset.url} alt={`${character.name} in chapter 1`} loading="lazy" /> : <div className="cast-cover-empty"><span>{character.name.slice(0,1)}</span><p>No chapter 1 portrait yet</p></div>}
+    <figcaption>Chapter 1 appearance</figcaption>
+  </figure>;
 }
 
 function ProfileSummary({ character }: { character: Character }) {

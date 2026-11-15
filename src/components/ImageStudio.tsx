@@ -42,8 +42,10 @@ export function ImageStudio({
   onOpenImageSettings,
   initialChapterId,
   initialAsset,
+  creationOnly = false,
 }: {
   open: boolean;
+  creationOnly?: boolean;
   initialChapterId?: string;
   initialAsset?: ImageAsset | null;
   project: Project;
@@ -639,7 +641,7 @@ export function ImageStudio({
             </section>
           </div>
 
-          <div className="image-studio-gallery">
+          <div className="image-studio-gallery" hidden={creationOnly}>
             <div className="image-studio-section-head">
               <h3>Gallery</h3>
               <span className="muted small">

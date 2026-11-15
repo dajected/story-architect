@@ -291,7 +291,27 @@ export function WorkspacePage({
 
         <div className="workspace-actions">
 
-          <button className="button button-small" onClick={() => openSettings()}>Novel settings</button>
+          <div className="workspace-title">
+            <h1>{project.title}</h1>
+            <div className="workspace-subtitle">
+              <span>{formatWords(totalWords)} words</span>
+              <span>{chapters.length} chapters</span>
+              {project.status === 'archived' ? <span className="badge">Archived</span> : null}
+            </div>
+          </div>
+          <details className="action-menu workspace-menu" onKeyDown={event => {
+            if (event.key === 'Escape') {
+              event.currentTarget.open = false;
+              event.currentTarget.querySelector('summary')?.focus();
+            }
+          }}><summary className="button button-small">Menu ?</summary><div className="action-menu-content" onClick={event => {
+            if ((event.target as HTMLElement).closest('button, a')) {
+              const menu = event.currentTarget.closest('.workspace-menu');
+              menu?.removeAttribute('open');
+              menu?.querySelector('summary')?.focus();
+            }
+          }}>
+          <details className="workspace-submenu"><summary>Workspace</summary><div>
           {tab === 'manuscript' ? <button className="button button-ghost button-small" aria-pressed={window.innerWidth <= 1180 ? sidebarOpen : chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
             {sidebarOpen || (window.innerWidth > 1180 && chaptersVisible) ? 'Hide chapters' : 'Show chapters'}
           </button> : null}
@@ -303,27 +323,18 @@ export function WorkspacePage({
             {assistantOpen ? 'Hide assistant' : 'Show assistant'}
           </button>
           {focusMode ? <button className="button button-small" onClick={() => setFocusMode(false)}>Exit focus</button> : null}
-          <div className="workspace-title">
-            <h1>{project.title}</h1>
-            <div className="workspace-subtitle">
-              <span>{formatWords(totalWords)} words</span>
-              <span>{chapters.length} chapters</span>
-              {project.status === 'archived' ? <span className="badge">Archived</span> : null}
-            </div>
-          </div>
+          </div></details>
+          <details className="workspace-submenu"><summary>Settings</summary><div>
+          <button className="button button-small" onClick={() => openSettings()}>Novel settings</button>
           <Link className="button button-small" to={`/settings?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=${tab}`)}`}>App settings</Link>
-          <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content" onClick={event => {
-            if ((event.target as HTMLElement).closest('button, a')) {
-              const menu = event.currentTarget.closest('details');
-              menu?.removeAttribute('open');
-              menu?.querySelector('summary')?.focus();
-            }
-          }}>
+          </div></details>
+          <details className="workspace-submenu"><summary>Export & backup</summary><div>
           <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export HTML (chapter images)</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export Markdown
           </a>
           <BackupButton projectId={project.id} label="Back up" />
+          </div></details>
           </div></details>
         </div>
       </header>

@@ -4449,3 +4449,22 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
 .assistant-panel:not(.open) { display:none; }
 .focus-mode .editor-header, .focus-mode .generate-panel, .focus-mode .stream-panel, .focus-mode .review-panel { display:none; }
 @media(max-width:720px) { .manuscript-preview { padding:20px 18px 60px; } }
+
+.cast-cover { margin: 0; overflow: hidden; border-radius: 10px; background: var(--panel); }
+.cast-cover > img, .cast-cover-empty { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; }
+.cast-cover-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(145deg, #39465c, #202737); color: #dce4f0; }
+.cast-cover-empty > span { font-family: var(--font-prose); font-size: 80px; }
+.cast-cover figcaption { padding: 10px; font-size: 12px; color: var(--muted); }
+.image-studio-gallery[hidden] { display: none; }
+
+/* A stable novel identity beside one grouped workspace menu. */
+.workspace-actions { flex-wrap: nowrap; gap: 16px; min-width: 0; }
+.workspace-title { min-width: 0; }
+.workspace-title h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+.workspace-menu { flex-shrink: 0; }
+.workspace-submenu > summary { cursor: pointer; padding: 9px 10px; font-size: 13px; border-radius: 6px; }
+.workspace-submenu > summary:hover { background: var(--bg); }
+.workspace-submenu > div { display: grid; gap: 4px; padding: 4px 0 8px 12px; }
+.workspace-submenu .button { width: 100%; border: 0; background: transparent; text-align: left; justify-content: flex-start; }
+.workspace-submenu .button:hover { background: var(--bg); }
+@media (max-width: 720px) { .workspace-actions { justify-content: space-between; } .workspace-title h1 { max-width: 65vw; } }
