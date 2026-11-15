@@ -15,10 +15,10 @@ function modelLimits(provider: ProviderConnection, modelId: string) {
 }
 
 /** Allow for both the visible answer and any reasoning tokens. */
-export function backgroundReplyTokens(provider: ProviderConnection, modelId: string): number {
+export function backgroundReplyTokens(provider: ProviderConnection, modelId: string, desiredTokens = 4096): number {
   const { context, reply } = modelLimits(provider, modelId);
   const safety = Math.max(256, Math.ceil(context * 0.05));
-  return Math.max(1, Math.min(4096, reply, Math.floor((context - safety) / 2)));
+  return Math.max(1, Math.min(desiredTokens, reply, Math.floor((context - safety) / 2)));
 }
 
 function sumUsage(results: ChatResult[]): ChatUsage | null {
@@ -38,12 +38,13 @@ export async function streamBackgroundTask(
   params: ChatParams,
   options: {
     label: string;
+    initialReplyTokens?: number;
     validate: (content: string) => boolean;
     onAttempt?: (result: ChatResult, totalUsage: ChatUsage | null) => void;
   },
 ): Promise<ChatResult> {
   const limits = modelLimits(provider, params.model);
-  let maxTokens = backgroundReplyTokens(provider, params.model);
+  let maxTokens = backgroundReplyTokens(provider, params.model, options.initialReplyTokens);
   const knownContext = provider.models?.find((entry) => entry.id === params.model)?.contextLength;
   const frozen = prepareRequest(params.messages, {
     contextLength: knownContext, maxOutputTokens: limits.reply, maxTokens,

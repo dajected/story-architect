@@ -225,7 +225,9 @@ function startMock(): Promise<void> {
         const retryShort = shortTask && (system + user).includes('SHORT_REPLY_RETRY');
         if (retryShort) shortTaskReplyBudgets.push(parsed.max_tokens!);
         const limitedShort = retryShort && (parsed.max_tokens ?? 0) < 6000;
-        const text = limitedImage ? 'PARTIAL_IMAGE_PROMPT: a portrait of Mara'
+        const limitedOutline = system.includes('chapter-by-chapter outline') &&
+          (system + user).includes('OUTLINE_REPLY_RETRY') && (parsed.max_tokens ?? 0) < 6000;
+        const text = limitedOutline ? '' : limitedImage ? 'PARTIAL_IMAGE_PROMPT: a portrait of Mara'
           : invalidImage ? 'Here is the prompt:\n{"prompt":"unclosed'
           : limitedShort ? 'PARTIAL_SHORT_TASK'
           : limitedMemory ? '{"summary":"partial memory'
@@ -258,8 +260,8 @@ function startMock(): Promise<void> {
           for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
           }
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: limitedImage || limitedShort || limitedMemory || (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
-          const limited = limitedImage || limitedMemory || limitedShort;
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: limitedOutline || limitedImage || limitedShort || limitedMemory || (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
+          const limited = limitedOutline || limitedImage || limitedMemory || limitedShort;
           const completionTokens = limited ? parsed.max_tokens! : retryMemory || retryImage ? 1500 : 50;
           res.write(
             `data: ${JSON.stringify({
@@ -578,6 +580,28 @@ describe('stage 1 workflow', () => {
 });
 
 describe('stage 2 memory, cast, and context', () => {
+  it('retries an automatic reasoning-only outline cutoff and preserves an explicit reply limit', async () => {
+    for (const automatic of [true, false]) {
+      const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+        title: 'Outline budget recovery', premise: 'OUTLINE_REPLY_RETRY', chapterCount: 8,
+      });
+      await request('PATCH', `/projects/${project.id}/settings`, {
+        generation: { maxTokens: automatic ? null : 2272 },
+      });
+      const { job } = await request<{ job: { id: string } }>('POST', `/projects/${project.id}/outline/generate`, {});
+      const result = await waitForJob(job.id);
+      expect(result.status).toBe(automatic ? 'completed' : 'failed');
+      const { getJobRow } = await import('./jobs.js');
+      const context = JSON.parse(getJobRow(job.id).context_json!);
+      expect(context.requestAttempts).toHaveLength(automatic ? 2 : 1);
+      const { latest } = await request<{ latest: { chapters: unknown[] } | null }>('GET', `/projects/${project.id}/outline`);
+      if (automatic) {
+        expect(latest?.chapters).toHaveLength(2);
+        expect((result.usage as { completionTokens: number }).completionTokens).toBe(4146);
+      } else expect(latest).toBeNull();
+    }
+  });
+
   it('retries reasoning-limited memory and checkpoint updates as complete responses', async () => {
     const { getJobRow } = await import('./jobs.js');
     const { inspectStoryState } = await import('./store/story-state.js');

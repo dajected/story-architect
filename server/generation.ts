@@ -110,9 +110,15 @@ async function runStream(
         automaticOutput: settings.automaticOutput ?? false,
         onUsage: (usage) => updateJob(job.id, { usage: usage ? JSON.stringify(usage) : null }),
       })
-      : job.kind === 'review'
-        ? await streamBackgroundTask(provider, params, { label: 'Continuity review',
-          validate: (content) => !!content.trim(), onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage) })
+      : job.kind === 'review' || (job.kind === 'outline' && settings.automaticOutput)
+        ? await streamBackgroundTask(provider, params, {
+          label: job.kind === 'outline' ? 'Outline generation' : 'Continuity review',
+          initialReplyTokens: job.kind === 'outline' ? settings.maxTokens ?? undefined : undefined,
+          validate: (content) => {
+            if (job.kind !== 'outline') return !!content.trim();
+            try { return parseOutline(content).length > 0; } catch { return false; }
+          },
+          onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage) })
         : await streamChat(provider, params);
     if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
       finalizeJob(job.id, 'failed', {
@@ -175,7 +181,9 @@ export function startOutlineGeneration(
   const model = resolveTaskModel(projectId, 'outline');
   const configuredSettings = getProjectGeneration(projectId);
   const settings = { ...configuredSettings,
-    maxTokens: configuredSettings.maxTokens ?? Math.max(2048, (project.chapterCount ?? 20) * 220 + 512),
+    maxTokens: configuredSettings.maxTokens ?? backgroundReplyTokens(model.provider, model.model,
+      Math.max(4096, (project.chapterCount ?? 20) * 220 + 2048)),
+    automaticOutput: configuredSettings.maxTokens === null,
   };
   const { prompt, userMessage } = renderOutlinePrompt(projectId, instructions);
 

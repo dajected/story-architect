@@ -96,8 +96,12 @@ export function ProjectForm({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!draft.title.trim()) {
+    if (initial && !draft.title.trim()) {
       setError('Give the project a title first.');
+      return;
+    }
+    if (!initial && (!draft.premise.trim() || !draft.chapterCount)) {
+      setError('Enter a premise and number of chapters to get started.');
       return;
     }
     const chapterCount = draft.chapterCount ? Number(draft.chapterCount) : null;
@@ -117,8 +121,10 @@ export function ProjectForm({
     setSaving(true);
     setError(null);
     try {
+      const title = initial ? draft.title.trim() : (await api.suggest('title', { premise: draft.premise.trim(), chapterCount: draft.chapterCount }, chapterCount ?? undefined)).trim();
+      if (!title) throw new Error('Could not generate a title. Please try again.');
       await onSubmit({
-        title: draft.title.trim(),
+        title,
         premise: draft.premise,
         genre: draft.genre,
         tone: draft.tone,
@@ -136,6 +142,29 @@ export function ProjectForm({
       setSaving(false);
     }
   };
+
+  if (!initial) return (
+    <form className="project-form quick-create" onSubmit={submit}>
+      {error ? <Banner tone="danger">{error}</Banner> : null}
+      <div className="quick-create-intro">
+        <span className="quick-create-kicker">YOUR STORY STARTS HERE</span>
+        <h3>Every great story starts with an idea.</h3>
+        <p>Share the spark of your story and choose its length. We'll take care of the rest.</p>
+      </div>
+      <Field label="Story premise" htmlFor="quick-premise">
+        <textarea id="quick-premise" rows={5} value={draft.premise} onChange={(event) => update('premise', event.target.value)} placeholder="A reluctant detective discovers that every missing person in her town has dreamed of the same house..." autoFocus required />
+        <p className="quick-create-hint">A few sentences are plenty. What happens, and who is it about?</p>
+      </Field>
+      <Field label="Number of chapters" htmlFor="quick-chapters">
+        <input id="quick-chapters" type="number" min={1} max={200} step={1} value={draft.chapterCount} onChange={(event) => update('chapterCount', event.target.value)} placeholder="e.g. 12" required />
+      </Field>
+      <div className="quick-create-note">? <span>We'll generate a title and use your premise to guide the outline. You can refine the details later.</span></div>
+      <div className="form-actions">
+        <button type="button" className="button button-ghost" onClick={onCancel} disabled={saving}>Cancel</button>
+        <button type="submit" className="button button-primary" disabled={saving}>{saving ? <Spinner /> : null}{saving ? 'Creating?' : submitLabel}</button>
+      </div>
+    </form>
+  );
 
   return (
     <form className="project-form" onSubmit={submit}>

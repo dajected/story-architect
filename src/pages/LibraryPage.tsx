@@ -227,8 +227,8 @@ export function LibraryPage({
         open={creating}
         onClose={() => setCreating(false)}
         title="Create a novel"
-        subtitle="Start with a title and premise. You can refine story preferences at any time."
-        width="wide"
+        subtitle="Turn your idea into a novel."
+        width="narrow"
       >
         <ProjectForm submitLabel="Create project" onSubmit={create} onCancel={() => setCreating(false)} />
       </Modal>
