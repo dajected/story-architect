@@ -80,7 +80,7 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
   await modal.getByRole('button',{name:'Save connection'}).focus();await page.keyboard.press('Tab');expect(await modal.evaluate(el=>el.contains(document.activeElement))).toBe(true);
   await page.keyboard.press('Escape');await expect(modal).not.toBeVisible();
   await expect(page.getByRole('button',{name:'Add connection',exact:true})).toBeFocused();
-  await page.goto('/');await page.getByRole('button',{name:'Compact view'}).click();await expect(page.locator('.compact-library')).toBeVisible();
+  await page.goto('/');await expect(page.locator('.version-badge')).toHaveText(/^v\d+\.\d+\.\d+ · [0-9a-z]{3,}$/);await page.getByRole('button',{name:'Compact view'}).click();await expect(page.locator('.compact-library')).toBeVisible();
   await page.getByLabel('Search projects').fill('no matching novel');await expect(page.getByRole('heading',{name:'No novels match that search'})).toBeVisible();
   await page.getByLabel('Search projects').fill('');await page.getByRole('button',{name:'New novel',exact:true}).click();
   await expect(page.getByRole('textbox',{name:'Title',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'Writing style',exact:true})).toBeHidden();await page.keyboard.press('Escape');

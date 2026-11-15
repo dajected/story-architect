@@ -1,7 +1,20 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { APP_COMMIT, APP_VERSION } from '../version';
 
 export type Theme = 'dark' | 'light';
+
+export function VersionBadge() {
+  return (
+    <div
+      className="version-badge"
+      title={`Story Architect v${APP_VERSION} — build ${APP_COMMIT}`}
+      aria-label={`Version ${APP_VERSION}, build ${APP_COMMIT}`}
+    >
+      v{APP_VERSION} · {APP_COMMIT}
+    </div>
+  );
+}
 
 export function Brand({ to = '/', small = false }: { to?: string; small?: boolean }) {
   return (

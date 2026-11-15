@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
+import { VersionBadge } from './components/Chrome';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/WorkspacePage';
@@ -26,7 +27,8 @@ export function App() {
   }, [location.pathname]);
 
   return (
-    <Routes>
+    <>
+      <Routes>
       <Route path="/" element={<LibraryPage theme={theme} onThemeChange={setTheme} />} />
       <Route path="/settings" element={<SettingsPage theme={theme} onThemeChange={setTheme} />} />
       <Route path="/projects/:projectId" element={<WorkspacePage theme={theme} onThemeChange={setTheme} />} />
@@ -42,5 +44,7 @@ export function App() {
         }
       />
     </Routes>
+      <VersionBadge />
+    </>
   );
 }

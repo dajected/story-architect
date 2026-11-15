@@ -4375,3 +4375,17 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
   .workspace-title h1 { max-width: 75vw; }
   .workspace-actions { width: 100%; justify-content: flex-start; }
 }
+
+/* Build/version badge — fixed bottom-left on every screen. */
+.version-badge {
+  position: fixed;
+  left: 12px;
+  bottom: 6px;
+  z-index: 15;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  opacity: 0.75;
+  pointer-events: none;
+  user-select: none;
+}

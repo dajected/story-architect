@@ -13,6 +13,10 @@ COPY shared ./shared
 COPY server ./server
 COPY src ./src
 
+# Shown in the UI's version badge; CI passes the git SHA (.git is not in the build context).
+ARG APP_COMMIT=unknown
+ENV APP_COMMIT=${APP_COMMIT}
+
 RUN npm run build
 
 FROM node:24-bookworm-slim AS runtime
