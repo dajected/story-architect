@@ -303,7 +303,7 @@ interface ImageHistoryRow {
 }
 
 /** Image runs bill per image, so surface them in the log even without token usage. */
-function imageHistoryEntries(projectId: string, limit: number): GenerationHistoryEntry[] {
+function imageHistoryEntries(projectId: string, limit: number, activeOnly = false): GenerationHistoryEntry[] {
   const rows = dbAll<ImageHistoryRow>(
     `SELECT j.id, j.chapter_id, j.status, j.provider_kind, j.prompt, j.error, j.settings,
             j.created_at, j.started_at, j.finished_at,
@@ -313,7 +313,7 @@ function imageHistoryEntries(projectId: string, limit: number): GenerationHistor
        LEFT JOIN image_connections c ON c.id = j.connection_id
        LEFT JOIN characters ch ON ch.id = j.character_id
        LEFT JOIN chapters chap ON chap.id = j.chapter_id
-      WHERE j.project_id = ?
+      WHERE j.project_id = ? ${activeOnly ? "AND j.status IN ('queued', 'running')" : ""}
       ORDER BY j.created_at DESC
       LIMIT ?`,
     projectId,
@@ -356,14 +356,14 @@ function imageHistoryEntries(projectId: string, limit: number): GenerationHistor
  * Readable generation log for one project: model, sampling snapshot, token
  * usage, and an estimated cost where the provider published pricing.
  */
-export function projectGenerationHistory(projectId: string, limit = 200): GenerationHistory {
+export function projectGenerationHistory(projectId: string, limit = 200, activeOnly = false): GenerationHistory {
   const capped = Math.max(1, Math.min(1000, Math.floor(limit)));
   const rows = dbAll<HistoryRow>(
     `SELECT j.*, c.name AS connection_name, ch.title AS chapter_title, ch.order_index AS chapter_order
        FROM generation_jobs j
        LEFT JOIN connections c ON c.id = j.connection_id
        LEFT JOIN chapters ch ON ch.id = j.chapter_id
-      WHERE j.project_id = ?
+      WHERE j.project_id = ? ${activeOnly ? "AND j.status IN ('queued', 'running')" : ""}
       ORDER BY j.created_at DESC
       LIMIT ?`,
     projectId,
@@ -396,7 +396,7 @@ export function projectGenerationHistory(projectId: string, limit = 200): Genera
       durationMs: durationMs(row.started_at, row.finished_at),
     };
   });
-  entries.push(...imageHistoryEntries(projectId, capped));
+  entries.push(...imageHistoryEntries(projectId, capped, activeOnly));
   entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   entries.splice(capped);
 

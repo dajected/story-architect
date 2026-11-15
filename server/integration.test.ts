@@ -2404,6 +2404,9 @@ describe('whole-novel drafting and chapter portraits', () => {
     );
     expect(started.batch.status).toBe('running');
     expect(started.batch.items.map((item) => item.status)).toEqual(['pending', 'pending']);
+    const queue = await request<{ portraitBatches: Array<{ characterId: string; items: Array<{ status: string }> }>; characters: Array<{ id: string; name: string }> }>('GET', `/projects/${project.id}/queue`);
+    expect(queue.portraitBatches.some(batch => batch.characterId === character.id && batch.items.some(item => item.status === 'pending'))).toBe(true);
+    expect(queue.characters.some(item => item.id === character.id && item.name === 'Mara')).toBe(true);
 
     const finished = await waitForPortraitBatch(character.id);
     expect(finished.status).toBe('completed');

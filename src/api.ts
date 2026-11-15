@@ -18,6 +18,7 @@ import type {
   Fact,
   FactInput,
   GenerationHistory,
+  GenerationHistoryEntry,
   GenerationJob,
   ImageConnectionInput,
   ImageConnectionPublic,
@@ -290,6 +291,7 @@ export const api = {
     }).then((r) => r.generation),
   exportUrl: (id: string) => `/api/projects/${id}/export.md`,
   backupUrl: (id: string) => `/api/projects/${id}/backup`,
+  getProjectQueue: (id: string) => request<{ jobs: GenerationHistoryEntry[]; chapterBatch: ChapterBatch | null; portraitBatches: PortraitBatch[]; characters: Pick<Character, 'id' | 'name'>[] }>('GET', `/projects/${id}/queue`),
   getGenerationHistory: (id: string, limit = 200) =>
     request<GenerationHistory>(
       'GET',

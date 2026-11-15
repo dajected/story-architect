@@ -11,6 +11,8 @@ import { getProjectGeneration, resolveRoles, setProjectSettings, projectGenerati
 import { currentChapterText, listChapters } from '../store/chapters.js';
 import { listPromptTemplates } from '../store/templates.js';
 import { projectGenerationHistory } from '../jobs.js';
+import { activeProjectPortraitBatches } from '../store/portrait-batches.js';
+import { activeChapterBatch } from '../store/chapter-batches.js';
 import { createProjectBackup, restoreProjectBackup } from '../backup.js';
 import { badRequest } from '../errors.js';
 import fs from 'node:fs';
@@ -19,6 +21,12 @@ import { listCharacters } from '../store/characters.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const projectsRouter = Router();
+
+projectsRouter.get('/projects/:id/queue', wrap((req, res) => {
+  const id = stringParam(req.params.id, 'project id');
+  getProject(id);
+  res.json({ jobs: projectGenerationHistory(id, 1000, true).entries, chapterBatch: activeChapterBatch(id), portraitBatches: activeProjectPortraitBatches(id), characters: listCharacters(id).map(({ id, name }) => ({ id, name })) });
+}));
 
 projectsRouter.patch('/projects/:id/visual-style', wrap((req,res) => {
   const id=stringParam(req.params.id,'project id');getProject(id);

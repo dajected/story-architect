@@ -5,7 +5,7 @@ import type {
   PortraitBatchItemStatus,
   PortraitBatchStatus,
 } from '../../shared/types.js';
-import { dbGet, dbRun, timestamp } from '../db.js';
+import { dbAll, dbGet, dbRun, timestamp } from '../db.js';
 import { notFound } from '../errors.js';
 
 interface PortraitBatchRow {
@@ -136,4 +136,8 @@ export function updatePortraitBatch(
   values.push(timestamp());
   dbRun(`UPDATE portrait_batches SET ${fields.join(', ')} WHERE id = ?`, ...values, id);
   return getPortraitBatch(id);
+}
+
+export function activeProjectPortraitBatches(projectId: string): PortraitBatch[] {
+  return dbAll<PortraitBatchRow>("SELECT * FROM portrait_batches WHERE project_id = ? AND status = 'running' ORDER BY created_at ASC", projectId).map(mapBatch);
 }

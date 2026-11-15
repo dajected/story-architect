@@ -15,6 +15,7 @@ import { ChapterEditor } from '../components/ChapterEditor';
 import { ChapterSidebar } from '../components/ChapterSidebar';
 import { CharactersPanel } from '../components/CharactersPanel';
 import { GenerationHistoryPanel } from '../components/GenerationHistoryPanel';
+import { WorkspaceQueue } from '../components/WorkspaceQueue';
 import { LorePanel } from '../components/LorePanel';
 import { MemoryPanel } from '../components/MemoryPanel';
 import { OutlinePanel } from '../components/OutlinePanel';
@@ -262,6 +263,7 @@ export function WorkspacePage({
       <header className="workspace-topbar">
         <div className="workspace-topbar-left">
           <Link className="button button-small" to="/">Library</Link>
+          <WorkspaceQueue projectId={project.id} onOpenActivity={() => setTab('activity')} />
         </div>
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
