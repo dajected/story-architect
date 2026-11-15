@@ -296,28 +296,32 @@ export function WorkspacePage({
         </nav>
 
         <div className="workspace-actions">
-          {tab === 'manuscript' ? <button className="button button-ghost button-small sidebar-toggle" aria-expanded={sidebarOpen || chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
-            Chapters
+          {focusMode ? <button className="button button-small" onClick={() => setFocusMode(false)}>Exit focus</button> : null}
+          <button className="button button-small" onClick={() => openSettings()}>Settings</button>
+          <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content" onClick={event => {
+            if ((event.target as HTMLElement).closest('button, a')) {
+              const menu = event.currentTarget.closest('details');
+              menu?.removeAttribute('open');
+              menu?.querySelector('summary')?.focus();
+            }
+          }}>
+          {tab === 'manuscript' ? <button className="button button-ghost button-small" aria-pressed={window.innerWidth <= 1180 ? sidebarOpen : chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
+            {sidebarOpen || (window.innerWidth > 1180 && chaptersVisible) ? 'Hide chapters' : 'Show chapters'}
           </button> : null}
           <button
             className={`button button-ghost button-small ${assistantOpen ? 'active' : ''}`}
+            aria-pressed={assistantOpen}
             onClick={() => setAssistantOpen((open) => !open)}
           >
-            Assistant
+            {assistantOpen ? 'Hide assistant' : 'Show assistant'}
           </button>
           <button className="button button-small" aria-pressed={focusMode} onClick={() => {setTab('manuscript'); setFocusMode(v => !v);}}>{focusMode ? 'Exit focus' : 'Focus'}</button>
-          <button className="button button-small" onClick={() => openSettings()}>Settings</button>
-          <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content">
           <Link className="button button-small" to="/">Library</Link>
           <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export HTML (chapter images)</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export Markdown
           </a>
           <BackupButton projectId={project.id} label="Back up" />
-          <button className="button button-ghost button-small" onClick={() => openSettings()}>
-            Project settings
-          </button>
-          <ThemeToggle theme={theme} onChange={onThemeChange} />
           </div></details>
         </div>
       </header>
