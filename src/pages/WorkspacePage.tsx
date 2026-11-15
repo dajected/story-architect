@@ -475,6 +475,7 @@ export function WorkspacePage({
               <div className="workspace-scroll">
                 <CharactersPanel
                   project={project}
+                  active={tab === 'cast'}
                   onProjectChanged={refreshAll}
                   onOpenSettings={() => openSettings()}
                   onOpenImageSettings={() => openSettings('app')}

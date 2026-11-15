@@ -47,6 +47,57 @@ test.beforeAll(async ({request,browser}) => {
 });
 test.afterAll(async()=>{await new Promise<void>(resolve=>provider.close(()=>resolve()));});
 
+test('compact cast filters, star toggles and stored appearance notes lead into a chapter timeline', async ({page, request}) => {
+  const saved = await request.patch(`/api/chapters/${chapterId}/appearances/${castCharacterId}`, {data:{appearance:'Dark hair, a navy coat and a bandaged hand.'}});
+  expect(saved.ok()).toBeTruthy();
+  await page.goto(`/projects/${projectId}?tab=cast`);
+  const mara = page.locator('.cast-card').filter({hasText:'Mara Voss'});
+  const elias = page.locator('.cast-card').filter({hasText:'Elias'});
+  await expect(mara.getByRole('button', {name:'Remove key character',exact:true})).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', {name:'★ Key characters',exact:true}).click();
+  await expect(mara).toBeVisible();
+  await expect(elias).toHaveCount(0);
+  await page.getByRole('button', {name:'All characters',exact:true}).click();
+  await expect(elias).toBeVisible();
+  await mara.getByRole('button', {name:'Remove key character',exact:true}).click();
+  await expect(mara.getByRole('button', {name:'Mark as key character',exact:true})).toHaveAttribute('aria-pressed', 'false');
+  await mara.getByRole('button', {name:'Appearance notes',exact:true}).click();
+  const notes = page.getByRole('dialog', {name:'Appearance notes — Mara Voss',exact:true});
+  await expect(notes.getByText('Dark hair, a navy coat and a bandaged hand.', {exact:true})).toBeVisible();
+  await expect(notes.getByRole('heading', {name:'Chapter 2: The signal',exact:true})).toBeVisible();
+  await expect(notes.getByText('No appearance notes stored for this chapter.', {exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await mara.getByRole('button', {name:'Mark as key character',exact:true}).click();
+  await expect(mara.getByRole('button', {name:'Remove key character',exact:true})).toBeEnabled();
+  await mara.getByRole('button', {name:'Appearance timeline',exact:true}).click();
+  const timeline = page.getByRole('region', {name:'Mara Voss appearance timeline',exact:true});
+  await expect(timeline.locator('.timeline-chapter h3')).toHaveText(['Chapter 1: After the storm', 'Chapter 2: The signal']);
+  await expect(timeline.locator('.timeline-image img')).toHaveCount(1);
+  await expect(timeline.getByText('No image created for this chapter.', {exact:true})).toBeVisible();
+  await timeline.getByRole('button', {name:'Show appearance notes',exact:true}).click();
+  await expect(timeline.getByText('Dark hair, a navy coat and a bandaged hand.', {exact:true})).toBeVisible();
+  await page.screenshot({path:'work/test-results/appearance-timeline.png',fullPage:true});
+  await timeline.locator('.timeline-image button').click();
+  const viewer = page.getByRole('dialog', {name:'Mara Voss — Timeline image',exact:true});
+  await expect(viewer.locator('img')).toBeVisible();
+  await page.keyboard.press('Escape');
+  for (const width of [1440, 720, 320]) {
+    await page.setViewportSize({width,height:900});
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true);
+  }
+  await page.getByRole('navigation', {name:'Workspace sections'}).getByRole('button', {name:'Characters',exact:true}).click();
+  await expect(mara.getByText('Full profile', {exact:true})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true);
+  await page.screenshot({path:'work/test-results/cast-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1440,height:900});
+  expect((await mara.boundingBox())!.height).toBeLessThan(320);
+  await page.screenshot({path:'work/test-results/cast-compact.png',fullPage:true});
+  await mara.getByLabel('More actions for Mara Voss', {exact:true}).click();
+  await expect(mara.getByRole('button', {name:'Manage portraits',exact:true})).toBeVisible();
+  await mara.getByRole('button', {name:'Edit profile',exact:true}).click();
+  await expect(page.getByRole('dialog', {name:'Edit character',exact:true}).getByRole('button', {name:'Key character',exact:true})).toHaveAttribute('aria-pressed','true');
+});
+
 test('bulk memory rebuild includes late key characters and outdated appearance records', async ({page, request}) => {
   const post = async (url: string, data: unknown = {}) => {
     const response = await request.post(`/api${url}`, {data});
@@ -132,6 +183,8 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
   await page.getByRole('button',{name:'Characters',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();
   await expect(page.getByRole('heading',{name:'Images',exact:true})).toBeVisible();
   await expect(page.locator('.images-fields select').first()).toHaveValue(castCharacterId);
+  await expect(page.getByRole('region', {name:'Mara Voss appearance timeline', exact:true})).toBeVisible();
+  await page.getByRole('group', {name:'Image view'}).getByRole('button', {name:'Gallery',exact:true}).click();
   await page.locator('.images-fields select').first().selectOption('');
   await expect(page.locator('.image-card').first()).toBeVisible();
   expect(errors).toEqual([]);

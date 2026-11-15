@@ -630,6 +630,9 @@ export const api = {
     request<CharacterImageOverview>('GET', `/characters/${characterId}/images`),
   getChapterPortraits: (chapterId: string) =>
     request<ChapterPortraitOverview>('GET', `/chapters/${chapterId}/portraits`),
+  listCharacterAppearances: (characterId: string) =>
+    request<{ appearances: CharacterAppearance[] }>('GET', `/characters/${characterId}/appearances`)
+      .then(data => data.appearances),
   saveChapterAppearance: (chapterId: string, characterId: string, appearance: string) =>
     request<{ appearance: CharacterAppearance }>(
       'PATCH',

@@ -1,11 +1,12 @@
 import type {
   CharacterAppearance,
   CharacterAppearanceStatus,
+  Character,
 } from '../../shared/types.js';
 import { dbAll, dbGet, dbRun, timestamp } from '../db.js';
 import { badRequest } from '../errors.js';
-import { currentChapterText, getChapterRow } from './chapters.js';
-import { activeCharacters, getCharacterRow } from './characters.js';
+import { currentChapterText, getChapterRow, listChapters } from './chapters.js';
+import { activeCharacters, getCharacter, getCharacterRow } from './characters.js';
 import { chapterTextHash, precedingSignature } from './memory.js';
 import { touchProject } from './projects.js';
 
@@ -214,13 +215,25 @@ export function listChapterAppearances(
   chapterId: string,
   characterIds?: string[],
 ): CharacterAppearance[] {
-  const chapter = getChapterRow(chapterId);
-  const projectId = chapter.project_id;
-  const orderIndex = Number(chapter.order_index);
-  const characters = activeCharacters(projectId).filter(
+  const characters = activeCharacters(getChapterRow(chapterId).project_id).filter(
     (character) =>
       character.keyCharacter && (!characterIds || characterIds.includes(character.id)),
   );
+  return appearanceRecords(chapterId, characters);
+}
+
+/** Preserve access to saved notes even after a character is unstarred or archived. */
+export function listCharacterAppearances(characterId: string): CharacterAppearance[] {
+  const character = getCharacter(characterId);
+  return listChapters(character.projectId)
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .flatMap(chapter => appearanceRecords(chapter.id, [character]));
+}
+
+function appearanceRecords(chapterId: string, characters: Character[]): CharacterAppearance[] {
+  const chapter = getChapterRow(chapterId);
+  const projectId = chapter.project_id;
+  const orderIndex = Number(chapter.order_index);
   const rows = new Map(
     dbAll<AppearanceRow>('SELECT * FROM character_appearances WHERE chapter_id = ?', chapterId)
       .map((row) => [row.character_id, row]),

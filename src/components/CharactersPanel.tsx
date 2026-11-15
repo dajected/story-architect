@@ -5,6 +5,7 @@ import { useJobStream } from '../hooks';
 import { errorText, formatDate } from '../utils';
 import { ImageGallery } from './ImageGallery';
 import { ImageStudio } from './ImageStudio';
+import { CharacterAppearanceNotes } from './CharacterAppearanceNotes';
 import { Banner, EmptyState, Modal, Spinner } from './ui';
 
 const EMPTY_FORM: CharacterInput = {
@@ -21,12 +22,14 @@ const EMPTY_FORM: CharacterInput = {
 
 export function CharactersPanel({
   project,
+  active: panelActive = true,
   onProjectChanged,
   onOpenSettings,
   onOpenImageSettings,
   onOpenTimeline,
 }: {
   project: Project;
+  active?: boolean;
   onProjectChanged: () => Promise<void>;
   onOpenSettings: () => void;
   onOpenImageSettings: () => void;
@@ -36,13 +39,15 @@ export function CharactersPanel({
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [managing, setManaging] = useState<Character | null>(null);
   const [profile, setProfile] = useState<Character | null>(null);
+  const [notesCharacter, setNotesCharacter] = useState<Character | null>(null);
+  const [keyOnly, setKeyOnly] = useState(false);
   const loadPortraits = async () => {
     const [images, list] = await Promise.all([api.listProjectImages(project.id), api.listChapters(project.id)]);
     setAssets(images); setChapters(list);
   };
-  useEffect(() => { void loadPortraits().catch(err => setError(errorText(err))); }, [project.id]);
+  useEffect(() => { if (panelActive) void loadPortraits().catch(err => setError(errorText(err))); }, [project.id, panelActive]);
   const firstChapter = [...chapters].sort((a,b) => a.orderIndex - b.orderIndex)[0];
-  const portrait = (character: Character) => assets.filter(a => a.characterId === character.id && a.chapterId === firstChapter?.id).sort((a,b) => Number(b.selectedForChapter) - Number(a.selectedForChapter) || b.createdAt.localeCompare(a.createdAt))[0];
+  const portrait = (character: Character) => assets.find(asset => asset.id === character.portraitAssetId) ?? assets.filter(a => a.characterId === character.id).sort((a,b) => Number(b.chapterId === firstChapter?.id) - Number(a.chapterId === firstChapter?.id) || Number(b.selectedForChapter) - Number(a.selectedForChapter) || a.createdAt.localeCompare(b.createdAt))[0];
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +75,7 @@ export function CharactersPanel({
   };
 
   useEffect(() => {
+    if (!panelActive) return;
     let cancelled = false;
     (async () => {
       const data = await api.listCharacters(project.id).catch((err) => {
@@ -87,7 +93,7 @@ export function CharactersPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id]);
+  }, [project.id, panelActive]);
 
   useEffect(() => {
     if (stream.output && outputRef.current) {
@@ -197,10 +203,53 @@ export function CharactersPanel({
     setStudioCharacter((current) => (current?.id === updated.id ? updated : current));
   };
 
-  const visible = characters;
+  const visible = characters.filter(character => !keyOnly || character.keyCharacter);
   const active = visible.filter((character) => character.status === 'active');
   const proposed = visible.filter((character) => character.status === 'proposed');
   const archived = visible.filter((character) => character.status === 'archived');
+
+  const renderCard = (character: Character) => {
+    const isProposed = character.status === 'proposed';
+    return <article className={`cast-card${isProposed ? ' proposed' : ''}`} key={character.id}>
+      <div className="cast-card-head">
+        <CharacterPortrait character={character} asset={portrait(character)} />
+        <div className="cast-card-title">
+          <h3>{character.name}</h3>
+          <p className="muted small">{character.role || 'Unassigned role'}</p>
+          <span className={`badge ${isProposed ? 'badge-warning' : 'badge-accent'}`}>{isProposed ? 'Proposal' : 'Active'}</span>
+        </div>
+        <button className={`icon-button character-star${character.keyCharacter ? ' is-active' : ''}`}
+          aria-label={character.keyCharacter ? 'Remove key character' : 'Mark as key character'}
+          aria-pressed={character.keyCharacter}
+          title={character.keyCharacter ? 'Remove key character' : 'Mark as key character'}
+          disabled={busyId !== null} onClick={() => void toggleKeyCharacter(character)}>
+          <span aria-hidden="true">{character.keyCharacter ? '★' : '☆'}</span>
+        </button>
+      </div>
+      <p className="muted small character-short-description">{character.identity || character.appearance || 'Add identity or appearance in the profile.'}</p>
+      <div className="cast-card-actions">
+        <button className="button button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
+        <button className="button button-small" onClick={() => setNotesCharacter(character)}>Appearance notes</button>
+        <button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button>
+        <details className="action-menu cast-card-menu">
+          <summary className="button button-ghost button-small" aria-label={`More actions for ${character.name}`}>More…</summary>
+          <div className="action-menu-content" onClick={event => {
+            if ((event.target as HTMLElement).closest('button')) {
+              const menu = event.currentTarget.closest('details');
+              menu?.removeAttribute('open');
+              menu?.querySelector('summary')?.focus();
+            }
+          }}>
+            <button className="button button-small" onClick={() => setEditing({ id: character.id, form: toForm(character) })}>Edit profile</button>
+            <button className="button button-small" disabled={busyId !== null} onClick={() => void createPortraits([character])}>Create image</button>
+            <button className="button button-small" onClick={() => setManaging(character)}>Manage portraits</button>
+            <button className="button button-danger-ghost button-small" disabled={busyId !== null} onClick={() => void updateStatus(character.id, 'archive')}>{isProposed ? 'Discard' : 'Archive'}</button>
+          </div>
+        </details>
+      </div>
+      {isProposed ? <button className="button button-primary button-small" disabled={busyId !== null} onClick={() => void updateStatus(character.id, 'accept')}>Accept into cast</button> : null}
+    </article>;
+  };
 
   if (loading) {
     return (
@@ -212,6 +261,7 @@ export function CharactersPanel({
 
   return (
     <div className="cast-panel">
+      <CharacterAppearanceNotes character={notesCharacter} onClose={() => setNotesCharacter(null)} />
       <Modal open={Boolean(profile)} title={profile?.name ?? "Full profile"} onClose={() => setProfile(null)}>{profile ? <ProfileSummary character={profile} /> : null}</Modal>
       <header className="panel-header cast-header">
         <div>
@@ -283,6 +333,14 @@ export function CharactersPanel({
         </div>
       ) : null}
 
+      <div className="cast-filter-bar">
+        <div className="row-actions" role="group" aria-label="Character filter">
+          <button className={`button button-small${!keyOnly ? ' button-primary' : ''}`} aria-pressed={!keyOnly} onClick={() => setKeyOnly(false)}>All characters</button>
+          <button className={`button button-small${keyOnly ? ' button-primary' : ''}`} aria-pressed={keyOnly} onClick={() => setKeyOnly(true)}>★ Key characters</button>
+        </div>
+        <span className="muted small">{visible.length} of {characters.length} characters</span>
+      </div>
+
       {proposed.length > 0 ? (
       <section className="cast-section">
           <div className="cast-section-head">
@@ -290,44 +348,7 @@ export function CharactersPanel({
             <span className="badge badge-warning">{proposed.length} awaiting review</span>
           </div>
           <div className="cast-grid">
-            {proposed.map((character) => (
-              <article className="cast-card proposed" key={character.id}>
-                <CharacterPortrait character={character} asset={portrait(character)} />
-                <div className="cast-card-head">
-                  <div>
-                    <h3>{character.name}</h3>
-                    <span className="muted small">
-                      {character.role || 'Unassigned role'} · proposed from outline
-                    </span>
-                  </div>
-                  <span className="badge badge-warning">Proposal</span>
-                </div>
-                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
-                <div className="row-actions">
-                  <button
-                    className="button button-primary button-small"
-                    onClick={() => void updateStatus(character.id, 'accept')}
-                    disabled={busyId === character.id}
-                  >
-                    {busyId === character.id ? <Spinner /> : null}
-                    Accept into cast
-                  </button>
-                  <button
-                    className="button button-ghost button-small"
-                    onClick={() => setEditing({ id: character.id, form: toForm(character) })}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="button button-danger-ghost button-small"
-                    onClick={() => void updateStatus(character.id, 'archive')}
-                    disabled={busyId === character.id}
-                  >
-                    Discard
-                  </button>
-                </div>
-              </article>
-            ))}
+            {proposed.map(renderCard)}
           </div>
         </section>
       ) : null}
@@ -335,14 +356,14 @@ export function CharactersPanel({
       <section className="cast-section">
         <div className="cast-section-head">
           <h2>Characters</h2>
-          <button className="button button-small" disabled={!active.length || busyId === 'portraits'} onClick={() => void createPortraits(active)}>Create images for all</button>
+          <button className="button button-small" disabled={!active.length || busyId !== null} onClick={() => void createPortraits(active)}>{keyOnly ? 'Create images for key characters' : 'Create images for all'}</button>
           <span className="muted small">
             {active.length} active {active.length === 1 ? 'character' : 'characters'}
           </span>
         </div>
         {active.length === 0 ? (
           <EmptyState
-            title="No active characters yet"
+            title={keyOnly ? 'No active key characters' : 'No active characters yet'}
             actions={
               <>
                 <button
@@ -361,58 +382,11 @@ export function CharactersPanel({
               </>
             }
           >
-            Add the people the story needs. Relevant profiles are selected for chapter context and
-            their facts appear in continuity review.
+            {keyOnly ? 'Star a character in All characters to include them here.' : 'Add the people the story needs. Relevant profiles are selected for chapter context and their facts appear in continuity review.'}
           </EmptyState>
         ) : (
           <div className="cast-grid">
-            {active.map((character) => (
-              <article className="cast-card" key={character.id}>
-                <CharacterPortrait character={character} asset={portrait(character)} />
-                <div className="cast-card-head">
-                  <div className="cast-identity">
-                    
-                    <div>
-                      <h3>{character.name}</h3>
-                      <span className="muted small">
-                        {character.role || 'Unassigned role'} · {character.factCount} linked{' '}
-                        {character.factCount === 1 ? 'fact' : 'facts'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="row-actions">
-                    {character.keyCharacter ? <span className="badge">Key character</span> : null}
-                    <span className="badge badge-accent">Active</span>
-                  </div>
-                </div>
-                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
-                <div className="row-actions">
-                  <button
-                    className="button button-small"
-                    disabled={busyId === 'portraits'}
-                    onClick={() => void createPortraits([character])}
-                  >
-                    Create image
-                  </button>
-                  <button className="button button-small" onClick={() => setManaging(character)}>Manage portraits</button>
-                  <button
-                    className="button button-ghost button-small"
-                    disabled={busyId === character.id}
-                    onClick={() => void toggleKeyCharacter(character)}
-                    title={character.keyCharacter ? 'Hide this character from chapter image sections' : 'Always show this character in every chapter image section'}
-                  >
-                    {character.keyCharacter ? 'Remove key character' : 'Mark as key character'}
-                  </button>
-                  <button
-                    className="button button-ghost button-small"
-                    onClick={() => setEditing({ id: character.id, form: toForm(character) })}
-                  >
-                    Edit profile
-                  </button>
-
-                </div>
-              </article>
-            ))}
+            {active.map(renderCard)}
           </div>
         )}
       </section>
@@ -428,6 +402,8 @@ export function CharactersPanel({
               <div key={character.id} className="archived-row">
                 <span>{character.name}</span>
                 <span className="muted small">Archived {formatDate(character.updatedAt)}</span>
+                <button className="button button-ghost button-small" onClick={() => setNotesCharacter(character)}>Appearance notes</button>
+                <button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
                 <button
                   className="button button-ghost button-small"
                   onClick={() => void updateStatus(character.id, 'accept')}
@@ -464,20 +440,14 @@ export function CharactersPanel({
         {editing ? (
           <div className="character-form">
             <div className="field">
-              <label className="check-label" htmlFor="character-key">
-                <input
-                  id="character-key"
-                  type="checkbox"
-                  checked={editing.form.keyCharacter ?? false}
-                  onChange={(event) =>
-                    setEditing({
-                      ...editing,
-                      form: { ...editing.form, keyCharacter: event.target.checked },
-                    })
-                  }
-                />
-                Key character
-              </label>
+              <div className="row-actions">
+                <button type="button" className={`icon-button character-star${editing.form.keyCharacter ? ' is-active' : ''}`}
+                  aria-label="Key character" aria-pressed={editing.form.keyCharacter ?? false}
+                  onClick={() => setEditing({ ...editing, form: { ...editing.form, keyCharacter: !editing.form.keyCharacter } })}>
+                  <span aria-hidden="true">{editing.form.keyCharacter ? '★' : '☆'}</span>
+                </button>
+                <span>Key character</span>
+              </div>
               <p className="field-hint">
                 Key characters appear in every chapter&rsquo;s image section and get appearance
                 records during chapter memory generation. Mark them before generating chapters.
@@ -560,9 +530,9 @@ export function CharactersPanel({
         ) : null}
       </Modal>
 
-      <Modal open={Boolean(managing)} title={`Manage portraits ? ${managing?.name ?? ''}`} onClose={() => setManaging(null)} width="wide">
+      <Modal open={Boolean(managing)} title={`Manage portraits — ${managing?.name ?? ''}`} onClose={() => setManaging(null)} width="wide">
         {managing ? <ImageGallery assets={assets.filter(a => a.characterId === managing.id)} characters={characters} chapters={chapters} onChanged={async () => { await loadPortraits(); await load(); }} /> : null}
-        {managing && !assets.some(a => a.characterId === managing.id) ? <EmptyState title="No portraits yet">Use Create portrait on the character card to make their first portrait.</EmptyState> : null}
+        {managing && !assets.some(a => a.characterId === managing.id) ? <EmptyState title="No portraits yet">Use Create image in the character menu to make their first portrait.</EmptyState> : null}
       </Modal>
       <ImageStudio
         creationOnly
@@ -587,8 +557,7 @@ export function CharactersPanel({
 
 function CharacterPortrait({ character, asset }: { character: Character; asset?: ImageAsset }) {
   return <figure className="cast-cover">
-    {asset ? <img src={asset.url} alt={`${character.name} in chapter 1`} loading="lazy" /> : <div className="cast-cover-empty"><span>{character.name.slice(0,1)}</span><p>No chapter 1 portrait yet</p></div>}
-    <figcaption>Chapter 1 appearance</figcaption>
+    {asset ? <img src={asset.url} alt={`Portrait of ${character.name}`} loading="lazy" /> : <div className="cast-cover-empty" aria-label={`No portrait for ${character.name}`}><span>{character.name.slice(0,1)}</span></div>}
   </figure>;
 }
 

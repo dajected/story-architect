@@ -6,7 +6,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
-import type { RequestBudgetInfo } from '../shared/types.js';
+import type { CharacterAppearance, RequestBudgetInfo } from '../shared/types.js';
 
 const OUTLINE = JSON.stringify({
   chapters: [
@@ -580,6 +580,38 @@ describe('stage 1 workflow', () => {
 });
 
 describe('stage 2 memory, cast, and context', () => {
+  it('returns chapter-ordered appearance notes, including missing and stale records after unstarring or archiving', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', { title: 'Appearance history', chapterCount: 3 });
+    const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, { revisionId: revision.id, chapters: [
+      { id: revision.chapters[0].id, title: 'Arrival', brief: 'Mara arrives.' },
+      { id: `${project.id}-second`, title: 'Departure', brief: 'Mara leaves.' },
+      { id: `${project.id}-third`, title: 'Return', brief: 'Mara returns.' },
+    ] });
+    await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+    const { character } = await request<{ character: { id: string } }>('POST', `/projects/${project.id}/characters`, { name: 'Mara', keyCharacter: true });
+    const { character: other } = await request<{ character: { id: string } }>('POST', `/projects/${project.id}/characters`, { name: 'Elias', keyCharacter: true });
+    await request('PATCH', `/chapters/${chapters[0].id}/appearances/${character.id}`, { appearance: 'A blue coat.' });
+    await request('PATCH', `/chapters/${chapters[1].id}/appearances/${character.id}`, { appearance: 'A torn blue coat.' });
+    await request('PATCH', `/chapters/${chapters[0].id}/appearances/${other.id}`, { appearance: 'A green hat.' });
+    const first = await request<{ appearances: CharacterAppearance[] }>('GET', `/characters/${character.id}/appearances`);
+    expect(first.appearances.map(record => record.chapterId)).toEqual(chapters.map(chapter => chapter.id));
+    expect(first.appearances.map(record => record.status)).toEqual(['current', 'current', 'missing']);
+    expect(first.appearances.map(record => record.appearance)).toEqual(['A blue coat.', 'A torn blue coat.', null]);
+    expect(first.appearances.every(record => record.characterId === character.id)).toBe(true);
+
+    await request('PATCH', `/chapters/${chapters[0].id}/appearances/${character.id}`, { appearance: 'A red coat.' });
+    await request('PATCH', `/characters/${character.id}`, { keyCharacter: false });
+    await request('POST', `/characters/${character.id}/archive`);
+    const saved = await request<{ appearances: CharacterAppearance[] }>('GET', `/characters/${character.id}/appearances`);
+    expect(saved.appearances[0].appearance).toBe('A red coat.');
+    expect(saved.appearances[1].status).toBe('stale');
+    expect(saved.appearances[1].staleReasons).toContain('An earlier appearance record changed after this one was built.');
+    const unknown = await fetch(`${baseUrl}/api/characters/unknown-character/appearances`);
+    expect(unknown.status).toBe(404);
+  });
+
   it('retries an automatic reasoning-only outline cutoff and preserves an explicit reply limit', async () => {
     for (const automatic of [true, false]) {
       const { project } = await request<{ project: { id: string } }>('POST', '/projects', {

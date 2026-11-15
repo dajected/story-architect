@@ -9,9 +9,17 @@ import {
 import { getProject } from '../store/projects.js';
 import { startCharacterProposal } from '../memory-generation.js';
 import { activeProjectJobKind } from '../jobs.js';
+import { listCharacterAppearances } from '../store/appearances.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const charactersRouter = Router();
+
+charactersRouter.get(
+  '/characters/:id/appearances',
+  wrap((req, res) => {
+    res.json({ appearances: listCharacterAppearances(stringParam(req.params.id, 'character id')) });
+  }),
+);
 
 const characterSchema = z.object({
   name: z.string().min(1).max(160).optional(),
