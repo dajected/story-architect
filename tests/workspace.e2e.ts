@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 let provider:http.Server;
 let projectId:string;
 let chapterId:string;
+let castCharacterId:string;
 let png='';
 
 test.beforeAll(async ({request,browser}) => {
@@ -19,7 +20,7 @@ test.beforeAll(async ({request,browser}) => {
   await request.put(`/api/projects/${projectId}/outline`,{data:{revisionId:revision.id,chapters:[{id:chapterId,title:'After the storm',brief:'Mara returns to shore.'},{id:`${projectId}-next`,title:'The signal',brief:'The lighthouse wakes.'}]}});
   await post(`/projects/${projectId}/outline/${revision.id}/approve`);
   await post(`/chapters/${chapterId}/append`,{text:'Mara stopped beneath the clock tower. Salt had dried along the sleeves of her coat. Across the water, a light turned in the abandoned lighthouse.'});
-  const {character}=await post(`/projects/${projectId}/characters`,{name:'Mara Voss',role:'Protagonist',identity:'A salvage diver',appearance:'Dark hair, a navy coat.'});
+  const {character}=await post(`/projects/${projectId}/characters`,{name:'Mara Voss',role:'Protagonist',identity:'A salvage diver',appearance:'Dark hair, a navy coat.'});castCharacterId=character.id;
   await post(`/projects/${projectId}/characters`,{name:'Elias',role:'Harbour keeper'});
   const {connection:text}=await post('/connections',{name:'UI test text model',kind:'openai-compatible',baseUrl:`http://127.0.0.1:${(provider.address() as AddressInfo).port}/v1`});
   await request.put('/api/model-roles',{data:{scope:'project',projectId,assignments:[{role:'image_prompt',connectionId:text.id,model:'test'}]}});
@@ -51,8 +52,12 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
   await page.keyboard.press('Escape');await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Focus',exact:true}).click();await expect(page.locator('.chapter-sidebar')).toBeHidden();await expect(page.locator('.compact-portraits')).toBeHidden();
   await page.keyboard.press('Escape');await expect(page.locator('.compact-portraits')).toBeVisible();
-  await page.getByRole('button',{name:'Cast',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();await expect(page.getByRole('heading',{name:'Appearance timeline'})).toBeVisible();await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Images',exact:true}).click();await expect(page.getByRole('heading',{name:'Project images'})).toBeVisible();
+  await page.getByRole('button',{name:'Cast',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();
+  await expect(page.getByRole('heading',{name:'Images',exact:true})).toBeVisible();
+  await expect(page.locator('.images-filter select').first()).toHaveValue(castCharacterId);
+  await expect(page.getByLabel('Selected chapter images only')).toBeChecked();
+  await page.locator('.images-filter select').first().selectOption('');
+  await expect(page.locator('.image-card').first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 

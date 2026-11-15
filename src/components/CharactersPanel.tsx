@@ -4,7 +4,6 @@ import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate } from '../utils';
 import { ImageStudio } from './ImageStudio';
-import { ProjectImagesPanel } from './ProjectImagesPanel';
 import { Banner, EmptyState, Modal, Spinner } from './ui';
 
 const EMPTY_FORM: CharacterInput = {
@@ -23,15 +22,16 @@ export function CharactersPanel({
   onProjectChanged,
   onOpenSettings,
   onOpenImageSettings,
+  onOpenTimeline,
 }: {
   project: Project;
   onProjectChanged: () => Promise<void>;
   onOpenSettings: () => void;
   onOpenImageSettings: () => void;
+  onOpenTimeline: (characterId: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [timeline, setTimeline] = useState<Character | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -265,7 +265,7 @@ export function CharactersPanel({
                   </div>
                   <span className="badge badge-warning">Proposal</span>
                 </div>
-                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => setTimeline(character)}>Appearance timeline</button>
+                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
                 <div className="row-actions">
                   <button
                     className="button button-primary button-small"
@@ -343,13 +343,13 @@ export function CharactersPanel({
                   </div>
                   <span className="badge badge-accent">Active</span>
                 </div>
-                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => setTimeline(character)}>Appearance timeline</button>
+                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
                 <div className="row-actions">
                   <button
                     className="button button-small"
                     onClick={() => setStudioCharacter(character)}
                   >
-                    Portrait &amp; gallery
+                    Portrait studio
                   </button>
                   <button
                     className="button button-ghost button-small"
@@ -493,7 +493,6 @@ export function CharactersPanel({
         ) : null}
       </Modal>
 
-      <Modal open={Boolean(timeline)} onClose={() => {setTimeline(null);void load();}} title={timeline?.name ?? 'Appearance timeline'} width="wide">{timeline ? <ProjectImagesPanel project={project} character={timeline} /> : null}</Modal>
       <ImageStudio
         open={studioCharacter !== null}
         project={project}

@@ -19,6 +19,7 @@ const KIND_LABELS: Record<GenerationJobKind, string> = {
   rewrite: 'Rewrite',
   review: 'Continuity review',
   image_prompt: 'Image prompt',
+  image: 'Image',
 };
 
 const STATUS_FILTERS: Array<{ value: 'all' | GenerationJobStatus; label: string }> = [
@@ -93,7 +94,8 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
           <p className="muted">
             Model, sampling settings, token usage, and an estimated cost where the provider
             publishes pricing. Estimates use the price cached when each job started and are not a
-            bill.
+            bill. Image runs are billed per image by the image service, so they are listed without
+            token usage.
           </p>
         </div>
         <button className="button button-ghost button-small" onClick={() => void load()}>
@@ -172,8 +174,9 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
       </div>
 
       {history.entries.length === 0 ? (
-        <EmptyState title="No generations yet">
-          Outline, chapter, chat, memory, review, and image-prompt runs appear here once started.
+          <EmptyState title="No generations yet">
+          Outline, chapter, chat, memory, review, image-prompt, and image runs appear here once
+          started.
         </EmptyState>
       ) : entries.length === 0 ? (
         <EmptyState title="No jobs match those filters">
@@ -224,7 +227,10 @@ function HistoryRow({ entry }: { entry: GenerationHistoryEntry }) {
               : ''}
         </div>
       </td>
-      <td>{KIND_LABELS[entry.kind]}</td>
+      <td>
+        {KIND_LABELS[entry.kind]}
+        {entry.subject ? <div className="muted small">{entry.subject}</div> : null}
+      </td>
       <td>
         <div className="history-model">{entry.model}</div>
         <div className="muted small">{entry.connectionName ?? 'removed connection'}</div>

@@ -138,7 +138,7 @@ export function LibraryPage({
 
         {restoreNotice ? <Banner tone="success">{restoreNotice}</Banner> : null}
 
-        {!ready.text || !ready.image ? <section className="setup-checklist"><h2>Your writing tools</h2><div className="row-actions"><Link className="button button-small" to="/settings?tab=connections">{ready.text ? '✓' : '1.'} Connect a text model</Link><span className="muted small">2. Create a novel → approve its outline → draft a chapter</span><Link className="button button-small" to="/settings?tab=image-connections">{ready.image ? '✓' : '3.'} Set up chapter images (optional)</Link></div><p className="muted small">You can plan and write manually before connecting models.</p></section> : null}
+        {!ready.text ? <section className="setup-checklist"><h2>Your writing tools</h2><ol className="setup-steps"><li><Link className="button button-small" to="/settings?tab=connections">1. Connect a text model</Link></li><li className="muted">2. Create a novel → approve its outline → draft a chapter</li><li><Link className="button button-small" to="/settings?tab=image-connections">3. Set up chapter images (optional)</Link></li></ol><p className="muted small">You can plan and write manually before connecting models.</p></section> : null}
         <div className="library-toolbar">
           <input
             className="search-input"

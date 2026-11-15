@@ -1,5 +1,6 @@
 import { confirmAction } from './ui';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type {
   ChapterBatch,
   ChapterBatchMode,
@@ -491,9 +492,9 @@ export function OutlinePanel({
             <button className="button button-ghost" onClick={createManual} disabled={busy || stream.running}>
               Start manual outline
             </button>
-            <a className="button button-ghost button-small" href="/settings">
+            <Link className="button button-ghost button-small" to={`/settings?tab=models&returnTo=${encodeURIComponent(`/projects/${project.id}`)}`}>
               Model settings
-            </a>
+            </Link>
           </div>
 
           {stream.job ? (

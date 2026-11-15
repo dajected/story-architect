@@ -11,7 +11,7 @@ import type {
 import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { clampText, errorText, formatDate } from '../utils';
-import { Banner, EmptyState, Modal, Spinner } from './ui';
+import { Banner, confirmAction, EmptyState, Modal, Spinner } from './ui';
 import { ImageGallery } from './ImageGallery';
 
 const TERMINAL_IMAGE_STATUSES = new Set<ImageJob['status']>([
@@ -136,7 +136,7 @@ export function ImageStudio({
     setNegativePrompt('');
     setScene('');
     setClothing('');
-    setVisualStyle(localStorage.getItem(`image-style-${project.id}`) ?? project.styleNotes);
+    setVisualStyle('');
     setInstructions('');
     setImageJob(null);
     setData(null);
@@ -233,6 +233,14 @@ export function ImageStudio({
     }
     if (!prompt.trim()) {
       setError('Build or write an image prompt first.');
+      return;
+    }
+    const connection = data?.connections.find((entry) => entry.id === connectionId);
+    if (
+      !await confirmAction(
+        `Send this prompt to ${connection?.name ?? 'the image service'}? It submits one image request; provider prices are unavailable and your image service may charge for it.`,
+      )
+    ) {
       return;
     }
     const template = data?.templates.find((entry) => entry.id === templateId) ?? null;
@@ -381,7 +389,7 @@ export function ImageStudio({
                 <span className="muted small">Template variables stay editable.</span>
               </div>
 
-              <div className="field"><label htmlFor="studio-moment">Story moment</label><select id="studio-moment" value={moment} onChange={e => {setMoment(e.target.value as typeof moment);setPrompt('');setSourceRevisionId(null);setSourceTextHash(undefined);}}><option value="end">End of chapter</option><option value="start">Start of chapter</option><option value="custom">Custom scene</option></select></div>
+              <div className="field"><label htmlFor="studio-moment">Story moment</label><select id="studio-moment" value={moment} onChange={e => {setMoment(e.target.value as typeof moment);setSourceRevisionId(null);setSourceTextHash(undefined);}}><option value="end">End of chapter</option><option value="start">Start of chapter</option><option value="custom">Custom scene</option></select><p className="field-hint">The saved prompt below is kept. Rebuild it after changing the moment or chapter.</p></div>
               <div className="field"><label htmlFor="studio-reference">Visual identity reference</label><select id="studio-reference" value={referenceId} onChange={e => setReferenceId(e.target.value)} disabled={data.connections.find(c => c.id === connectionId)?.kind !== 'comfyui' || !data.connections.find(c => c.id === connectionId)?.settings.referenceNode}><option value="">Character profile only</option>{data.assets.map(a => <option key={a.id} value={a.id}>{a.id === data.character.portraitAssetId ? 'Main reference portrait' : `Image ${formatDate(a.createdAt)}`}</option>)}</select><p className="field-hint">Image references use a ComfyUI workflow with a configured reference image node. Other services use the written character profile.</p></div>
               <div className="field">
                 <label htmlFor="image-studio-template">Image prompt template</label>
@@ -410,7 +418,7 @@ export function ImageStudio({
                     onChange={(event) => {
                       const next = event.target.value;
                       setChapterId(next);
-                      setPrompt(''); setSourceRevisionId(null); setSourceTextHash(undefined);
+                      setSourceRevisionId(null); setSourceTextHash(undefined);
                       const chapter = chapters.find((entry) => entry.id === next);
                       if (chapter && !scene.trim()) setScene(chapter.brief);
                     }}
@@ -453,6 +461,22 @@ export function ImageStudio({
                   onChange={(event) => setVisualStyle(event.target.value)}
                   placeholder="e.g. painterly book-cover illustration, warm chiaroscuro"
                 />
+                <div className="row-actions">
+                  <button
+                    className="button button-ghost button-small"
+                    onClick={async () => {
+                      try {
+                        await api.saveVisualStyle(project.id, visualStyle);
+                        setNotice('Project visual style saved for the portrait studio and chapter images.');
+                      } catch (err) {
+                        setError(errorText(err));
+                      }
+                    }}
+                  >
+                    Save project visual style
+                  </button>
+                  <span className="muted small">Shared with chapter images across this project.</span>
+                </div>
               </div>
 
               <div className="field">
@@ -572,6 +596,15 @@ export function ImageStudio({
                   className="button button-primary"
                   onClick={() => void generate()}
                   disabled={starting || Boolean(activeJob) || !connectionId || !prompt.trim()}
+                  title={
+                    activeJob
+                      ? 'One image request per character can run at a time.'
+                      : !connectionId
+                        ? 'Choose an image service first.'
+                        : !prompt.trim()
+                          ? 'Build or write a prompt first.'
+                          : undefined
+                  }
                 >
                   {starting || activeJob ? <Spinner /> : null}
                   {starting ? 'Submitting…' : activeJob ? 'Generating…' : 'Generate image'}

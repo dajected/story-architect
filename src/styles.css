@@ -3722,7 +3722,6 @@ textarea:disabled {
   margin: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
@@ -3732,6 +3731,8 @@ textarea:disabled {
   display: block;
   aspect-ratio: 3 / 4;
   overflow: hidden;
+  border-top-left-radius: calc(var(--radius) - 1px);
+  border-top-right-radius: calc(var(--radius) - 1px);
   background: var(--panel-2);
 }
 
@@ -4334,6 +4335,10 @@ textarea:disabled {
 .portrait-chip img, .portrait-chip .portrait-avatar { width: 36px; height: 44px; object-fit: cover; border-radius: 5px; }
 .portrait-chip span { font-size: 13px; }
 .portrait-chip small { display: block; font-size: 12px; color: var(--muted); }
+.portrait-more { border: 1px dashed var(--border); border-radius: 6px; padding: 6px 10px; color: var(--muted); font-size: 13px; }
+.portrait-more:hover { color: var(--text); border-color: var(--muted); }
+.setup-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.setup-steps .button { justify-self: start; }
 .image-gallery { grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); }
 .image-open { border: 0; padding: 0; width: 100%; cursor: zoom-in; }
 .image-card-image img { object-fit: contain; }

@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type {
   ChapterDetail,
   ChapterMemory,
@@ -473,7 +474,7 @@ export function ChapterEditor({
             Edit outline
           </button>
           <button className="button button-ghost button-small" onClick={onOpenMemory}>
-            Continuity
+            Memory
           </button>
           <button className="button button-ghost button-small" onClick={() => void startReview()}>
             Review continuity
@@ -557,7 +558,7 @@ export function ChapterEditor({
         {memory ? (
           <div className="brief-memory">
             <span className={`badge ${memoryBadgeClass(memory.status)}`}>
-              Continuity: {memoryLabel(memory.status)}
+              Memory: {memoryLabel(memory.status)}
             </span>
             {memory.summary ? (
               <span className="muted small">{clampSummary(memory.summary)}</span>
@@ -654,9 +655,9 @@ export function ChapterEditor({
             <Banner
               tone="danger"
               actions={
-                <a className="button button-small" href="/settings">
+                <Link className="button button-small" to={`/settings?tab=models&returnTo=${encodeURIComponent(`/projects/${project.id}`)}`}>
                   Settings
-                </a>
+                </Link>
               }
             >
               {generateError}

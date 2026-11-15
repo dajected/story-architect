@@ -285,6 +285,73 @@ function durationMs(startedAt: string | null, finishedAt: string | null): number
   return end - start;
 }
 
+interface ImageHistoryRow {
+  id: string;
+  chapter_id: string | null;
+  status: GenerationJobStatus;
+  provider_kind: string;
+  prompt: string;
+  error: string | null;
+  settings: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  connection_name: string | null;
+  character_name: string | null;
+  chapter_title: string | null;
+  chapter_order: number | null;
+}
+
+/** Image runs bill per image, so surface them in the log even without token usage. */
+function imageHistoryEntries(projectId: string, limit: number): GenerationHistoryEntry[] {
+  const rows = dbAll<ImageHistoryRow>(
+    `SELECT j.id, j.chapter_id, j.status, j.provider_kind, j.prompt, j.error, j.settings,
+            j.created_at, j.started_at, j.finished_at,
+            c.name AS connection_name, ch.name AS character_name,
+            chap.title AS chapter_title, chap.order_index AS chapter_order
+       FROM image_jobs j
+       LEFT JOIN image_connections c ON c.id = j.connection_id
+       LEFT JOIN characters ch ON ch.id = j.character_id
+       LEFT JOIN chapters chap ON chap.id = j.chapter_id
+      WHERE j.project_id = ?
+      ORDER BY j.created_at DESC
+      LIMIT ?`,
+    projectId,
+    limit,
+  );
+  return rows.map((row) => {
+    let model = row.provider_kind === 'comfyui' ? 'ComfyUI' : '';
+    if (!model) {
+      try {
+        const settings = row.settings ? (JSON.parse(row.settings) as { model?: string }) : null;
+        model = settings?.model ?? '';
+      } catch {
+        model = '';
+      }
+    }
+    return {
+      id: row.id,
+      kind: 'image',
+      status: row.status,
+      model: model || 'image service',
+      connectionName: row.connection_name,
+      chapterId: row.chapter_id,
+      chapterTitle: row.chapter_title,
+      chapterOrder: row.chapter_order === null ? null : Number(row.chapter_order),
+      subject: row.character_name,
+      settings: null,
+      requestBudget: null,
+      usage: null,
+      estimatedCost: null,
+      error: row.error,
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      durationMs: durationMs(row.started_at, row.finished_at),
+    } satisfies GenerationHistoryEntry;
+  });
+}
+
 /**
  * Readable generation log for one project: model, sampling snapshot, token
  * usage, and an estimated cost where the provider published pricing.
@@ -329,6 +396,9 @@ export function projectGenerationHistory(projectId: string, limit = 200): Genera
       durationMs: durationMs(row.started_at, row.finished_at),
     };
   });
+  entries.push(...imageHistoryEntries(projectId, capped));
+  entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  entries.splice(capped);
 
   const summary: GenerationHistorySummary = {
     total: entries.length,

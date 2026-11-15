@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type {
   ChapterPortraitOverview,
   Character,
@@ -46,6 +47,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchNotice, setBatchNotice] = useState<string | null>(null);
   const [skipExisting, setSkipExisting] = useState(true);
+  const navigate = useNavigate();
   const styleLoaded = useRef(false);
   const previous = useRef(new Map<string, string>());
   const previousBatchStatus = useRef<PortraitBatch['status'] | null>(null);
@@ -110,7 +112,8 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
 
   const generate = async (ids: string[]) => {
     if (!data) return;
-    if (ids.length > 1 && !await confirmAction(`Generate ${ids.length} images? This submits ${ids.length} prompt requests and ${ids.length} image requests. Provider prices are unavailable; your image service may charge for each image.`)) return;
+    const plural = ids.length === 1 ? '' : 's';
+    if (!await confirmAction(`Generate ${ids.length} image${plural}? This submits ${ids.length} prompt request${plural} and ${ids.length} image request${plural}. Provider prices are unavailable; your image service may charge for each image.`)) return;
     setBusy(true); setError(null); setNotice(null);
     const failures: string[] = [];
     for (const characterId of ids) {
@@ -176,15 +179,15 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
     <div className="portrait-strip">{characters.slice(0, 4).map(character => {
       const image = data?.assets.find(a => a.characterId === character.id && a.selectedForChapter);
       return <button className="portrait-chip" key={character.id} onClick={() => setOpen(true)}>{image ? <img src={image.url} alt="" /> : <span className="portrait-avatar placeholder">{character.name[0]}</span>}<span>{character.name}<small>{image ? (image.sourceOutdated ? 'Earlier draft' : 'Chapter image') : 'No chapter image'}</small></span></button>;
-    })}<button className="button button-small" onClick={() => setOpen(true)}>Chapter images · {data?.assets.length ?? 0} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
+    })}{characters.length > 4 ? <button className="portrait-chip portrait-more" onClick={() => setOpen(true)} title="Open chapter images">+{characters.length - 4} more</button> : null}<button className="button button-small" onClick={() => setOpen(true)}>Chapter images · {data?.assets.length ?? 0} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
     {error && !open ? <Banner tone="danger">{error}</Banner> : null}
     <Modal open={open} onClose={() => setOpen(false)} title={`Chapter images — ${data?.chapterTitle ?? ''}`} subtitle="Select an image for each character in this chapter. Main character portraits stay separate." width="wide">
       <div className="stack">{error ? <Banner tone="danger">{error}</Banner> : null}{notice ? <Banner>{notice}</Banner> : null}
       {!data ? <Spinner label="Loading chapter images…" /> : <>
         {!data.hasText ? <Banner>Draft this chapter before generating its appearances.</Banner> : null}
-        {!data.connections.length ? <Banner tone="warning" actions={<a className="button" href={setupUrl('image-connections')}>Connect image service</a>}>An image service draws the portrait.</Banner> : null}
-        {!data.imagePromptRole?.model ? <Banner tone="warning" actions={<a className="button" href={setupUrl('models')}>Choose prompt model</a>}>A text model builds the image prompt. You can also write a prompt in Customize.</Banner> : null}
-        <div className="form-row"><label>Image service<select value={connectionId} onChange={e => setConnectionId(e.target.value)}>{data.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Story moment<select value={moment} onChange={e => setMoment(e.target.value as typeof moment)}><option value="end">End of chapter</option><option value="start">Start of chapter</option><option value="custom">Custom scene</option></select></label></div>
+        {!data.connections.length ? <Banner tone="warning" actions={<button className="button" onClick={() => navigate(setupUrl('image-connections'))}>Connect image service</button>}>An image service draws the portrait.</Banner> : null}
+        {!data.imagePromptRole?.model ? <Banner tone="warning" actions={<button className="button" onClick={() => navigate(setupUrl('models'))}>Choose prompt model</button>}>A text model builds the image prompt. You can also write a prompt in Customize.</Banner> : null}
+        <div className="form-row"><label>Image service<select value={connectionId} onChange={e => setConnectionId(e.target.value)}>{data.connections.length === 0 ? <option value="">No image connections</option> : null}{data.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Story moment<select value={moment} onChange={e => setMoment(e.target.value as typeof moment)}><option value="end">End of chapter</option><option value="start">Start of chapter</option><option value="custom">Custom scene</option></select></label></div>
         {moment === 'custom' ? <label>Scene to depict<textarea value={scene} onChange={e => setScene(e.target.value)} maxLength={8000} /></label> : null}
         <label>Project visual style<input value={style} onChange={e => setStyle(e.target.value)} maxLength={4000} placeholder="Cinematic illustration, consistent lighting and palette" /></label><button className="button button-small" onClick={async () => {try {await api.saveVisualStyle(project.id,style);setNotice('Project visual style saved for all chapters.');}catch(err){setError(errorText(err));}}}>Save project visual style</button>
 
@@ -220,6 +223,6 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
       </>}
       </div>
     </Modal>
-    <ImageStudio open={Boolean(studio)} project={project} character={studio} initialChapterId={chapterId} initialAsset={initialAsset} onClose={() => {setStudio(null); void load();}} onCharacterUpdated={() => void load()} onOpenSettings={() => {location.href = setupUrl('models');}} onOpenImageSettings={() => {location.href = setupUrl('image-connections');}} />
+    <ImageStudio open={Boolean(studio)} project={project} character={studio} initialChapterId={chapterId} initialAsset={initialAsset} onClose={() => {setStudio(null); void load();}} onCharacterUpdated={() => void load()} onOpenSettings={() => navigate(setupUrl('models'))} onOpenImageSettings={() => navigate(setupUrl('image-connections'))} />
   </section>;
 }

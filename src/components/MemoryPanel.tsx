@@ -246,8 +246,8 @@ export function MemoryPanel({
     <div className="memory-panel">
       <header className="panel-header memory-header">
         <div>
-          <p className="eyebrow">Continuity</p>
-          <h1>Continuity</h1>
+          <p className="eyebrow">Story memory</p>
+          <h1>Memory</h1>
           <p className="lede">
             Summaries and facts are derived from accepted manuscript revisions. Proposed canon
             only enters later prompts after you accept it.

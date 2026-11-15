@@ -209,7 +209,9 @@ export type GenerationJobKind =
   | 'characters'
   | 'rewrite'
   | 'review'
-  | 'image_prompt';
+  | 'image_prompt'
+  /** Image-service runs from the separate image job queue; shown in the history log. */
+  | 'image';
 
 export type GenerationJobStatus =
   | 'queued'
@@ -284,6 +286,8 @@ export interface GenerationHistoryEntry {
   chapterId: string | null;
   chapterTitle: string | null;
   chapterOrder: number | null;
+  /** What the job was about, e.g. the character name for image runs. */
+  subject?: string | null;
   settings: JobSettingsSnapshot | null;
   requestBudget?: RequestBudgetInfo | null;
   usage: TokenUsage | null;

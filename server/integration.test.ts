@@ -1907,6 +1907,11 @@ describe('stage 5 NAS operation and polish', () => {
     expect(chapterJob?.usage?.completionTokens).toBe(50);
     expect(chapterJob?.estimatedCost).toBe(0.0002);
     expect(chapterJob?.settings?.contextPreset).toBe('balanced');
+    const imageEntry = history.entries.find((entry) => entry.kind === 'image');
+    expect(imageEntry).toBeTruthy();
+    expect(imageEntry?.subject).toBe('Mara Voss');
+    expect(imageEntry?.status).toBe('completed');
+    expect(imageEntry?.usage).toBeNull();
     expect(history.summary.pricedJobs).toBeGreaterThan(0);
     expect(history.summary.estimatedCost).toBeGreaterThan(0);
     expect(history.summary.promptTokens).toBeGreaterThan(0);

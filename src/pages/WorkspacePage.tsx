@@ -46,6 +46,9 @@ export function WorkspacePage({
   const [error, setError] = useState<string | null>(null);
   const [chapterError, setChapterError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('outline');
+  // Tabs stay mounted after their first visit so filters and scroll positions survive switching.
+  const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(['outline', 'manuscript']));
+  const [imagesFocus, setImagesFocus] = useState<{ characterId: string; nonce: number } | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1180 && localStorage.getItem('assistant-open') !== 'false');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -56,6 +59,7 @@ export function WorkspacePage({
   const {preferences, setPreferences, style} = useWritingPreferences();
   const setPreference = (key: string, value: number) => setPreferences(current => ({...current, [key]:value}));
   useEffect(() => {if (project) localStorage.setItem(`workspace-tab-${projectId}`, tab);}, [tab, project, projectId]);
+  useEffect(() => {setVisited(current => current.has(tab) ? current : new Set(current).add(tab));}, [tab]);
   useEffect(() => {localStorage.setItem('assistant-open', String(assistantOpen));}, [assistantOpen]);
   useEffect(() => {localStorage.setItem('chapters-visible', String(chaptersVisible));}, [chaptersVisible]);
   useEffect(() => {const handler = () => {if (window.innerWidth <= 1180) setAssistantOpen(false);};window.addEventListener('resize', handler);return () => window.removeEventListener('resize',handler);}, []);
@@ -280,7 +284,7 @@ export function WorkspacePage({
             Cast
           </button>
           <button aria-pressed={tab === 'memory'} className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
-            Continuity
+            Memory
           </button>
           <button aria-pressed={tab === 'lore'} className={tab === 'lore' ? 'active' : ''} onClick={() => setTab('lore')}>
             Lore
@@ -307,11 +311,11 @@ export function WorkspacePage({
           <button className="button button-small" aria-pressed={focusMode} onClick={() => {setTab('manuscript'); setFocusMode(v => !v);}}>{focusMode ? 'Exit focus' : 'Focus'}</button>
           <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content">
           <button className="button button-small" onClick={() => setPreferencesOpen(true)}>Writing preferences & shortcuts</button>
-          <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export with chapter images</a>
+          <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export HTML (chapter images)</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
-            Export
+            Export Markdown
           </a>
-          <BackupButton projectId={project.id} label="Backup" />
+          <BackupButton projectId={project.id} label="Back up" />
           <button className="button button-ghost button-small" onClick={() => setSettingsOpen(true)}>
             Project settings
           </button>
@@ -432,22 +436,29 @@ export function WorkspacePage({
             )}
           </div>
 
-          {tab === 'images' ? <div className="workspace-view"><div className="workspace-scroll"><ProjectImagesPanel project={project} /></div></div> : null}
-          {tab === 'cast' ? (
-            <div className="workspace-view">
+          {visited.has('images') ? (
+            <div className={`workspace-view ${tab === 'images' ? '' : 'is-hidden'}`}>
+              <div className="workspace-scroll">
+                <ProjectImagesPanel project={project} focus={imagesFocus} active={tab === 'images'} onOpenCast={() => setTab('cast')} />
+              </div>
+            </div>
+          ) : null}
+          {visited.has('cast') ? (
+            <div className={`workspace-view ${tab === 'cast' ? '' : 'is-hidden'}`}>
               <div className="workspace-scroll">
                 <CharactersPanel
                   project={project}
                   onProjectChanged={refreshAll}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  onOpenImageSettings={() => navigate('/settings?tab=image-connections')}
+                  onOpenImageSettings={() => navigate(`/settings?tab=image-connections&returnTo=${encodeURIComponent(`/projects/${projectId}`)}`)}
+                  onOpenTimeline={(characterId) => {setImagesFocus({characterId, nonce: Date.now()}); setTab('images');}}
                 />
               </div>
             </div>
           ) : null}
 
-          {tab === 'memory' ? (
-            <div className="workspace-view">
+          {visited.has('memory') ? (
+            <div className={`workspace-view ${tab === 'memory' ? '' : 'is-hidden'}`}>
               <div className="workspace-scroll">
                 <MemoryPanel
                   project={project}
@@ -458,16 +469,16 @@ export function WorkspacePage({
             </div>
           ) : null}
 
-          {tab === 'lore' ? (
-            <div className="workspace-view">
+          {visited.has('lore') ? (
+            <div className={`workspace-view ${tab === 'lore' ? '' : 'is-hidden'}`}>
               <div className="workspace-scroll">
                 <LorePanel project={project} />
               </div>
             </div>
           ) : null}
 
-          {tab === 'activity' ? (
-            <div className="workspace-view">
+          {visited.has('activity') ? (
+            <div className={`workspace-view ${tab === 'activity' ? '' : 'is-hidden'}`}>
               <div className="workspace-scroll">
                 <GenerationHistoryPanel project={project} />
               </div>
