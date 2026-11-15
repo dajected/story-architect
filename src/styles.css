@@ -27,25 +27,25 @@
 }
 
 :root[data-theme="light"] {
-  --bg: #f6f2ea;
-  --bg-soft: #f0ebe1;
-  --panel: #fffdf8;
-  --panel-2: #f4efe6;
-  --panel-3: #ebe4d7;
-  --input: #fffdf9;
-  --border: #e2dbcd;
-  --border-strong: #cfc5b1;
-  --text: #26272b;
-  --text-soft: #383a40;
-  --muted: #736e63;
-  --accent: #8d6b2f;
-  --accent-soft: #a8843f;
-  --accent-ink: #fffaf0;
+  --bg: #f7f8fa;
+  --bg-soft: #f1f3f6;
+  --panel: #ffffff;
+  --panel-2: #f7f8fa;
+  --panel-3: #edf0f4;
+  --input: #ffffff;
+  --border: #e3e7ed;
+  --border-strong: #c9d1dc;
+  --text: #1c2736;
+  --text-soft: #344255;
+  --muted: #5f6d7e;
+  --accent: #345f9e;
+  --accent-soft: #4877b8;
+  --accent-ink: #ffffff;
   --danger: #a83c34;
   --warning: #8a6220;
   --success: #2f7a52;
   --info: #3c6f96;
-  --shadow: 0 24px 60px rgba(60, 48, 30, 0.16);
+  --shadow: 0 24px 60px rgba(30, 45, 65, 0.12);
   color-scheme: light;
 }
 
@@ -4468,3 +4468,18 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
 .workspace-submenu .button { width: 100%; border: 0; background: transparent; text-align: left; justify-content: flex-start; }
 .workspace-submenu .button:hover { background: var(--bg); }
 @media (max-width: 720px) { .workspace-actions { justify-content: space-between; } .workspace-title h1 { max-width: 65vw; } }
+
+/* A quieter, brighter surface for the light workspace. */
+:root[data-theme="light"] .page-header,
+:root[data-theme="light"] .workspace-topbar { background: rgba(255, 255, 255, .96); }
+:root[data-theme="light"] .project-card { box-shadow: 0 2px 10px rgba(30, 45, 65, .04); }
+:root[data-theme="light"] .project-card:hover { box-shadow: 0 12px 30px rgba(30, 45, 65, .10); }
+:root[data-theme="light"] .project-card-actions { background: #fafbfc; }
+:root[data-theme="light"] .panel-resize { background: var(--border); opacity: .65; }
+.page-body { width: min(1440px, 100%); padding-inline: clamp(20px, 4vw, 56px); }
+.project-grid { gap: 20px; }
+.project-card-main { padding: 22px 24px; }
+.library-toolbar { padding-block: 18px; }
+.search-input { max-width: 380px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: 14px; }
+.workspace-tabs button { font-size: 13px; font-weight: 500; }
+@media (max-width: 720px) { .page-body { padding-inline: 20px; } .project-grid { gap: 14px; } }

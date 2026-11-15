@@ -304,7 +304,7 @@ export function WorkspacePage({
               event.currentTarget.open = false;
               event.currentTarget.querySelector('summary')?.focus();
             }
-          }}><summary className="button button-small">Menu ?</summary><div className="action-menu-content" onClick={event => {
+          }}><summary className="button button-small">Menu</summary><div className="action-menu-content" onClick={event => {
             if ((event.target as HTMLElement).closest('button, a')) {
               const menu = event.currentTarget.closest('.workspace-menu');
               menu?.removeAttribute('open');
