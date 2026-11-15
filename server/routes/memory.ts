@@ -16,6 +16,7 @@ import {
   chapterSnapshots,
 } from '../store/memory.js';
 import { listCharacters } from '../store/characters.js';
+import { listChapterAppearances } from '../store/appearances.js';
 import { getProject } from '../store/projects.js';
 import { resolveRoles } from '../store/settings.js';
 import { activeJobForChapterKind, listActiveJobs, listProjectJobs } from '../jobs.js';
@@ -144,7 +145,8 @@ memoryRouter.post(
         .filter((chapter) => chapter.currentRevisionId)
         .filter((chapter) => {
           const memory = getChapterMemory(chapter.id, { chapters, snapshots });
-          return memory.status === 'stale' || memory.status === 'missing';
+          if (memory.status === 'stale' || memory.status === 'missing') return true;
+          return listChapterAppearances(chapter.id).some((entry) => entry.status !== 'current');
         })
         .map((chapter) => chapter.id);
     if (ids.length === 0) {

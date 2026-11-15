@@ -65,6 +65,10 @@ describe('parseMemoryExtraction', () => {
           { kind: 'plot_thread', statement: 'The key opens the hill.', characters: ['Mara'], scope: 'story' },
           { kind: 'nonsense', statement: 'The hill is old.', scope: 'chapter' },
         ],
+        appearances: [
+          { character: 'Mara', appearance: 'Cropped hair, a salt-stiff canvas coat.' },
+          { character: '', appearance: 'Ignored without a name.' },
+        ],
       }),
       '```',
     ].join('\n');
@@ -75,6 +79,9 @@ describe('parseMemoryExtraction', () => {
     expect(parsed.facts[0].characters).toEqual(['Mara']);
     expect(parsed.facts[1].kind).toBe('timeline');
     expect(parsed.facts[1].scope).toBe('chapter');
+    expect(parsed.appearances).toEqual([
+      { character: 'Mara', appearance: 'Cropped hair, a salt-stiff canvas coat.' },
+    ]);
   });
 
   it('keeps prose when the reply is not JSON', () => {
@@ -82,6 +89,7 @@ describe('parseMemoryExtraction', () => {
     expect(parsed.parsed).toBe(false);
     expect(parsed.summary).toContain('Mara opens the door');
     expect(parsed.facts).toHaveLength(0);
+    expect(parsed.appearances).toHaveLength(0);
   });
 });
 

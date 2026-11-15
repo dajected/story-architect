@@ -60,7 +60,15 @@ export function WorkspacePage({
   const [chaptersVisible, setChaptersVisible] = useState(() => localStorage.getItem('chapters-visible') !== 'false');
   const {preferences, setPreferences, style} = useWritingPreferences();
   const setPreference = (key: string, value: number) => setPreferences(current => ({...current, [key]:value}));
-  useEffect(() => {if (project) localStorage.setItem(`workspace-tab-${projectId}`, tab);}, [tab, project, projectId]);
+  useEffect(() => {
+    if (loading || !project || project.id !== projectId || !initialised.current) return;
+    localStorage.setItem(`workspace-tab-${projectId}`, tab);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('tab') !== tab) {
+      url.searchParams.set('tab', tab);
+      navigate(`${url.pathname}${url.search}${url.hash}`, { replace: true });
+    }
+  }, [tab, project, projectId, loading, navigate]);
   useEffect(() => {setVisited(current => current.has(tab) ? current : new Set(current).add(tab));}, [tab]);
   useEffect(() => {const toggle = () => setFocusMode(v => !v); window.addEventListener('toggle-writing-focus', toggle); return () => window.removeEventListener('toggle-writing-focus', toggle);}, []);
   useEffect(() => {localStorage.setItem('assistant-open', String(assistantOpen));}, [assistantOpen]);
@@ -127,7 +135,7 @@ export function WorkspacePage({
 
       if (!initialised.current) {
         initialised.current = true;
-        const storedTab = new URLSearchParams(location.search).get('tab') ?? (loadedProject.currentWords > 0 ? 'manuscript' : localStorage.getItem(`workspace-tab-${projectId}`));
+        const storedTab = new URLSearchParams(window.location.search).get('tab') ?? localStorage.getItem(`workspace-tab-${projectId}`);
         setTab(storedTab && ['manuscript','outline','cast','memory','lore','activity','images'].includes(storedTab) ? storedTab as Tab : loadedProject.outlineStatus === 'approved' ? 'manuscript' : 'outline');
       }
 

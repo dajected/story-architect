@@ -10,7 +10,9 @@ import { getProject, type ProjectRow } from './store/projects.js';
 import { imagesRoot, imageFilePath } from './store/images.js';
 import { resolveImagePromptTemplate } from './store/image-templates.js';
 import { resolvePromptTemplate } from './store/templates.js';
-import { listChapters, getChapter } from './store/chapters.js';
+import { listChapters, getChapter, getChapterRow, currentChapterText } from './store/chapters.js';
+import { chapterTextHash } from './store/memory.js';
+import { saveChapterAppearances } from './store/appearances.js';
 import { inspectStoryState, saveStoryState, stateSource } from './store/story-state.js';
 import type { StoryStateRow } from './store/story-state.js';
 
@@ -87,6 +89,7 @@ interface CharacterRow {
   status: string;
   source: string;
   portrait_asset_id: string | null;
+  key_character?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -217,6 +220,11 @@ interface ProjectBackupManifest {
   characters: CharacterRow[];
   chapterMemory: MemoryRow[];
   storyStates?: Array<{ chapter_id: string; content: string }>;
+  characterAppearances?: Array<{
+    chapter_id: string;
+    character_id: string;
+    appearance: string;
+  }>;
   facts: FactRow[];
   lorebooks: LorebookRow[];
   loreEntries: LoreEntryRow[];
@@ -420,6 +428,14 @@ export function createProjectBackup(projectId: string): ProjectBackup {
     messages,
     characters,
     chapterMemory,
+    characterAppearances: dbAll<{
+      chapter_id: string;
+      character_id: string;
+      appearance: string;
+    }>(
+      'SELECT chapter_id, character_id, appearance FROM character_appearances WHERE project_id = ?',
+      projectId,
+    ),
     storyStates: (() => {
       const prefix = inspectStoryState(projectId, Infinity).validPrefix;
       const through = prefix ? getChapter(prefix.chapter_id).orderIndex : -1;
@@ -719,8 +735,8 @@ export function restoreProjectBackup(body: Buffer): RestoreResult {
         dbRun(
           `INSERT INTO characters (
              id, project_id, name, role, identity, appearance, personality, goals, relationships,
-             notes, status, source, portrait_asset_id, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             notes, status, source, portrait_asset_id, key_character, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           characterMap.get(character.id) ?? newId(),
           projectId,
           character.name,
@@ -734,6 +750,7 @@ export function restoreProjectBackup(body: Buffer): RestoreResult {
           character.status ?? 'active',
           character.source ?? 'manual',
           null,
+          character.key_character ? 1 : 0,
           character.created_at,
           character.updated_at,
         );
@@ -757,6 +774,37 @@ export function restoreProjectBackup(body: Buffer): RestoreResult {
           memory.generated_at,
           memory.updated_at,
         );
+      }
+
+      // Appearance records depend on restored character and chapter IDs, so the
+      // carry-forward chain is rebuilt in chapter order from the saved text.
+      const restoredAppearances = new Map<string, Array<{ character: string; appearance: string }>>();
+      for (const row of Array.isArray(manifest.characterAppearances) ? manifest.characterAppearances : []) {
+        const restoredChapterId = chapterMap.get(row.chapter_id);
+        const restoredCharacterId = characterMap.get(row.character_id);
+        if (!restoredChapterId || !restoredCharacterId) continue;
+        const character = dbGet<{ name: string }>(
+          'SELECT name FROM characters WHERE id = ?',
+          restoredCharacterId,
+        );
+        if (!character) continue;
+        const entries = restoredAppearances.get(restoredChapterId) ?? [];
+        entries.push({ character: character.name, appearance: row.appearance });
+        restoredAppearances.set(restoredChapterId, entries);
+      }
+      for (const chapter of listChapters(projectId)) {
+        const entries = restoredAppearances.get(chapter.id);
+        if (!entries?.length) continue;
+        const chapterRow = getChapterRow(chapter.id);
+        const text = currentChapterText(chapter.id);
+        saveChapterAppearances({
+          chapterId: chapter.id,
+          entries,
+          sourceRevisionId: chapterRow.current_revision_id,
+          sourceContentHash: chapterTextHash(text),
+          precedingSignature: '',
+          jobId: null,
+        });
       }
 
       // Checkpoints use newly mapped revision/chapter IDs and a new parent

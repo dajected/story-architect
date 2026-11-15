@@ -57,6 +57,7 @@ import {
   updateImageJob,
 } from './store/images.js';
 import { chapterCharacterFacts } from './store/memory.js';
+import { appearanceForImagePrompt, listChapterAppearances, priorAppearanceChanges } from './store/appearances.js';
 import {
   activePortraitRequestForCharacter,
   createPortraitRequest,
@@ -72,6 +73,7 @@ import type { RequestContextPart } from './request-context.js';
 
 const imageRuntimes = new Map<string, AbortController>();
 const IMAGE_BACKGROUND_FIELDS: Record<string, Omit<RequestContextPart, 'text' | 'slot'>> = {
+  appearance_record: { label: 'Appearance at this point', priority: 95, maxTokens: 1200 },
   personality: { label: 'Personality', priority: 50, maxTokens: 500 },
   goals: { label: 'Goals', priority: 40, maxTokens: 500 },
   notes: { label: 'Character notes', priority: 30, maxTokens: 700 },
@@ -122,9 +124,11 @@ export function startImagePromptGeneration(
   const visualStyle = textLimit(input.visualStyle, 4000, 'Visual style');
   const instructions = textLimit(input.instructions, 4000, 'Instructions');
   const chapterText = chapter ? currentChapterText(chapter.id) : '';
+  const moment = input.moment ?? 'end';
+  const appearanceRecordValue = appearancePromptValue(chapter?.id ?? null, character.id, moment);
   const sceneText = [
     scene || chapter?.brief || '(No scene was specified; use an evocative portrait setting.)',
-    chapterText.trim() ? `Depict the ${input.moment ?? 'end'} of the chapter. Use only appearance established at that point.` : '',
+    chapterText.trim() ? `Depict the ${moment} of the chapter. Use only appearance established at that point.` : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -142,6 +146,7 @@ export function startImagePromptGeneration(
       characterRole: character.role,
       identity: character.identity,
       appearance: character.appearance,
+      appearanceRecord: appearanceRecordValue,
       clothing: clothingValue,
       personality: character.personality,
       goals: character.goals,
@@ -167,6 +172,7 @@ export function startImagePromptGeneration(
     { key: 'character_role', label: 'Role', value: character.role },
     { key: 'identity', label: 'Identity', value: character.identity },
     { key: 'appearance', label: 'Appearance', value: character.appearance },
+    { key: 'appearance_record', label: 'Appearance at this point', value: appearanceRecordValue },
     { key: 'clothing', label: 'Clothing', value: clothingValue },
     { key: 'personality', label: 'Personality', value: character.personality },
     { key: 'goals', label: 'Goals', value: character.goals },
@@ -412,6 +418,29 @@ function chapterEndChanges(chapterId: string, characterId: string): string[] {
 }
 
 /**
+ * Feed the chained appearance record into the prompt model. If the chapter has
+ * no record yet, fall back to earlier character-development facts so changes
+ * from previous chapters are still represented.
+ */
+function appearancePromptValue(
+  chapterId: string | null,
+  characterId: string,
+  moment: 'start' | 'end' | 'custom',
+): string {
+  if (!chapterId) return '';
+  try {
+    const record = appearanceForImagePrompt(chapterId, characterId, moment);
+    if (record) return record;
+    const changes = priorAppearanceChanges(chapterId, characterId);
+    return changes.length
+      ? `Earlier recorded changes:\n${changes.map((change) => `- ${change}`).join('\n')}`
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Build a portrait of one character as they appear at the end of a chapter.
  * The image-prompt role synthesises the appearance and the image service draws
  * it; both steps are tracked on one portrait request so the browser can poll.
@@ -451,6 +480,7 @@ export function startChapterPortraitRequest(
   const chapterNumber = chapter.orderIndex + 1;
   const moment = input.moment ?? 'end';
   const changes = moment === 'end' ? chapterEndChanges(chapterId, character.id) : [];
+  const appearanceRecordValue = appearancePromptValue(chapterId, character.id, moment);
   const sceneText = [
     `A portrait of ${character.name} at the ${moment === 'end' ? 'very end' : moment} of Chapter ${chapterNumber}, "${chapter.title}". ${input.scene ?? ''}`,
     '',
@@ -482,6 +512,7 @@ export function startChapterPortraitRequest(
       characterRole: character.role,
       identity: character.identity,
       appearance: character.appearance,
+      appearanceRecord: appearanceRecordValue,
       clothing: clothingValue,
       personality: character.personality,
       goals: character.goals,
@@ -505,6 +536,7 @@ export function startChapterPortraitRequest(
     { key: 'character_role', label: 'Role', value: character.role },
     { key: 'identity', label: 'Identity', value: character.identity },
     { key: 'appearance', label: 'Appearance', value: character.appearance },
+    { key: 'appearance_record', label: 'Appearance at this point', value: appearanceRecordValue },
     { key: 'clothing', label: 'Clothing', value: clothingValue },
     { key: 'personality', label: 'Personality', value: character.personality },
     { key: 'goals', label: 'Goals', value: character.goals },
@@ -760,6 +792,7 @@ export function chapterPortraitOverview(chapterId: string): ChapterPortraitOverv
     chapterTitle: chapter.title,
     chapterNumber: chapter.orderIndex + 1,
     hasText: Boolean(text.trim()),
+    appearances: listChapterAppearances(chapterId),
     named,
     others,
     assets,

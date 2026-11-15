@@ -22,6 +22,7 @@ const characterSchema = z.object({
   goals: z.string().max(4000).optional(),
   relationships: z.string().max(4000).optional(),
   notes: z.string().max(8000).optional(),
+  keyCharacter: z.boolean().optional(),
 });
 
 charactersRouter.get(

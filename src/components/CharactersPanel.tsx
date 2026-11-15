@@ -16,6 +16,7 @@ const EMPTY_FORM: CharacterInput = {
   goals: '',
   relationships: '',
   notes: '',
+  keyCharacter: false,
 };
 
 export function CharactersPanel({
@@ -166,6 +167,20 @@ export function CharactersPanel({
     try {
       if (action === 'accept') await api.acceptCharacter(id);
       else await api.archiveCharacter(id);
+      await load();
+      await onProjectChanged();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleKeyCharacter = async (character: Character) => {
+    setBusyId(character.id);
+    setError(null);
+    try {
+      await api.updateCharacter(character.id, { keyCharacter: !character.keyCharacter });
       await load();
       await onProjectChanged();
     } catch (err) {
@@ -365,7 +380,10 @@ export function CharactersPanel({
                       </span>
                     </div>
                   </div>
-                  <span className="badge badge-accent">Active</span>
+                  <div className="row-actions">
+                    {character.keyCharacter ? <span className="badge">Key character</span> : null}
+                    <span className="badge badge-accent">Active</span>
+                  </div>
                 </div>
                 <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
                 <div className="row-actions">
@@ -377,6 +395,14 @@ export function CharactersPanel({
                     Create image
                   </button>
                   <button className="button button-small" onClick={() => setManaging(character)}>Manage portraits</button>
+                  <button
+                    className="button button-ghost button-small"
+                    disabled={busyId === character.id}
+                    onClick={() => void toggleKeyCharacter(character)}
+                    title={character.keyCharacter ? 'Hide this character from chapter image sections' : 'Always show this character in every chapter image section'}
+                  >
+                    {character.keyCharacter ? 'Remove key character' : 'Mark as key character'}
+                  </button>
                   <button
                     className="button button-ghost button-small"
                     onClick={() => setEditing({ id: character.id, form: toForm(character) })}
@@ -437,6 +463,26 @@ export function CharactersPanel({
       >
         {editing ? (
           <div className="character-form">
+            <div className="field">
+              <label className="check-label" htmlFor="character-key">
+                <input
+                  id="character-key"
+                  type="checkbox"
+                  checked={editing.form.keyCharacter ?? false}
+                  onChange={(event) =>
+                    setEditing({
+                      ...editing,
+                      form: { ...editing.form, keyCharacter: event.target.checked },
+                    })
+                  }
+                />
+                Key character
+              </label>
+              <p className="field-hint">
+                Key characters always appear in every chapter&rsquo;s image section. Other
+                characters are hidden there.
+              </p>
+            </div>
             <div className="form-row">
               <div className="field">
                 <label htmlFor="character-name">Name</label>
@@ -605,5 +651,6 @@ function toForm(character: Character): CharacterInput {
     goals: character.goals,
     relationships: character.relationships,
     notes: character.notes,
+    keyCharacter: character.keyCharacter,
   };
 }

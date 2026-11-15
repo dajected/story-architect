@@ -20,7 +20,7 @@ test.beforeAll(async ({request,browser}) => {
   await request.put(`/api/projects/${projectId}/outline`,{data:{revisionId:revision.id,chapters:[{id:chapterId,title:'After the storm',brief:'Mara returns to shore.'},{id:`${projectId}-next`,title:'The signal',brief:'The lighthouse wakes.'}]}});
   await post(`/projects/${projectId}/outline/${revision.id}/approve`);
   await post(`/chapters/${chapterId}/append`,{text:'Mara stopped beneath the clock tower. Salt had dried along the sleeves of her coat. Across the water, a light turned in the abandoned lighthouse.'});
-  const {character}=await post(`/projects/${projectId}/characters`,{name:'Mara Voss',role:'Protagonist',identity:'A salvage diver',appearance:'Dark hair, a navy coat.'});castCharacterId=character.id;
+  const {character}=await post(`/projects/${projectId}/characters`,{name:'Mara Voss',role:'Protagonist',identity:'A salvage diver',appearance:'Dark hair, a navy coat.',keyCharacter:true});castCharacterId=character.id;
   await post(`/projects/${projectId}/characters`,{name:'Elias',role:'Harbour keeper'});
   const {connection:text}=await post('/connections',{name:'UI test text model',kind:'openai-compatible',baseUrl:`http://127.0.0.1:${(provider.address() as AddressInfo).port}/v1`});
   await request.put('/api/model-roles',{data:{scope:'project',projectId,assignments:[{role:'image_prompt',connectionId:text.id,model:'test'}]}});
@@ -42,9 +42,10 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
   await gallery.getByRole('button',{name:'View image of Mara Voss'}).click();
   const viewer=page.getByRole('dialog',{name:/^Mara Voss .*Chapter 1: After the storm$/});await expect(viewer).toBeVisible();
   await page.keyboard.press('Escape');await expect(viewer).not.toBeVisible();await expect(gallery).toBeVisible();
-  await gallery.getByRole('button',{name:'Generate images',exact:true}).click();await gallery.getByLabel('Select Mara Voss for generation').check();await gallery.getByLabel('Select Elias for generation').check();
-  await gallery.getByRole('button',{name:'Generate selected (2)'}).click();await page.getByRole('dialog',{name:'Confirm action'}).getByRole('button',{name:'Continue'}).click();
-  await expect(gallery.getByText('completed: 2',{exact:true})).toBeVisible();
+  await gallery.getByRole('button',{name:'Generate images',exact:true}).click();await gallery.getByLabel('Select Mara Voss for generation').check();
+  await expect(gallery.getByLabel('Select Elias for generation')).toHaveCount(0);
+  await gallery.getByRole('button',{name:'Generate selected (1)'}).click();await page.getByRole('dialog',{name:'Confirm action'}).getByRole('button',{name:'Continue'}).click();
+  await expect(gallery.getByText('completed: 1',{exact:true})).toBeVisible();
   await gallery.locator('.portrait-cast-row').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Customize',exact:true}).click();
   const studio=page.getByRole('dialog',{name:'Portrait studio — Mara Voss'});await expect(studio).toBeVisible();
   await expect(studio.getByLabel('Chapter state (optional)')).toHaveValue(chapterId);
@@ -54,9 +55,8 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
   await page.keyboard.press('Escape');await expect(page.locator('.compact-portraits')).toBeVisible();
   await page.getByRole('button',{name:'Characters',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();
   await expect(page.getByRole('heading',{name:'Images',exact:true})).toBeVisible();
-  await expect(page.locator('.images-filter select').first()).toHaveValue(castCharacterId);
-  await expect(page.getByLabel('Selected chapter images only')).toBeChecked();
-  await page.locator('.images-filter select').first().selectOption('');
+  await expect(page.locator('.images-fields select').first()).toHaveValue(castCharacterId);
+  await page.locator('.images-fields select').first().selectOption('');
   await expect(page.locator('.image-card').first()).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -118,4 +118,16 @@ test('generated story opens in a wide reader with the assistant hidden', async (
   await expect(page.locator('.assistant-panel')).toBeVisible();
   await page.getByRole('button',{name:'Hide assistant',exact:true}).click();
   await expect(page.locator('.assistant-panel')).toHaveCount(0);
+});
+
+
+test('refresh preserves the chosen workspace tab', async ({page}) => {
+  await page.goto(`/projects/${projectId}?tab=outline`);
+  await page.getByRole('button', {name: 'Images', exact: true}).click();
+  await expect(page.getByRole('heading', {name: 'Images', exact: true})).toBeVisible();
+  await expect(page).toHaveURL(/tab=images/);
+  await page.reload();
+  await expect(page.getByRole('heading', {name: 'Images', exact: true})).toBeVisible();
+  await page.goto(`/projects/${projectId}`);
+  await expect(page.getByRole('heading', {name: 'Images', exact: true})).toBeVisible();
 });

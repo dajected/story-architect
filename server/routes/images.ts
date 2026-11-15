@@ -24,6 +24,7 @@ import {
   selectChapterImage,
 } from '../store/images.js';
 import { setCharacterPortrait, getCharacter } from '../store/characters.js';
+import { updateChapterAppearance } from '../store/appearances.js';
 import { getChapter } from '../store/chapters.js';
 import { getProject } from '../store/projects.js';
 import { testImageConnection } from '../image-providers.js';
@@ -194,6 +195,23 @@ imagesRouter.get(
   '/chapters/:id/portraits',
   wrap((req, res) => {
     res.json(chapterPortraitOverview(stringParam(req.params.id, 'chapter id')));
+  }),
+);
+
+imagesRouter.patch(
+  '/chapters/:id/appearances/:characterId',
+  wrap((req, res) => {
+    const body = parseBody(
+      z.object({ appearance: z.string().min(1).max(4000) }),
+      req.body,
+    );
+    res.json({
+      appearance: updateChapterAppearance(
+        stringParam(req.params.id, 'chapter id'),
+        stringParam(req.params.characterId, 'character id'),
+        body.appearance,
+      ),
+    });
   }),
 );
 

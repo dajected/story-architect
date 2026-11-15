@@ -22,6 +22,7 @@ export interface CharacterRow {
   notes: string;
   status: CharacterStatus;
   source: CharacterSource;
+  key_character: number;
   portrait_asset_id: string | null;
   created_at: string;
   updated_at: string;
@@ -45,6 +46,7 @@ function mapCharacter(row: CharacterQueryRow): Character {
     notes: row.notes,
     status: row.status,
     source: row.source,
+    keyCharacter: Number(row.key_character) === 1,
     factCount: Number(row.fact_count ?? 0),
     portraitAssetId: row.portrait_asset_id ?? null,
     portraitUrl: row.portrait_asset_id
@@ -119,8 +121,8 @@ export function createCharacter(
   dbRun(
     `INSERT INTO characters (
        id, project_id, name, role, identity, appearance, personality, goals, relationships,
-       notes, status, source, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       notes, status, source, key_character, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     projectId,
     name,
@@ -133,6 +135,7 @@ export function createCharacter(
     clean(input.notes, 8000, 'Character notes'),
     status,
     options.source ?? 'manual',
+    input.keyCharacter ? 1 : 0,
     at,
     at,
   );
@@ -155,7 +158,7 @@ export function updateCharacter(id: string, input: Partial<CharacterInput>): Cha
   dbRun(
     `UPDATE characters SET
        name = ?, role = ?, identity = ?, appearance = ?, personality = ?, goals = ?,
-       relationships = ?, notes = ?, updated_at = ?
+       relationships = ?, notes = ?, key_character = ?, updated_at = ?
      WHERE id = ?`,
     name,
     input.role === undefined ? current.role : clean(input.role, 120, 'Character role'),
@@ -171,6 +174,11 @@ export function updateCharacter(id: string, input: Partial<CharacterInput>): Cha
       ? current.relationships
       : clean(input.relationships, 4000, 'Relationships'),
     input.notes === undefined ? current.notes : clean(input.notes, 8000, 'Character notes'),
+    input.keyCharacter === undefined
+      ? current.key_character
+      : input.keyCharacter
+        ? 1
+        : 0,
     timestamp(),
     id,
   );

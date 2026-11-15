@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import type {
   ChapterPortraitOverview,
   Character,
+  CharacterAppearance,
   ImageAsset,
   PortraitBatch,
   Project,
@@ -27,6 +28,59 @@ function batchBadge(status: PortraitBatch['items'][number]['status']): string {
   if (status === 'failed') return 'badge-danger';
   if (status === 'running') return 'badge-accent';
   return '';
+}
+
+function AppearanceRecordEditor({
+  record,
+  busy,
+  onSave,
+}: {
+  record: CharacterAppearance;
+  busy: boolean;
+  onSave: (appearance: string) => void;
+}) {
+  const [text, setText] = useState(record.appearance ?? '');
+  useEffect(() => {
+    setText(record.appearance ?? '');
+  }, [record.appearance, record.updatedAt]);
+  const statusLabel =
+    record.status === 'current' ? 'Current' : record.status === 'stale' ? 'Outdated' : 'Not recorded';
+  const statusClass =
+    record.status === 'current'
+      ? 'badge-success'
+      : record.status === 'stale'
+        ? 'badge-warning'
+        : '';
+  const trimmed = text.trim();
+  return (
+    <div className="appearance-record">
+      <div className="appearance-record-head">
+        <strong>{record.characterName}</strong>
+        <span className={`badge ${statusClass}`}>{statusLabel}</span>
+      </div>
+      {record.staleReasons.length > 0 ? (
+        <p className="field-hint">{record.staleReasons.join(' ')}</p>
+      ) : null}
+      <textarea
+        rows={4}
+        maxLength={4000}
+        value={text}
+        placeholder="No appearance recorded for this chapter yet."
+        aria-label={`${record.characterName} appearance at the end of this chapter`}
+        onChange={event => setText(event.target.value)}
+      />
+      <div className="row-actions">
+        <button
+          className="button button-small"
+          disabled={busy || !trimmed || trimmed === (record.appearance ?? '')}
+          onClick={() => onSave(trimmed)}
+        >
+          {busy ? <Spinner /> : null}
+          Save record
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: string; revisionKey?: string | null; project: Project}) {
@@ -54,6 +108,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchNotice, setBatchNotice] = useState<string | null>(null);
+  const [appearanceBusy, setAppearanceBusy] = useState<string | null>(null);
   const [skipExisting, setSkipExisting] = useState(true);
   const navigate = useNavigate();
   const styleLoaded = useRef(false);
@@ -69,7 +124,10 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
       previous.current = new Map(next.activeRequests.map(r => [r.id, r.characterId]));
       setData(next); setError(null);
       if (!styleLoaded.current) {setStyle(next.visualStyle ?? '');styleLoaded.current=true;}
-      window.dispatchEvent(new CustomEvent('chapter-image-count',{detail: next.assets.length}));
+      const keyIds = new Set([...next.named.map(entry => entry.character), ...next.others]
+        .filter(character => character.keyCharacter)
+        .map(character => character.id));
+      window.dispatchEvent(new CustomEvent('chapter-image-count',{detail: next.assets.filter(asset => keyIds.has(asset.characterId)).length}));
       setConnectionId(current => next.connections.some(c => c.id === current) ? current : next.connections[0]?.id ?? '');
     } catch(err) {setError(errorText(err));}
   }, [chapterId]);
@@ -85,7 +143,10 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
     } catch(err) {setBatchError(errorText(err));}
   }, []);
 
-  const characters = [...(data?.named.map(n => n.character) ?? []), ...(data?.others ?? [])];
+  const characters = [...(data?.named.map(n => n.character) ?? []), ...(data?.others ?? [])]
+    .filter(character => character.keyCharacter);
+  const chapterAssets = data?.assets.filter(asset =>
+    characters.some(character => character.id === asset.characterId)) ?? [];
 
   useEffect(() => {
     if (!open || !data) return;
@@ -130,6 +191,19 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
     }
     await load(); setBusy(false); setNotice(`${ids.length - failures.length} portrait request(s) started.`);
     if (failures.length) setError(failures.join('\n'));
+  };
+
+  const saveAppearance = async (characterId: string, appearance: string) => {
+    setAppearanceBusy(characterId); setError(null); setNotice(null);
+    try {
+      await api.saveChapterAppearance(chapterId, characterId, appearance);
+      setNotice('Appearance record saved for this chapter.');
+      await load();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setAppearanceBusy(null);
+    }
   };
 
   const startContainerBatch = async () => {
@@ -184,21 +258,21 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
   const batchProgress = batch?.items.length ? Math.round((batchSettled / batch.items.length) * 100) : 0;
   const batchRunning = batch?.status === 'running';
   return <section className="chapter-portraits compact-portraits">
-    <div className="portrait-strip">{characters.slice(0, 4).map(character => {
-      const image = data?.assets.find(a => a.characterId === character.id && a.selectedForChapter) ?? data?.assets.find(a => a.characterId === character.id);
+    <div className="portrait-strip">{characters.map(character => {
+      const image = chapterAssets.find(a => a.characterId === character.id && a.selectedForChapter) ?? chapterAssets.find(a => a.characterId === character.id);
       return <button className="portrait-chip" key={character.id} onClick={() => openImages(image?.id ?? null)} aria-label={image ? `View image of ${character.name}` : `View chapter images for ${character.name}`}>{image ? <img src={image.url} alt="" /> : <span className="portrait-avatar placeholder">{character.name[0]}</span>}<span>{character.name}<small>{image ? (image.sourceOutdated ? 'Earlier draft' : 'Chapter image') : 'No chapter image'}</small></span></button>;
-    })}{characters.length > 4 ? <button className="portrait-chip portrait-more" onClick={() => openImages()} title="Open chapter images">+{characters.length - 4} more</button> : null}<button className="button button-small" onClick={() => openImages()}>Chapter images · {data?.assets.length ?? 0} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
+    })}{!characters.length ? <span className="muted small">Mark characters as key in Cast to show them in every chapter.</span> : null}<button className="button button-small" onClick={() => openImages()}>Chapter images · {chapterAssets.length} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
     {error && !open ? <Banner tone="danger">{error}</Banner> : null}
-    <Modal open={open} onClose={() => setOpen(false)} title={`Chapter images — ${data ? formatChapterLabel(data.chapterTitle, data.chapterNumber - 1) : ''}`} subtitle="Select an image for each character in this chapter. Main character portraits stay separate." width="wide">
+    <Modal open={open} onClose={() => setOpen(false)} title={`Chapter images — ${data ? formatChapterLabel(data.chapterTitle, data.chapterNumber - 1) : ''}`} subtitle="Only key characters appear here. Main character portraits stay separate." width="wide">
       <div className="stack">{error ? <Banner tone="danger">{error}</Banner> : null}{notice ? <Banner>{notice}</Banner> : null}
       {!data ? <Spinner label="Loading chapter images…" /> : <>
         <div className="row-actions">
-          <button className="button" aria-pressed={imageTab === 'gallery'} onClick={() => {setViewAssetId(null); setImageTab('gallery');}}>View images ({data.assets.length})</button>
+          <button className="button" aria-pressed={imageTab === 'gallery'} onClick={() => {setViewAssetId(null); setImageTab('gallery');}}>View images ({chapterAssets.length})</button>
           <button className="button" aria-pressed={imageTab === 'generate'} onClick={() => setImageTab('generate')}>Generate images</button>
         </div>
         {imageTab === 'gallery' ? <>
-        <ImageGallery initialViewId={viewAssetId} chapters={[{id: data.chapterId, title: data.chapterTitle, orderIndex: data.chapterNumber - 1}]} assets={data.assets} characters={characters} onChanged={load} onRegenerate={asset => {const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} />
-          {!data.assets.length ? <p className="muted">No images have been created for this chapter yet. Choose Generate images to create one.</p> : null}
+        <ImageGallery initialViewId={viewAssetId} chapters={[{id: data.chapterId, title: data.chapterTitle, orderIndex: data.chapterNumber - 1}]} assets={chapterAssets} characters={characters} onChanged={load} onRegenerate={asset => {const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} />
+          {!chapterAssets.length ? <p className="muted">No images have been created for this chapter&rsquo;s key characters yet. Choose Generate images to create one.</p> : null}
         </> : <>
         {!data.hasText ? <Banner>Draft this chapter before generating its appearances.</Banner> : null}
         {!data.connections.length ? <Banner tone="warning" actions={<button className="button" onClick={() => navigate(setupUrl('image-connections'))}>Connect image service</button>}>An image service draws the portrait.</Banner> : null}
@@ -228,11 +302,25 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
           </div> : null}
         </section>
 
+        <details className="appearance-records">
+          <summary>Appearance records at the end of this chapter</summary>
+          <p className="muted small">Each key character&rsquo;s record starts from the previous chapter and adds only what this chapter establishes. Image prompts use these records automatically. Editing a record here marks it current for this chapter.</p>
+          <div className="row-actions"><button className="button button-small" onClick={() => void load()}>Refresh records</button></div>
+          {data.appearances.length
+            ? data.appearances.map(record => <AppearanceRecordEditor
+                key={record.characterId}
+                record={record}
+                busy={appearanceBusy === record.characterId}
+                onSave={appearance => void saveAppearance(record.characterId, appearance)}
+              />)
+            : <p className="muted small">Mark characters as key in Cast to record their appearance.</p>}
+        </details>
+
         <div className="portrait-cast">{characters.map(character => {const named = data.named.find(n => n.character.id === character.id); const request = data.activeRequests.find(r => r.characterId === character.id); const latest = data.requests.find(r => r.characterId === character.id); return <div className="portrait-cast-row" key={character.id}>
           <input type="checkbox" aria-label={`Select ${character.name} for generation`} checked={selected.includes(character.id)} onChange={e => setSelected(current => e.target.checked ? [...current, character.id] : current.filter(id => id !== character.id))} />
-          <div className="portrait-cast-copy"><strong>{character.name}</strong><span className="muted small">{named ? `${named.mentionCount} mentions` : 'Other cast member'} · {request?.status ?? latest?.status ?? 'Ready'}</span>{latest?.error ? <span className="error-text small">{latest.error}</span> : null}</div>
+          <div className="portrait-cast-copy"><strong>{character.name}</strong><span className="muted small">{named ? `${named.mentionCount} mentions` : 'Key character'} · {request?.status ?? latest?.status ?? 'Ready'}</span>{latest?.error ? <span className="error-text small">{latest.error}</span> : null}</div>
           <div className="row-actions">{request ? <button className="button button-small" onClick={async () => {try {await api.cancelChapterPortrait(request.id); await load();} catch(err) {setError(errorText(err));}}}>Stop</button> : <button className="button button-small" disabled={busy || !data.hasText || !connectionId || !data.imagePromptRole?.model} onClick={() => void generate([character.id])}>Generate</button>}<button className="button button-small" onClick={() => customize(character)}>Customize</button></div></div>;})}</div>
-        {!characters.length ? <p>Add characters in Cast to create chapter images.</p> : null}
+        {!characters.length ? <p>Mark characters as key in Cast to create chapter images.</p> : null}
         <div className="row-actions"><button className="button button-primary" disabled={busy || !selected.length || !connectionId || !data.hasText || !data.imagePromptRole?.model} onClick={() => void generate(selected)}>Generate selected ({selected.length})</button><span className="muted small">{data.activeRequests.length} active · Provider cost unavailable</span></div>
 
         <div className="row-actions" role="status" aria-live="polite">{['completed','failed','cancelled','interrupted'].map(status => {const count=data.requests.filter(r => r.status === status).length;return count ? <span key={status}>{status}: {count}</span> : null;})}</div>

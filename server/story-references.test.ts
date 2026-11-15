@@ -14,7 +14,7 @@ const fact = (id: string, statement: string, extra: Partial<Fact> = {}): Fact =>
 });
 const character = (name: string, extra: Partial<Character> = {}): Character => ({
   id: name, projectId: 'novel', name, role: 'protagonist', identity: 'A surveyor.', appearance: '', personality: '',
-  goals: '', relationships: '', notes: '', status: 'active', source: 'manual', portraitAssetId: null,
+  goals: '', relationships: '', notes: '', status: 'active', source: 'manual', keyCharacter: false, portraitAssetId: null,
   createdAt: '', updatedAt: '', ...extra,
 });
 

@@ -432,6 +432,30 @@ const migrations: Array<() => void> = [
     );
     CREATE INDEX idx_story_states_project ON story_states(project_id);`);
   },
+  () => {
+    db.exec(`ALTER TABLE characters ADD COLUMN key_character INTEGER NOT NULL DEFAULT 0;`);
+  },
+  () => {
+    db.exec(`
+      CREATE TABLE character_appearances (
+        chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        appearance TEXT NOT NULL,
+        source_revision_id TEXT,
+        source_content_hash TEXT NOT NULL DEFAULT '',
+        preceding_signature TEXT NOT NULL DEFAULT '',
+        entering_hash TEXT NOT NULL DEFAULT '',
+        generated_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        job_id TEXT,
+        PRIMARY KEY (chapter_id, character_id)
+      );
+
+      CREATE INDEX idx_character_appearances_project ON character_appearances(project_id, chapter_id);
+      CREATE INDEX idx_character_appearances_character ON character_appearances(character_id, chapter_id);
+    `);
+  },
 ];
 
 /**

@@ -100,6 +100,7 @@ Name: {{character_name}}
 Role: {{character_role}}
 Identity: {{identity}}
 Appearance: {{appearance}}
+Appearance at this point: {{appearance_record}}
 Clothing: {{clothing}}
 Personality: {{personality}}
 Goals: {{goals}}
@@ -122,6 +123,7 @@ export interface ImagePromptValuesParams {
   characterRole: string;
   identity: string;
   appearance: string;
+  appearanceRecord: string;
   clothing: string;
   personality: string;
   goals: string;
@@ -144,6 +146,7 @@ export function imagePromptValues(params: ImagePromptValuesParams): PromptValues
     identity: params.identity,
     clothing: params.clothing,
     appearance: params.appearance,
+    appearance_record: params.appearanceRecord,
     personality: params.personality,
     goals: params.goals,
     notes: params.notes,
@@ -336,10 +339,12 @@ Rules:
 - Facts must be concrete and checkable. Prefer five to twelve useful facts over a long list.
 - Use kind "character_development" for a lasting change to a character, "relationship" for a shift between named characters, "timeline" for an ordered event, "plot_thread" for an unresolved question or promise, and "world" for a stable world detail.
 - Use scope "story" when the fact remains true for the rest of the novel. Use "chapter" when it is only true or known at this point in the story.
+- For each key character listed under "Key character appearances entering this chapter", return their full appearance at the END of this chapter under "appearances". Carry forward every unchanged detail from the entering record and add, replace, or remove only details the chapter text establishes. This is an appearance snapshot for image generation, not a summary of personality.
+- Include only concrete visible details: body, hair, face, injuries, clothing and carried objects. Do not invent details, and omit a character when the chapter gives no evidence either way so their previous record can carry forward unchanged.
 - Do not repeat facts already listed under "Known facts". Do not invent details that are absent from the text.
 
 Return only valid JSON, with no commentary and no code fences:
-{"summary":"...","facts":[{"kind":"character_development","statement":"...","characters":["Name"],"scope":"story"}]}`;
+{"summary":"...","facts":[{"kind":"character_development","statement":"...","characters":["Name"],"scope":"story"}],"appearances":[{"character":"Name","appearance":"..."}]}`;
 
 export const CHARACTER_CASTING_PROMPT = `You are a casting editor for a novel. Read the premise and the approved outline and propose the recurring cast.
 
@@ -452,7 +457,13 @@ export interface ParsedMemoryFact {
 export interface ParsedMemory {
   summary: string;
   facts: ParsedMemoryFact[];
+  appearances: ParsedMemoryAppearance[];
   parsed: boolean;
+}
+
+export interface ParsedMemoryAppearance {
+  character: string;
+  appearance: string;
 }
 
 const MEMORY_KINDS: ParsedMemoryFact['kind'][] = [
@@ -516,8 +527,25 @@ export function parseMemoryExtraction(raw: string): ParsedMemory {
           scope,
         });
       }
-      if (summary || facts.length > 0) {
-        return { summary, facts, parsed: true };
+      const rawAppearances = Array.isArray(record.appearances) ? record.appearances : [];
+      const appearances: ParsedMemoryAppearance[] = [];
+      for (const entry of rawAppearances) {
+        if (!entry || typeof entry !== 'object') continue;
+        const appearance = entry as Record<string, unknown>;
+        const character = normaliseString(
+          appearance.character ?? appearance.name,
+          160,
+        );
+        const description = normaliseString(
+          appearance.appearance ?? appearance.description,
+          4000,
+        );
+        if (!character || !description) continue;
+        appearances.push({ character, appearance: description });
+        if (appearances.length >= 40) break;
+      }
+      if (summary || facts.length > 0 || appearances.length > 0) {
+        return { summary, facts, appearances, parsed: true };
       }
     } catch {
       // Try the next candidate.
@@ -530,7 +558,7 @@ export function parseMemoryExtraction(raw: string): ParsedMemory {
     .replace(/^\s*\{[\s\S]*\}\s*$/, '')
     .trim()
     .slice(0, 12000);
-  return { summary: fallback, facts: [], parsed: false };
+  return { summary: fallback, facts: [], appearances: [], parsed: false };
 }
 
 export interface ParsedCharacter {

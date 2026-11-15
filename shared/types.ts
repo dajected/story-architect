@@ -373,6 +373,8 @@ export interface Character {
   notes: string;
   status: CharacterStatus;
   source: CharacterSource;
+  /** Key characters always appear in every chapter's image section. */
+  keyCharacter: boolean;
   factCount: number;
   portraitAssetId: string | null;
   portraitUrl: string | null;
@@ -389,6 +391,7 @@ export interface CharacterInput {
   goals?: string;
   relationships?: string;
   notes?: string;
+  keyCharacter?: boolean;
 }
 
 export type MemoryStatus = 'current' | 'stale' | 'missing' | 'pending' | 'empty';
@@ -659,6 +662,7 @@ export const IMAGE_TEMPLATE_VARIABLES: Array<{ name: string; description: string
   { name: 'character_role', description: 'Character role.' },
   { name: 'identity', description: 'Character identity.' },
   { name: 'appearance', description: 'Character appearance, including lasting physical details.' },
+  { name: 'appearance_record', description: 'Recorded appearance at the end of the selected chapter, carried forward from earlier chapters.' },
   { name: 'clothing', description: 'Clothing or outfit supplied for this image.' },
   { name: 'personality', description: 'Character personality.' },
   { name: 'goals', description: 'Character goals.' },
@@ -857,6 +861,28 @@ export interface PortraitBatch {
   updatedAt: string;
 }
 
+export type CharacterAppearanceStatus = 'current' | 'stale' | 'missing';
+
+/**
+ * A key character's recorded appearance at the end of one chapter. Each record
+ * is built from the previous chapter's record plus anything the chapter itself
+ * changes, so appearance details carry forward through the story.
+ */
+export interface CharacterAppearance {
+  chapterId: string;
+  projectId: string;
+  characterId: string;
+  characterName: string;
+  chapterTitle: string;
+  chapterOrder: number;
+  appearance: string | null;
+  status: CharacterAppearanceStatus;
+  staleReasons: string[];
+  sourceRevisionId: string | null;
+  generatedAt: string | null;
+  updatedAt: string | null;
+}
+
 export interface ChapterPortraitCandidate {
   character: Character;
   /** Whole-word mentions of the character's name in the chapter text. */
@@ -874,6 +900,8 @@ export interface ChapterPortraitOverview {
   chapterTitle: string;
   chapterNumber: number;
   hasText: boolean;
+  /** Key characters' recorded appearance at the end of this chapter. */
+  appearances: CharacterAppearance[];
   /** Cast members named in the chapter, most-mentioned first. */
   named: ChapterPortraitCandidate[];
   /** Other non-archived cast members, for a manual pick. */

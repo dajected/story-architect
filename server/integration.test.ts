@@ -37,6 +37,13 @@ const MEMORY = JSON.stringify({
       scope: 'chapter',
     },
   ],
+  appearances: [
+    {
+      character: 'Mara',
+      appearance:
+        'Cropped hair stiff with salt, ink-stained hands, a torn canvas coat and the brass key at her belt.',
+    },
+  ],
 });
 const STORY_STATE = 'Situation: Mara has entered the observatory with the brass key.\nOpen threads: discover who made the key and find the missing records.\nRelationships: Mara distrusts Iven, her former partner.\nKnowledge: Mara knows the key opens the observatory; Iven has not been told what she found.';
 
@@ -389,6 +396,18 @@ async function waitForMemory(chapterId: string) {
   throw new Error(
     `Memory did not become current.${detail ? ` Last job: ${detail.status} ${detail.error ?? ''}` : ''}`,
   );
+}
+
+async function waitForMemoryIdle(chapterId: string) {
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const { activeJob } = await request<{ activeJob: { id: string } | null }>(
+      'GET',
+      `/chapters/${chapterId}/memory`,
+    );
+    if (!activeJob) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('Memory stayed busy.');
 }
 
 beforeAll(async () => {
@@ -2129,15 +2148,17 @@ describe('whole-novel drafting and chapter portraits', () => {
       text: 'Mara pulled her torn canvas coat tight and set the brass key on the sill.',
     });
 
-    const { character } = await request<{ character: { id: string; name: string } }>(
+    const { character } = await request<{ character: { id: string; name: string; keyCharacter: boolean } }>(
       'POST',
       `/projects/${project.id}/characters`,
       {
         name: 'Mara',
         role: 'protagonist',
         appearance: 'Cropped hair, ink-stained hands, a heavy canvas coat.',
+        keyCharacter: true,
       },
     );
+    expect(character.keyCharacter).toBe(true);
 
     const overview = await request<{
       hasText: boolean;
@@ -2146,6 +2167,33 @@ describe('whole-novel drafting and chapter portraits', () => {
     expect(overview.hasText).toBe(true);
     const candidate = overview.named.find((entry) => entry.character.id === character.id);
     expect(candidate?.mentionCount).toBeGreaterThan(0);
+
+    // Rebuild memory after the key character exists so their end-of-chapter
+    // appearance is recorded, then correct the record before drawing.
+    await waitForMemoryIdle(chapterId);
+    await request('POST', `/chapters/${chapterId}/memory/rebuild`, {});
+    await waitForMemory(chapterId);
+    const appearanceOverview = await request<{
+      appearances: Array<{
+        characterId: string;
+        appearance: string | null;
+        status: string;
+      }>;
+    }>('GET', `/chapters/${chapterId}/portraits`);
+    const recorded = appearanceOverview.appearances.find(
+      (entry) => entry.characterId === character.id,
+    );
+    expect(recorded?.status).toBe('current');
+    expect(recorded?.appearance).toContain('stiff with salt');
+    const edited = await request<{ appearance: { appearance: string; status: string } }>(
+      'PATCH',
+      `/chapters/${chapterId}/appearances/${character.id}`,
+      {
+        appearance:
+          'Cropped salt-stiff hair, ink-stained hands, a torn canvas coat, a fresh cut above one eyebrow, the brass key at her belt.',
+      },
+    );
+    expect(edited.appearance.status).toBe('current');
 
     const mockPort = (globalThis as { __mockPort?: number }).__mockPort;
     const { connection } = await request<{ connection: { id: string } }>(
@@ -2212,6 +2260,7 @@ describe('whole-novel drafting and chapter portraits', () => {
     expect(lastImagePromptSystem).toContain(
       'Appearance: Cropped hair, ink-stained hands, a heavy canvas coat.',
     );
+    expect(lastImagePromptSystem).toContain('fresh cut above one eyebrow');
     expect(lastImagePromptSystem).toContain('Scene: A portrait of Mara at the very end of Chapter 1');
   }, 60000);
 

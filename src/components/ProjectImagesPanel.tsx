@@ -27,9 +27,8 @@ export function ProjectImagesPanel({
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const firstChapter = [...chapters].sort((a, b) => a.orderIndex - b.orderIndex)[0];
   const [characterId, setCharacterId] = useState('');
-  const [chapterId, setChapterId] = useState('');
-  const [selectedOnly, setSelectedOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -64,10 +63,9 @@ export function ProjectImagesPanel({
   };
   const [notice, setNotice] = useState<string | null>(null);
   const createImage = async () => {
-    const chapter = chapters.find(c => c.id === chapterId) ?? [...chapters].sort((a,b) => a.orderIndex - b.orderIndex)[0];
-    if (!chapter) { setError('Approve the outline to create chapter 1 before generating an image.'); return; }
+    if (!firstChapter) { setError('Approve the outline to create chapter 1 before generating an image.'); return; }
     setCreating(true); setError(null); setNotice(null);
-    try { await api.startChapterPortrait(chapter.id, {characterId, moment: 'start'}); setNotice('Image generation started. See Activity for progress.'); } catch (err) { setError(errorText(err)); } finally { setCreating(false); }
+    try { await api.startChapterPortrait(firstChapter.id, {characterId, moment: 'start'}); setNotice('Image generation started. See Activity for progress.'); } catch (err) { setError(errorText(err)); } finally { setCreating(false); }
   };
   const [studioCharacter, setStudioCharacter] = useState<Character | null>(null);
   const [studio, setStudio] = useState<ImageAsset | null>(null);
@@ -79,9 +77,8 @@ export function ProjectImagesPanel({
   useEffect(() => {
     if (!focus) return;
     setCharacterId(focus.characterId);
-    setSelectedOnly(true);
   }, [focus]);
-  const filtered = assets.filter(a => (!characterId || a.characterId === characterId) && (!chapterId || a.chapterId === chapterId) && (!selectedOnly || a.selectedForChapter)).sort((a,b) => characterId ? (chapters.find(c => c.id === a.chapterId)?.orderIndex ?? -1) - (chapters.find(c => c.id === b.chapterId)?.orderIndex ?? -1) : b.createdAt.localeCompare(a.createdAt));
+  const filtered = assets.filter(a => !characterId || a.characterId === characterId).sort((a,b) => characterId ? (chapters.find(c => c.id === a.chapterId)?.orderIndex ?? -1) - (chapters.find(c => c.id === b.chapterId)?.orderIndex ?? -1) : b.createdAt.localeCompare(a.createdAt));
   const selectedCharacter = characters.find(c => c.id === characterId);
   const running = batch?.status === 'running';
   const completed = batch?.items.filter(item => item.status === 'completed').length ?? 0;
@@ -91,20 +88,19 @@ export function ProjectImagesPanel({
       <div className="row-actions">{onOpenCast ? <button className="button" onClick={onOpenCast}>Characters</button> : null}<button className="button" onClick={onOpenSettings}>Image settings</button></div>
     </header>
     <section className="images-controls" aria-label="Create and filter images">
-      <div className="images-controls-heading"><div><h2>Character images</h2><p className="muted small">Choose a character to create images or explore their appearance.</p></div></div>
+      <div className="images-controls-heading"><div><h2>Character images</h2><p className="muted small">Choose a character to create images or explore their appearance. Chapter image sections show key characters only.</p></div></div>
       <div className="images-fields">
         <label>Character<select value={characterId} onChange={e => setCharacterId(e.target.value)}><option value="">All characters</option>{characters.filter(c => c.status !== 'archived').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-        <label>Chapter<select value={chapterId} onChange={e => setChapterId(e.target.value)}><option value="">All chapters</option>{chapters.map(c => <option key={c.id} value={c.id}>{formatChapterLabel(c.title, c.orderIndex)}</option>)}</select></label>
       </div>
-      <div className="images-actions"><button className="button button-primary" disabled={!characterId || creating || running} onClick={() => void createImage()}>{creating ? 'Starting?' : chapterId ? 'Create image for this chapter' : 'Create image for chapter 1'}</button>
+      <div className="images-actions"><button className="button button-primary" disabled={!characterId || creating || running || !firstChapter} onClick={() => void createImage()}>{creating ? 'Starting?' : firstChapter ? `Create image for ${formatChapterLabel(firstChapter.title, firstChapter.orderIndex)}` : 'Create image'}</button>
         <button className="button" disabled={!characterId || batchBusy || running} onClick={() => void startBatch()}>Create images for all chapters</button>
       </div>
       <p className="muted small">All chapters uses the default settings, creates images one at a time for drafted chapters, and skips chapters that already have an image for this character.</p>
       {batch && selectedCharacter ? <div className="images-batch" role="status"><div><strong>{selectedCharacter.name}: {running ? 'Creating chapter images' : 'Chapter images'}</strong><p className="muted small">{batch.message ?? `${completed} of ${batch.items.length} complete`}{running ? ` ? ${completed} of ${batch.items.length} complete` : ''}</p></div>{running ? <button className="button button-small" disabled={batchBusy} onClick={() => void cancelBatch()}>Stop</button> : null}</div> : null}
     </section>
     {notice ? <Banner tone="success">{notice}</Banner> : null}{error ? <Banner tone="danger">{error}</Banner> : null}
-    <div className="images-gallery-heading"><div><h2>Gallery</h2><p className="muted small">{filtered.length} {filtered.length === 1 ? 'image' : 'images'}</p></div><label className="check-label"><input type="checkbox" checked={selectedOnly} onChange={e => setSelectedOnly(e.target.checked)} /> Selected chapter images only</label></div>
-    {loading ? <Spinner label="Loading images?" /> : filtered.length ? <ImageGallery assets={filtered} characters={characters} chapters={chapters} onChanged={load} onRegenerate={asset => {setStudio(asset); setStudioCharacter(characters.find(c => c.id === asset.characterId) ?? null);}} /> : <EmptyState title="No images match">Choose a character above to create an image, or adjust the filters.</EmptyState>}
-    <ImageStudio open={Boolean(studioCharacter)} project={project} character={studioCharacter} initialChapterId={studio?.chapterId ?? (chapterId || undefined)} initialAsset={studio} onClose={() => {setStudio(null); setStudioCharacter(null); void load();}} onCharacterUpdated={() => void load()} onOpenSettings={onOpenSettings} onOpenImageSettings={onOpenSettings} />
+    <div className="images-gallery-heading"><div><h2>Gallery</h2><p className="muted small">{filtered.length} {filtered.length === 1 ? 'image' : 'images'}</p></div></div>
+    {loading ? <Spinner label="Loading images?" /> : filtered.length ? <ImageGallery assets={filtered} characters={characters} chapters={chapters} onChanged={load} onRegenerate={asset => {setStudio(asset); setStudioCharacter(characters.find(c => c.id === asset.characterId) ?? null);}} /> : <EmptyState title="No images match">Choose a character above to create an image.</EmptyState>}
+    <ImageStudio open={Boolean(studioCharacter)} project={project} character={studioCharacter} initialChapterId={studio?.chapterId ?? undefined} initialAsset={studio} onClose={() => {setStudio(null); setStudioCharacter(null); void load();}} onCharacterUpdated={() => void load()} onOpenSettings={onOpenSettings} onOpenImageSettings={onOpenSettings} />
   </div>;
 }

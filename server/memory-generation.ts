@@ -34,6 +34,7 @@ import {
   chapterTextHash,
 } from './store/memory.js';
 import { latestOutlineRevision } from './store/outline.js';
+import { appearanceEnteringPrompt, saveChapterAppearances } from './store/appearances.js';
 import { getProject } from './store/projects.js';
 import { resolveTaskModel } from './store/settings.js';
 import { getProviderConnection, modelContextLength } from './store/connections.js';
@@ -111,6 +112,7 @@ function buildMemoryUserMessage(
   const project = getProject(projectId);
   const chapter = getChapter(chapterId);
   const previous = chapterContextForExtraction(projectId, chapterId);
+  const appearances = appearanceEnteringPrompt(projectId, chapterId);
   return { role: 'user', content: `Novel: ${project.title}
 Premise: ${project.premise || '(not set)'}
 Chapter ${chapter.orderIndex + 1}: ${chapter.title}
@@ -120,6 +122,9 @@ Summarise the supplied chapter excerpt. Earlier continuity is background, not ev
     contextParts: [
       { label: 'Chapter text', text, priority: 100, minTokens: 512, maxTokens: 10000, trim: 'both' },
       { label: 'Earlier continuity', text: previous, priority: 20, maxTokens: 2000 },
+      ...(appearances
+        ? [{ label: 'Key character appearances entering this chapter', text: appearances, priority: 90, maxTokens: 1800 }]
+        : []),
     ],
   };
 }
@@ -218,6 +223,14 @@ async function finishMemoryJob(
         scope: fact.scope,
       })),
     );
+    saveChapterAppearances({
+      chapterId,
+      entries: parsed.appearances,
+      sourceRevisionId,
+      sourceContentHash,
+      precedingSignature: signature,
+      jobId,
+    });
     finalizeJob(jobId, 'completed', {
       usage: result.usage,
       error: parsed.parsed

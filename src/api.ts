@@ -8,6 +8,7 @@ import type {
   ChapterPortraitRequest,
   ChapterRevision,
   Character,
+  CharacterAppearance,
   CharacterImageOverview,
   CharacterInput,
   ChatMessage,
@@ -622,6 +623,12 @@ export const api = {
     request<CharacterImageOverview>('GET', `/characters/${characterId}/images`),
   getChapterPortraits: (chapterId: string) =>
     request<ChapterPortraitOverview>('GET', `/chapters/${chapterId}/portraits`),
+  saveChapterAppearance: (chapterId: string, characterId: string, appearance: string) =>
+    request<{ appearance: CharacterAppearance }>(
+      'PATCH',
+      `/chapters/${chapterId}/appearances/${characterId}`,
+      { appearance },
+    ).then((r) => r.appearance),
   startChapterPortrait: (chapterId: string, input: ChapterPortraitInput) =>
     request<{ request: ChapterPortraitRequest }>(
       'POST',

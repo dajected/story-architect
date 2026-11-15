@@ -87,10 +87,10 @@ export function MemoryPanel({
     try {
       const jobs = await api.rebuildMemory(project.id);
       if (jobs.length === 0) {
-        setNotice('Every chapter with text already has a current summary.');
+        setNotice('Every chapter already has a current summary and key-character appearance records.');
       } else {
         setNotice(
-          `${jobs.length} ${jobs.length === 1 ? 'summary is' : 'summaries are'} queued. They run one at a time against the current manuscript.`,
+          `${jobs.length} chapter ${jobs.length === 1 ? 'refresh is' : 'refreshes are'} queued. They rebuild summaries, facts, and appearance records one at a time against the current manuscript.`,
         );
       }
       await load(true);
