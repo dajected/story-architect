@@ -12,7 +12,7 @@ import type {
   TaskRole,
 } from '@shared/types';
 import { api } from '../api';
-import { PageHeader, type Theme } from '../components/Chrome';
+import { PageHeader, VersionBadge, type Theme } from '../components/Chrome';
 import { GenerationSettingsForm } from '../components/GenerationSettingsForm';
 import { ImageConnectionManager } from '../components/ImageConnectionManager';
 import { ImageTemplateManager } from '../components/ImageTemplateManager';
@@ -60,13 +60,17 @@ function initialTab(): Tab {
 export function SettingsPage({
   theme,
   onThemeChange,
+  embedded = false,
+  startTab,
 }: {
+  embedded?: boolean;
+  startTab?: Tab;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
 }) {
   const requestedReturn = new URLSearchParams(location.search).get('returnTo');
   const returnTo = requestedReturn?.startsWith('/projects/') && !requestedReturn.startsWith('//') ? requestedReturn : '/';
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useState<Tab>(() => startTab ?? initialTab());
   const [connections, setConnections] = useState<ConnectionPublic[]>([]);
   const [generation, setGeneration] = useState<GenerationSettings | null>(null);
   const [roles, setRoles] = useState<ResolvedRole[]>([]);
@@ -259,7 +263,7 @@ export function SettingsPage({
   if (loading) {
     return (
       <div className="page">
-        <PageHeader theme={theme} onThemeChange={onThemeChange} />
+        {!embedded && <PageHeader theme={theme} onThemeChange={onThemeChange} />}
         <div className="centered-block">
           <Spinner label="Loading settings…" />
         </div>
@@ -268,11 +272,11 @@ export function SettingsPage({
   }
 
   return (
-    <div className="page settings-page">
-      <PageHeader theme={theme} onThemeChange={onThemeChange}>
+    <div className={embedded ? "settings-embedded" : "page settings-page"}>
+      {!embedded && <PageHeader theme={theme} onThemeChange={onThemeChange}>
         <Link className="button button-small" to={returnTo}>{returnTo === '/' ? 'Library' : '← Return to project'}</Link>
 
-      </PageHeader>
+      </PageHeader>}
 
       <main className="settings-layout">
         <aside className="settings-nav">
@@ -483,6 +487,7 @@ export function SettingsPage({
           ) : null}
         </section>
       </main>
+      <VersionBadge />
 
       <Modal
         open={editor !== null}

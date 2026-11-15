@@ -22,7 +22,7 @@ import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
 import { Banner, EmptyState, Spinner } from '../components/ui';
 import { errorText, formatWords } from '../utils';
 import { ProjectImagesPanel } from '../components/ProjectImagesPanel';
-import { useWritingPreferences, WritingPreferences, PanelResize } from '../components/WorkspaceControls';
+import { useWritingPreferences, WritingPreferencesContent, PanelResize } from '../components/WorkspaceControls';
 
 type Tab = 'manuscript' | 'outline' | 'cast' | 'memory' | 'lore' | 'activity' | 'images';
 
@@ -49,12 +49,13 @@ export function WorkspacePage({
   // Tabs stay mounted after their first visit so filters and scroll positions survive switching.
   const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(['outline', 'manuscript']));
   const [imagesFocus, setImagesFocus] = useState<{ characterId: string; nonce: number } | null>(null);
-  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1180 && localStorage.getItem('assistant-open') !== 'false');
+  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1180 && localStorage.getItem('assistant-open') === 'true');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'story' | 'app'>('story');
+  const openSettings = (section: 'story' | 'app' = 'story') => {setSettingsSection(section); setSettingsOpen(true);};
   const initialised = useRef(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [chaptersVisible, setChaptersVisible] = useState(() => localStorage.getItem('chapters-visible') !== 'false');
   const {preferences, setPreferences, style} = useWritingPreferences();
   const setPreference = (key: string, value: number) => setPreferences(current => ({...current, [key]:value}));
@@ -256,10 +257,9 @@ export function WorkspacePage({
   };
 
   return (
-    <div className={`workspace-shell ${focusMode ? 'focus-mode' : ''} ${chaptersVisible ? '' : 'chapters-collapsed'}`} style={style}>
+    <div className={`workspace-shell ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
       <header className="workspace-topbar">
         <div className="workspace-topbar-left">
-          <Brand small />
           <Link className="button button-ghost button-small back-link" to="/">
             Library
           </Link>
@@ -299,9 +299,9 @@ export function WorkspacePage({
         </nav>
 
         <div className="workspace-actions">
-          <button className="button button-ghost button-small sidebar-toggle" aria-expanded={sidebarOpen || chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
+          {tab === 'manuscript' ? <button className="button button-ghost button-small sidebar-toggle" aria-expanded={sidebarOpen || chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
             Chapters
-          </button>
+          </button> : null}
           <button
             className={`button button-ghost button-small ${assistantOpen ? 'active' : ''}`}
             onClick={() => setAssistantOpen((open) => !open)}
@@ -309,14 +309,14 @@ export function WorkspacePage({
             Assistant
           </button>
           <button className="button button-small" aria-pressed={focusMode} onClick={() => {setTab('manuscript'); setFocusMode(v => !v);}}>{focusMode ? 'Exit focus' : 'Focus'}</button>
+          <button className="button button-small" onClick={() => openSettings()}>Settings</button>
           <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content">
-          <button className="button button-small" onClick={() => setPreferencesOpen(true)}>Writing preferences & shortcuts</button>
           <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export HTML (chapter images)</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export Markdown
           </a>
           <BackupButton projectId={project.id} label="Back up" />
-          <button className="button button-ghost button-small" onClick={() => setSettingsOpen(true)}>
+          <button className="button button-ghost button-small" onClick={() => openSettings()}>
             Project settings
           </button>
           <ThemeToggle theme={theme} onChange={onThemeChange} />
@@ -363,7 +363,7 @@ export function WorkspacePage({
           onClose={() => setSidebarOpen(false)}
         />
 
-        {chaptersVisible ? <PanelResize label="Resize chapter panel" value={preferences.sidebarWidth!} min={200} max={400} onChange={value => setPreference('sidebarWidth',value)} /> : null}
+        {chaptersVisible && tab === 'manuscript' ? <PanelResize label="Resize chapter panel" value={preferences.sidebarWidth!} min={200} max={400} onChange={value => setPreference('sidebarWidth',value)} /> : null}
         <div className="workspace-center">
           <div className={`workspace-view ${tab === 'outline' ? '' : 'is-hidden'}`}>
             <div className="workspace-scroll">
@@ -439,7 +439,7 @@ export function WorkspacePage({
           {visited.has('images') ? (
             <div className={`workspace-view ${tab === 'images' ? '' : 'is-hidden'}`}>
               <div className="workspace-scroll">
-                <ProjectImagesPanel project={project} focus={imagesFocus} active={tab === 'images'} onOpenCast={() => setTab('cast')} />
+                <ProjectImagesPanel onOpenSettings={() => openSettings('app')} project={project} focus={imagesFocus} active={tab === 'images'} onOpenCast={() => setTab('cast')} />
               </div>
             </div>
           ) : null}
@@ -449,8 +449,8 @@ export function WorkspacePage({
                 <CharactersPanel
                   project={project}
                   onProjectChanged={refreshAll}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  onOpenImageSettings={() => navigate(`/settings?tab=image-connections&returnTo=${encodeURIComponent(`/projects/${projectId}`)}`)}
+                  onOpenSettings={() => openSettings()}
+                  onOpenImageSettings={() => openSettings('app')}
                   onOpenTimeline={(characterId) => {setImagesFocus({characterId, nonce: Date.now()}); setTab('images');}}
                 />
               </div>
@@ -463,7 +463,7 @@ export function WorkspacePage({
                 <MemoryPanel
                   project={project}
                   onProjectChanged={refreshAll}
-                  onOpenSettings={() => setSettingsOpen(true)}
+                  onOpenSettings={() => openSettings()}
                 />
               </div>
             </div>
@@ -497,8 +497,10 @@ export function WorkspacePage({
         />
       </div>
 
-      <WritingPreferences open={preferencesOpen} onClose={() => setPreferencesOpen(false)} preferences={preferences} onChange={setPreference} />
       <ProjectSettingsModal
+        initialSection={settingsSection}
+        theme={theme} onThemeChange={onThemeChange}
+        displayPreferences={<><ThemeToggle theme={theme} onChange={onThemeChange} /><WritingPreferencesContent preferences={preferences} onChange={setPreference} /></>}
         open={settingsOpen}
         project={project}
         connections={connections}

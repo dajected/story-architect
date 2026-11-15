@@ -4376,16 +4376,19 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
   .workspace-actions { width: 100%; justify-content: flex-start; }
 }
 
-/* Build/version badge — fixed bottom-left on every screen. */
-.version-badge {
-  position: fixed;
-  left: 12px;
-  bottom: 6px;
-  z-index: 15;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-  opacity: 0.75;
-  pointer-events: none;
-  user-select: none;
+/* Build information lives in settings, in normal document flow. */
+.version-badge { margin: 20px 0 0; padding: 12px; color: var(--muted); font-size: 11px; }
+.settings-embedded .settings-layout { padding: 0; margin: 0; max-width: none; }
+.outline-panel { max-width: 1200px; margin-inline: auto; }
+.outline-layout { grid-template-columns: minmax(0, 1fr); }
+.outline-history { position: static; }
+.outline-history > summary { cursor: pointer; color: var(--muted); padding-block: 10px; }
+.outline-history .revision-mini-list { flex-direction: row; flex-wrap: wrap; }
+.outline-chapter-card { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 20px 0; }
+.outline-chapter-fields textarea { font-size: 15px; line-height: 1.7; min-height: 120px; overflow: hidden; resize: vertical; }
+.outline-chapter-actions .action-menu-content { min-width: 100px; }
+@media (max-width: 720px) {
+  .settings-embedded .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .outline-chapter-card { grid-template-columns: 28px minmax(0, 1fr); }
+  .outline-chapter-actions { grid-column: 2; justify-self: end; }
 }

@@ -1,3 +1,6 @@
+import type { ReactNode } from 'react';
+import { SettingsPage } from '../pages/SettingsPage';
+import type { Theme } from './Chrome';
 import { confirmAction } from './ui';
 import { useEffect, useState } from 'react';
 import type {
@@ -18,7 +21,7 @@ import { TemplateManager } from './TemplateManager';
 import { Banner, Modal, Spinner } from './ui';
 import { errorText } from '../utils';
 
-type Section = 'story' | 'generation' | 'models' | 'prompts' | 'images' | 'danger';
+type Section = 'story' | 'generation' | 'models' | 'prompts' | 'images' | 'danger' | 'app' | 'display';
 
 export function ProjectSettingsModal({
   open,
@@ -27,7 +30,12 @@ export function ProjectSettingsModal({
   onClose,
   onProjectUpdated,
   onArchived,
+  theme, onThemeChange, displayPreferences, initialSection = 'story',
 }: {
+  initialSection?: 'story' | 'app';
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+  displayPreferences: ReactNode;
   open: boolean;
   project: Project;
   connections: ConnectionPublic[];
@@ -44,7 +52,7 @@ export function ProjectSettingsModal({
 
   useEffect(() => {
     if (!open) return;
-    setSection('story');
+    setSection(initialSection);
     setError(null);
     setLoading(true);
     Promise.all([api.getProjectSettings(project.id), api.listImageTemplates(project.id)])
@@ -54,7 +62,7 @@ export function ProjectSettingsModal({
       })
       .catch((err) => setError(errorText(err)))
       .finally(() => setLoading(false));
-  }, [open, project.id]);
+  }, [open, project.id, initialSection]);
 
   const saveProject = async (input: Record<string, unknown>) => {
     const updated = await api.updateProject(project.id, input);
@@ -106,7 +114,7 @@ export function ProjectSettingsModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Project settings — ${project.title}`}
+      title={`Settings — ${project.title}`}
       width="wide"
     >
       <div className="project-settings">
@@ -114,6 +122,8 @@ export function ProjectSettingsModal({
           {(
             [
               ['story', 'Story setup'],
+              ['display', 'Writing & appearance'],
+              ['app', 'App defaults & connections'],
               ['generation', 'Generation'],
               ['models', 'Model overrides'],
               ['prompts', 'Prompt templates'],
@@ -132,6 +142,8 @@ export function ProjectSettingsModal({
         </nav>
 
         <div className="project-settings-body">
+          {section === 'app' ? <SettingsPage embedded startTab={initialSection === 'app' ? 'image-connections' : undefined} theme={theme} onThemeChange={onThemeChange} /> : null}
+          {section === 'display' ? displayPreferences : null}
           {error ? <Banner tone="danger">{error}</Banner> : null}
 
           {section === 'story' ? (

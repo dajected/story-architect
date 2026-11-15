@@ -544,8 +544,8 @@ export function OutlinePanel({
 
       {latest ? (
         <div className="outline-layout">
-          <aside className="outline-history">
-            <h3>Revisions</h3>
+          <details className="outline-history">
+            <summary>Revision history ({outline?.revisions.length})</summary>
             <div className="revision-mini-list">
               {outline?.revisions.map((revision) => (
                 <button
@@ -568,7 +568,7 @@ export function OutlinePanel({
             <p className="muted small">
               {outline?.revisions.length} revision{outline?.revisions.length === 1 ? '' : 's'} stored.
             </p>
-          </aside>
+          </details>
 
           <section className="outline-editor">
             {viewed && !isLatest ? (
@@ -616,14 +616,15 @@ export function OutlinePanel({
                         aria-label={`Chapter ${index + 1} title`}
                       />
                       <textarea
+                        ref={node => {if (node) {node.style.height = "auto"; node.style.height = `${node.scrollHeight}px`;}}}
                         value={chapter.brief}
                         onChange={(event) => updateChapter(chapter.id, { brief: event.target.value })}
                         placeholder="What happens, what changes, and what it sets up."
-                        rows={2}
+                        rows={4}
                         aria-label={`Chapter ${index + 1} brief`}
                       />
                     </div>
-                    <div className="outline-chapter-actions">
+                    <details className="outline-chapter-actions action-menu"><summary className="button button-small" aria-label={`Actions for chapter ${index + 1}`}>Edit order</summary><div className="action-menu-content">
                       <button
                         className="icon-button"
                         onClick={() => move(index, -1)}
@@ -650,7 +651,7 @@ export function OutlinePanel({
                       >
                         ×
                       </button>
-                    </div>
+                    </div></details>
                   </div>
                 ))}
                 <button className="button button-ghost add-chapter" onClick={addChapter}>

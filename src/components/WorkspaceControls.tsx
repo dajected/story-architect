@@ -11,9 +11,13 @@ export function useWritingPreferences() {
 }
 
 export function WritingPreferences({open, onClose, preferences, onChange}: {open: boolean; onClose: () => void; preferences: Record<string,number>; onChange: (key: string, value: number) => void}) {
-  return <Modal open={open} onClose={onClose} title="Writing preferences" subtitle="Display preferences are saved on this device."><div className="stack">{[
+  return <Modal open={open} onClose={onClose} title="Writing preferences" subtitle="Display preferences are saved on this device."><WritingPreferencesContent preferences={preferences} onChange={onChange} /></Modal>;
+}
+
+export function WritingPreferencesContent({preferences, onChange}: {preferences: Record<string, number>; onChange: (key: string, value: number) => void}) {
+  return <div className="stack">{[
     ['fontSize','Prose font size',14,28,1,'px'],['lineHeight','Line spacing',1.3,2.4,.1,'×'],['textWidth','Text width',400,1000,20,'px'],['sidebarWidth','Chapter panel width',200,400,10,'px'],['assistantWidth','Assistant width',280,600,10,'px'],
-  ].map(([key,label,min,max,step,unit]) => <label key={key}> {label}: {Number(preferences[String(key)]).toFixed(key === 'lineHeight' ? 1 : 0)} {unit}<input type="range" min={min} max={max} step={step} value={preferences[String(key)]} onChange={e => onChange(String(key), Number(e.target.value))} /></label>)}<h3>Keyboard shortcuts</h3><p>Ctrl / ⌘ + Shift + F — Focus mode<br />Ctrl / ⌘ + Shift + A — Assistant<br />Ctrl / ⌘ + Shift + P — Write / preview<br />Alt + ← / → — Previous / next chapter<br />Escape — Leave focus mode or close a dialog</p></div></Modal>;
+  ].map(([key,label,min,max,step,unit]) => <label key={key}> {label}: {Number(preferences[String(key)]).toFixed(key === 'lineHeight' ? 1 : 0)} {unit}<input type="range" min={min} max={max} step={step} value={preferences[String(key)]} onChange={e => onChange(String(key), Number(e.target.value))} /></label>)}<h3>Keyboard shortcuts</h3><p>Ctrl / ⌘ + Shift + F — Focus mode<br />Ctrl / ⌘ + Shift + A — Assistant<br />Ctrl / ⌘ + Shift + P — Write / preview<br />Alt + ← / → — Previous / next chapter<br />Escape — Leave focus mode or close a dialog</p></div>;
 }
 
 export function PanelResize({label, value, min, max, onChange, reverse = false}: {label:string;value:number;min:number;max:number;onChange:(value:number)=>void;reverse?:boolean}) {
