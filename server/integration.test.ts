@@ -86,6 +86,8 @@ let referenceUploads = 0;
 let recoveryHistoryReads = 0;
 let comfySubmissions = 0;
 let lastImagePromptSystem = '';
+const submittedImagePrompts: string[] = [];
+const shortTaskReplyBudgets: number[] = [];
 
 function json(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -130,6 +132,7 @@ function startMock(): Promise<void> {
           json(res, 400, { error: { message: 'Prompt is required.' } });
           return;
         }
+        submittedImagePrompts.push(parsed.prompt);
         json(res, 200, {
           created: Math.floor(Date.now() / 1000),
           data: [{ b64_json: TINY_PNG, revised_prompt: parsed.prompt }],
@@ -207,7 +210,18 @@ function startMock(): Promise<void> {
         const retryMemory = background && (system + user).includes('MEMORY_REPLY_RETRY');
         const exhaustMemory = background && (system + user).includes('MEMORY_REPLY_EXHAUST');
         const limitedMemory = exhaustMemory || (retryMemory && (parsed.max_tokens ?? 0) < 6000);
-        const text = limitedMemory ? '{"summary":"partial memory'
+        const imagePrompt = system.includes('art director');
+        const retryImage = imagePrompt && /IMAGE_REPLY_RETRY|IMAGE_REPLY_CANCEL/.test(system + user);
+        const limitedImage = imagePrompt && ((system + user).includes('IMAGE_REPLY_EXHAUST') || (retryImage && (parsed.max_tokens ?? 0) < 6000));
+        const invalidImage = imagePrompt && (system + user).includes('IMAGE_INVALID_JSON') && (parsed.max_tokens ?? 0) < 6000;
+        const shortTask = system.includes('continuity editor') || system.includes('terse, concrete fiction-planning suggestions');
+        const retryShort = shortTask && (system + user).includes('SHORT_REPLY_RETRY');
+        if (retryShort) shortTaskReplyBudgets.push(parsed.max_tokens!);
+        const limitedShort = retryShort && (parsed.max_tokens ?? 0) < 6000;
+        const text = limitedImage ? 'PARTIAL_IMAGE_PROMPT: a portrait of Mara'
+          : invalidImage ? 'Here is the prompt:\n{"prompt":"unclosed'
+          : limitedShort ? 'PARTIAL_SHORT_TASK'
+          : limitedMemory ? '{"summary":"partial memory'
           : recoverCutoff
           ? continuing ? PROSE.slice(80) : PROSE.slice(0, 80)
           : (system + user).includes('REFUSE_PROMPT')
@@ -237,19 +251,20 @@ function startMock(): Promise<void> {
           for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
           }
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: limitedMemory || (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
-          const completionTokens = limitedMemory ? parsed.max_tokens! : retryMemory ? 1500 : 50;
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: limitedImage || limitedShort || limitedMemory || (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
+          const limited = limitedImage || limitedMemory || limitedShort;
+          const completionTokens = limited ? parsed.max_tokens! : retryMemory || retryImage ? 1500 : 50;
           res.write(
             `data: ${JSON.stringify({
               choices: [],
               usage: { prompt_tokens: 100, completion_tokens: completionTokens, total_tokens: 100 + completionTokens,
-                ...(limitedMemory || retryMemory ? { completion_tokens_details: { reasoning_tokens: limitedMemory ? completionTokens - 32 : 400 } } : {}) },
+                ...(limited || retryMemory || retryImage ? { completion_tokens_details: { reasoning_tokens: limited ? completionTokens - 32 : 400 } } : {}) },
             })}\n\n`,
           );
           res.write('data: [DONE]\n\n');
           res.end();
         };
-        if (slow) setTimeout(writeStream, 250);
+        if (slow || (imagePrompt && (system + user).includes('IMAGE_REPLY_CANCEL') && (parsed.max_tokens ?? 0) >= 6000)) setTimeout(writeStream, 250);
         else writeStream();
       });
       return;
@@ -268,6 +283,28 @@ async function request<T>(method: string, route: string, body?: unknown): Promis
   const text = await response.text();
   if (!response.ok) throw new Error(`${method} ${route} -> ${response.status}: ${text}`);
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function imageReplyFixture(title = 'Image reply budget') {
+  const { project } = await request<{ project: { id: string } }>('POST', '/projects', { title, chapterCount: 1 });
+  const { connections } = await request<{ connections: Array<{ id: string }> }>('GET', '/connections');
+  await request('PUT', '/model-roles', { scope: 'project', projectId: project.id,
+    assignments: [{ role: 'image_prompt', connectionId: connections[0].id, model: 'mock-model' }] });
+  const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+  await request('PUT', `/projects/${project.id}/outline`, { revisionId: revision.id,
+    chapters: [{ id: revision.chapters[0].id, title: 'The Door', brief: 'Mara enters the observatory.' }] });
+  await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+  const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+  await request('PUT', `/chapters/${chapters[0].id}/content`, { content: PROSE });
+  const { character } = await request<{ character: { id: string } }>('POST', `/projects/${project.id}/characters`, {
+    name: 'Mara', role: 'protagonist', appearance: 'A surveyor in a canvas coat.',
+  });
+  const mockPort = (globalThis as { __mockPort?: number }).__mockPort;
+  const { connection } = await request<{ connection: { id: string } }>('POST', '/image-connections', {
+    name: `Image retry service ${project.id}`, kind: 'openai-images', baseUrl: `http://127.0.0.1:${mockPort}/v1`,
+    settings: { model: 'mock-image', size: '1024x1024' },
+  });
+  return { projectId: project.id, chapterId: chapters[0].id, characterId: character.id, connectionId: connection.id };
 }
 
 async function waitForJob(id: string) {
@@ -1331,6 +1368,87 @@ describe('stage 3 lore and writing tools', () => {
 });
 
 describe('stage 4 character image generation', () => {
+  it.each(['IMAGE_REPLY_RETRY', 'IMAGE_INVALID_JSON'])('recovers editable and portrait prompts (%s) before submitting exactly one image', async (marker) => {
+    const fixture = await imageReplyFixture();
+    const { getJobRow } = await import('./jobs.js');
+    const { getPortraitRequest } = await import('./store/portrait-requests.js');
+    const countBefore = submittedImagePrompts.length;
+    const { job } = await request<{ job: { id: string } }>('POST', `/characters/${fixture.characterId}/images/prompt`, {
+      chapterId: fixture.chapterId, instructions: `${marker} JSON_PROMPT`,
+    });
+    const promptJob = await waitForJob(job.id);
+    expect(promptJob.status).toBe('completed');
+    expect(promptJob.output).toBe(IMAGE_PROMPT);
+    expect(JSON.parse(getJobRow(job.id).context_json!).requestAttempts.map((attempt: { budget: { reservedOutputTokens: number } }) => attempt.budget.reservedOutputTokens)).toEqual([4096, 8192]);
+    expect(submittedImagePrompts.length).toBe(countBefore);
+    const { request: portrait } = await request<{ request: { id: string; promptJobId: string } }>('POST', `/chapters/${fixture.chapterId}/portraits`, {
+      characterId: fixture.characterId, connectionId: fixture.connectionId, instructions: 'IMAGE_REPLY_RETRY JSON_PROMPT',
+    });
+    const finished = await waitForJob(portrait.promptJobId);
+    expect(finished.status).toBe('completed');
+    expect(finished.output).toBe(IMAGE_PROMPT);
+    expect(finished.usage).toMatchObject({ completionTokens: 5596, reasoningTokens: 4464 });
+    const imageId = getPortraitRequest(portrait.id).imageJobId;
+    expect(imageId).toBeTruthy();
+    expect((await waitForImageJob(imageId!)).status).toBe('completed');
+    expect(getPortraitRequest(portrait.id).status).toBe('completed');
+    expect(submittedImagePrompts.slice(countBefore)).toEqual([IMAGE_PROMPT]);
+    const attempts = JSON.parse(getJobRow(portrait.promptJobId).context_json!).requestAttempts;
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].prompt).toBe(attempts[1].prompt);
+  });
+
+  it('does not submit an image when every prompt reply is cut off', async () => {
+    const fixture = await imageReplyFixture();
+    const { getPortraitRequest } = await import('./store/portrait-requests.js');
+    const countBefore = submittedImagePrompts.length;
+    const { request: portrait } = await request<{ request: { id: string; promptJobId: string } }>('POST', `/chapters/${fixture.chapterId}/portraits`, {
+      characterId: fixture.characterId, connectionId: fixture.connectionId, instructions: 'IMAGE_REPLY_EXHAUST',
+    });
+    const finished = await waitForJob(portrait.promptJobId);
+    expect(finished.status).toBe('failed');
+    expect(finished.error).toMatch(/after 3 request/);
+    expect(finished.output).toContain('PARTIAL_IMAGE_PROMPT');
+    expect(finished.usage).toMatchObject({ completionTokens: 28672 });
+    expect(getPortraitRequest(portrait.id).status).toBe('failed');
+    expect(getPortraitRequest(portrait.id).imageJobId).toBeNull();
+    expect(submittedImagePrompts.length).toBe(countBefore);
+  });
+
+  it('cancels a portrait during its prompt retry without submitting an image', async () => {
+    const fixture = await imageReplyFixture();
+    const { getPortraitRequest } = await import('./store/portrait-requests.js');
+    const countBefore = submittedImagePrompts.length;
+    const { request: portrait } = await request<{ request: { id: string; promptJobId: string } }>('POST', `/chapters/${fixture.chapterId}/portraits`, {
+      characterId: fixture.characterId, connectionId: fixture.connectionId, instructions: 'IMAGE_REPLY_CANCEL',
+    });
+    let retries = 0;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const { job } = await request<{ job: { requestBudget?: { requestCount?: number } } }>('GET', `/jobs/${portrait.promptJobId}`);
+      retries = job.requestBudget?.requestCount ?? 0;
+      if (retries >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(retries).toBe(2);
+    await request('POST', `/chapter-portrait-requests/${portrait.id}/cancel`, {});
+    expect((await waitForJob(portrait.promptJobId)).status).toBe('cancelled');
+    expect(getPortraitRequest(portrait.id).status).toBe('cancelled');
+    expect(getPortraitRequest(portrait.id).imageJobId).toBeNull();
+    expect(submittedImagePrompts.length).toBe(countBefore);
+  });
+
+  it('uses the shared reply policy for continuity reviews and setup suggestions too', async () => {
+    const fixture = await imageReplyFixture('SHORT_REPLY_RETRY');
+    shortTaskReplyBudgets.length = 0;
+    const { job } = await request<{ job: { id: string } }>('POST', `/chapters/${fixture.chapterId}/review`, {});
+    const finished = await waitForJob(job.id);
+    expect(finished.status).toBe('completed');
+    expect(finished.output).toBe(REVIEW);
+    const suggestion = await request<{ value: string }>('POST', '/suggest', { field: 'title', draft: { title: 'SHORT_REPLY_RETRY' } });
+    expect(suggestion.value).not.toContain('PARTIAL_SHORT_TASK');
+    expect(shortTaskReplyBudgets).toEqual([4096, 8192, 4096, 8192]);
+  });
+
   it('expands a template and saves images through both adapters', async () => {
     const mockPort = (globalThis as { __mockPort?: number }).__mockPort;
     const { connections } = await request<{ connections: Array<{ id: string }> }>(

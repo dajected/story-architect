@@ -58,9 +58,11 @@ import {
   outputSoFar,
   updateJob,
   recordPreparedRequest,
+  recordBackgroundAttempt,
 } from './jobs.js';
 import { streamChat, ProviderError } from './providers.js';
 import { streamChapter } from './chapter-stream.js';
+import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
 import { ensureStoryStateBefore } from './story-state-generation.js';
 import type { ProviderConnection, ProviderMessage } from './providers.js';
 
@@ -108,7 +110,10 @@ async function runStream(
         automaticOutput: settings.automaticOutput ?? false,
         onUsage: (usage) => updateJob(job.id, { usage: usage ? JSON.stringify(usage) : null }),
       })
-      : await streamChat(provider, params);
+      : job.kind === 'review'
+        ? await streamBackgroundTask(provider, params, { label: 'Continuity review',
+          validate: (content) => !!content.trim(), onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage) })
+        : await streamChat(provider, params);
     if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
       finalizeJob(job.id, 'failed', {
         error: 'The model reached its reply token limit. Partial output is kept. Lower the requested output length or increase max output tokens within the model limits.',
@@ -718,7 +723,7 @@ export function startContinuityReview(chapterId: string): GenerationJob {
     model: model.model,
     prompt: CONTINUITY_REVIEW_PROMPT,
     context: { stage: 'review', memoryChars: memory.length },
-    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1200 }),
+    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model) }),
   });
 
   void (async () => {
@@ -738,7 +743,7 @@ Review this chapter's continuity now. Report only concrete conflicts and possibl
           { label: 'Accepted story memory', text: memory, priority: 90, minTokens: 512, maxTokens: 3000 },
         ] },
       ],
-      { temperature: 0.2, topP: null, maxTokens: 1200 },
+      { temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model) },
     );
     if (!result) return;
     if (!result.content.trim()) {
@@ -827,7 +832,7 @@ Known details:
 ${description || '(The author has not filled anything in yet.)'}`;
 
   try {
-    const result = await streamChat(model.provider, {
+    const result = await streamBackgroundTask(model.provider, {
       model: model.model,
       messages: [
         { role: 'system', content: 'You give terse, concrete fiction-planning suggestions. Never add commentary.' },
@@ -835,10 +840,10 @@ ${description || '(The author has not filled anything in yet.)'}`;
       ],
       temperature: 0.9,
       topP: null,
-      maxTokens: 400,
+      maxTokens: backgroundReplyTokens(model.provider, model.model),
       signal: AbortSignal.timeout(90000),
       onDelta: () => {},
-    });
+    }, { label: 'Project suggestion', validate: (content) => !!content.trim() });
     let value = result.content.trim().replace(/^["'“”]+|["'“”]+$/g, '').trim();
     if (field === 'chapterCount' || field === 'targetChapterWords') {
       const match = value.match(/\d+/);

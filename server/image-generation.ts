@@ -22,6 +22,7 @@ import {
   finalizeJob,
   isCancellation,
   recordPreparedRequest,
+  recordBackgroundAttempt,
 } from './jobs.js';
 import {
   generateImage,
@@ -65,7 +66,7 @@ import {
 } from './store/portrait-requests.js';
 import { getProject } from './store/projects.js';
 import { getProjectGeneration, resolveRoles, resolveTaskModel, getProjectVisualStyle } from './store/settings.js';
-import { streamChat } from './providers.js';
+import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
 import type { ProviderConnection, ProviderMessage } from './providers.js';
 import type { RequestContextPart } from './request-context.js';
 
@@ -210,14 +211,14 @@ export function startImagePromptGeneration(
     settings: jobSettingsSnapshot({
       temperature: settings.temperature ?? 0.7,
       topP: null,
-      maxTokens: 700,
+      maxTokens: backgroundReplyTokens(model.provider, model.model),
     }),
   });
 
   void (async () => {
     const runtime = createRuntime(job.id);
     try {
-      const result = await streamChat(model.provider, {
+      const result = await streamBackgroundTask(model.provider, {
         model: job.model,
         messages: [
           promptMessage,
@@ -225,15 +226,16 @@ export function startImagePromptGeneration(
         ],
         temperature: settings.temperature ?? 0.7,
         topP: null,
-        maxTokens: 700,
+        maxTokens: backgroundReplyTokens(model.provider, model.model),
         signal: runtime.controller.signal,
-        onDelta: (text) => appendOutput(job.id, text),
+        onDelta: (text) => appendOutput(job.id, cleanImagePrompt(text) || text),
         onPrepared: (request) => recordPreparedRequest(job.id, request),
+      }, {
+        label: 'Image prompt',
+        validate: usableImagePrompt,
+        onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage),
       });
-      if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
-        finalizeJob(job.id, 'failed', { error: 'The model reached its reply token limit. The partial image prompt is kept for editing.', usage: result.usage });
-        return;
-      }
+      runtime.controller.signal.throwIfAborted();
       if (!result.content.trim()) {
         finalizeJob(job.id, 'failed', {
           error: 'The image-prompt model returned an empty reply. Try again or write the prompt by hand.',
@@ -241,7 +243,7 @@ export function startImagePromptGeneration(
         });
         return;
       }
-      if (looksLikeClarificationRequest(result.content)) {
+      if (looksLikeClarificationRequest(cleanImagePrompt(result.content))) {
         finalizeJob(job.id, 'failed', {
           error:
             'The image-prompt model asked for more details instead of writing a prompt. Check that the selected template includes the character variables, then try again.',
@@ -304,6 +306,8 @@ export function countNameMentions(haystack: string, name: string): number {
 
 function cleanImagePrompt(raw: string): string {
   let text = raw.trim();
+  const expectsJson = /^(?:```(?:json)?\s*)?\{/.test(text) ||
+    /\{\s*"(?:prompt|image_prompt|imagePrompt|description|text)"\s*:/.test(text);
   // Some templates ask the model for a "prompt" field. Accept a JSON object
   // and keep only that field so the image service never receives JSON.
   if (text.includes('{')) {
@@ -321,11 +325,12 @@ function cleanImagePrompt(raw: string): string {
                 typeof value === 'string' && value.trim().length > 0,
             );
           if (field) text = field.trim();
+          else if (expectsJson) return '';
         }
       } catch {
-        // Not JSON; keep the original text.
+        if (expectsJson) return '';
       }
-    }
+    } else if (expectsJson) return '';
   }
   const cleaned = text
     .replace(/```[a-z]*\s*/gi, '')
@@ -334,6 +339,11 @@ function cleanImagePrompt(raw: string): string {
     .replace(/^["'“”]+|["'“”]+$/g, '')
     .trim();
   return cleaned || text;
+}
+
+function usableImagePrompt(raw: string): boolean {
+  const text = cleanImagePrompt(raw);
+  return !!text && text.length <= 8000;
 }
 
 interface PromptReferenceDetail {
@@ -532,7 +542,7 @@ export function startChapterPortraitRequest(
     settings: jobSettingsSnapshot({
       temperature: settings.temperature ?? 0.7,
       topP: null,
-      maxTokens: 900,
+      maxTokens: backgroundReplyTokens(model.provider, model.model),
     }),
   });
 
@@ -580,7 +590,7 @@ async function runChapterPortrait(
 ): Promise<void> {
   const runtime = createRuntime(job.id);
   try {
-    const result = await streamChat(options.provider, {
+    const result = await streamBackgroundTask(options.provider, {
       model: job.model,
       messages: [
         options.promptMessage,
@@ -592,17 +602,16 @@ async function runChapterPortrait(
       ],
       temperature: options.temperature,
       topP: null,
-      maxTokens: 900,
+      maxTokens: backgroundReplyTokens(options.provider, job.model),
       signal: runtime.controller.signal,
-      onDelta: (text) => appendOutput(job.id, text),
+      onDelta: (text) => appendOutput(job.id, cleanImagePrompt(text) || text),
       onPrepared: (request) => recordPreparedRequest(job.id, request),
+    }, {
+      label: 'Portrait image prompt',
+      validate: usableImagePrompt,
+      onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage),
     });
-    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
-      const error = 'The model reached its reply token limit. The partial portrait prompt is kept; no image was submitted.';
-      finalizeJob(job.id, 'failed', { error, usage: result.usage });
-      updatePortraitRequest(request.id, { status: 'failed', error });
-      return;
-    }
+    runtime.controller.signal.throwIfAborted();
     if (!result.content.trim()) {
       finalizeJob(job.id, 'failed', {
         error: 'The image-prompt model returned an empty reply. Try again.',

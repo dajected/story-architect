@@ -88,8 +88,8 @@ export async function streamBackgroundTask(
       publish(lastOutput);
       const reasoning = results.at(-1)?.usage?.reasoningTokens;
       throw new Error(limited
-        ? `${options.label} reached its reply token limit after ${results.length} request(s), with ${maxTokens.toLocaleString()} tokens allowed for the last reply${reasoning ? ` (${reasoning.toLocaleString()} used for reasoning)` : ''}. No incomplete result was applied. Use a memory model with more reply capacity or less reasoning, then rebuild memory.`
-        : `${options.label} returned an invalid or oversized result after ${results.length} request(s). No incomplete result was applied; rebuild memory to retry.`);
+        ? `${options.label} reached its reply token limit after ${results.length} request(s), with ${maxTokens.toLocaleString()} tokens allowed for the last reply${reasoning ? ` (${reasoning.toLocaleString()} used for reasoning)` : ''}. No incomplete result was applied. Use a model with more reply capacity or less reasoning, then retry this task.`
+        : `${options.label} returned an invalid or oversized result after ${results.length} request(s). No incomplete result was applied; retry this task.`);
     }
     maxTokens = Math.max(maxTokens, larger);
   }

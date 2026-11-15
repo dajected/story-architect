@@ -208,7 +208,8 @@ checkpoints remain supported and rebuild on demand.
    and selected references, and requests JSON with a summary and facts. After
    committing the summary, a state job updates that chapter's checkpoint.
 3. The summary is saved against the source revision and a fingerprint of every
-   preceding chapter revision. Memory/state/casting requests use
+   preceding chapter revision. Memory/state/casting requests, image-prompt
+   expansion, chapter portraits, reviews and project suggestions all use
    `background-generation.ts`: normally 4,096 reply tokens, increasing on failure
    to 8,192 and 16,384 when model limits and the frozen input permit it. This
    allows room for reasoning as well as visible output. At most three complete
@@ -217,6 +218,10 @@ checkpoints remain supported and rebuild on demand.
    output is replaced rather than concatenated. The final partial response stays
    on a failed/cancelled job; request history keeps all attempts and aggregate
    paid usage, including reasoning tokens where the provider reports them.
+   For image prompts, JSON wrappers are validated and unwrapped. Cut-off replies
+   retry before `createImageJob` is reached; exhausted/cancelled/refused prompts
+   create no image job. Only the completed prompt is submitted once. Both image
+   prompt paths use this policy, replacing their former 700/900-token limits.
 4. Facts are inserted as `proposed`. Identical statements already proposed,
    established, or rejected in that chapter are skipped; superseded facts may be
    proposed again after a rebuild.
