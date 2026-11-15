@@ -1,13 +1,12 @@
 import type {
   Chapter,
-  Character,
   ContextLore,
   ContextLoreEntry,
   ContextPreset,
   ContextSection,
-  Fact,
   LoreEntry,
   Project,
+  StoryStateInfo,
 } from '../shared/types.js';
 import { CONTEXT_PRESETS } from '../shared/types.js';
 import { countWords, estimateTokens } from '../shared/utils.js';
@@ -18,8 +17,11 @@ import { listLoreEntries } from './store/lore.js';
 import { conflict } from './errors.js';
 import { FALLBACK_CONTEXT_LENGTH } from './request-context.js';
 import { automaticChapterReplyTokens } from './chapter-stream.js';
+import { inspectStoryState } from './store/story-state.js';
+import { selectStoryReferences, referenceCharacterText, referenceFactText } from './story-references.js';
 
 export interface ProseContext {
+  storyState: StoryStateInfo;
   recentProse: string;
   memoryText: string;
   loreText: string;
@@ -59,9 +61,9 @@ export interface ContextBuildOptions {
 // Raw prose provides the immediate handoff; summaries and facts carry the story
 // beyond that. Never fill spare context with the entire manuscript.
 const RECENT_PROSE_TOKENS: Record<ContextPreset, number> = {
-  focused: 800,
-  balanced: 1600,
-  broad: 2400,
+  focused: 300,
+  balanced: 500,
+  broad: 650,
 };
 
 export function presetBudget(preset: ContextPreset): number {
@@ -96,7 +98,7 @@ function loreShare(preset: ContextPreset): number {
   return 0.2;
 }
 
-const LORE_TOKEN_CAP = 12000;
+const LORE_TOKEN_CAP = 600;
 
 /** Whole-word, case-insensitive keyword match against a lowercased haystack. */
 export function triggerMatches(trigger: string, haystack: string): boolean {
@@ -225,73 +227,6 @@ function buildLoreContext(
   };
 }
 
-function takeWithin<T>(items: T[], capTokens: number, text: (item: T) => string): T[] {
-  const kept: T[] = [];
-  let used = 0;
-  for (const item of items) {
-    const cost = estimateTokens(text(item));
-    if (used + cost > capTokens && kept.length > 0) break;
-    kept.push(item);
-    used += cost;
-  }
-  return kept;
-}
-
-function summaryBlock(entry: {
-  chapterTitle: string;
-  orderIndex: number;
-  summary: string;
-  stale: boolean;
-  staleReasons: string[];
-}): string {
-  return [
-    `### Chapter ${entry.orderIndex + 1} — ${entry.chapterTitle}`,
-    entry.summary,
-    entry.stale
-      ? `[Summary may be outdated: ${entry.staleReasons.join('; ')}.]`
-      : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-function relevanceScore(
-  character: Character,
-  brief: string,
-  summaries: Array<{ summary: string }>,
-  facts: Fact[],
-): number {
-  const haystack = `${brief}\n${summaries
-    .slice(-3)
-    .map((entry) => entry.summary)
-    .join('\n')}`.toLowerCase();
-  const name = character.name.toLowerCase();
-  let score = 0;
-  if (name && haystack.includes(name)) score += 3;
-  if (facts.some((fact) => fact.characterId === character.id)) score += 2;
-  if (/protagonist|antagonist|pov|main/i.test(character.role)) score += 1;
-  return score;
-}
-
-function characterBlock(character: Character): string {
-  const lines = [`### ${character.name}${character.role ? ` — ${character.role}` : ''}`];
-  if (character.identity) lines.push(`Identity: ${character.identity}`);
-  if (character.appearance) lines.push(`Appearance: ${character.appearance}`);
-  if (character.personality) lines.push(`Personality: ${character.personality}`);
-  if (character.goals) lines.push(`Goals: ${character.goals}`);
-  if (character.relationships) lines.push(`Relationships: ${character.relationships}`);
-  if (character.notes) lines.push(`Notes: ${character.notes}`);
-  return lines.join('\n');
-}
-
-function factLine(fact: Fact): string {
-  const label =
-    fact.factClass === 'plan' ? 'Plan' : fact.factClass === 'authored' ? 'World fact' : 'Established';
-  const provenance = fact.chapterOrder === null ? '' : ` (Chapter ${fact.chapterOrder + 1})`;
-  const stale = fact.sourceOutdated ? ' [source text changed; review before relying on it]' : '';
-  return `- [${label}] ${fact.statement}${fact.characterName ? ` — ${fact.characterName}` : ''}${provenance}${stale}`;
-}
-
 /**
  * Assemble the prose context from required instructions, derived memory, and
  * recent prose. Required content that cannot fit is rejected with an
@@ -314,8 +249,11 @@ export function buildProseContext(
     `${chapter.title}\n${chapter.brief}`,
     options.additionalInstructions ?? '',
   );
-  const requiredTokens =
+  const coreTokens =
     estimateTokens(requiredText) + estimateTokens(options.templateContent ?? '');
+  const storyState = inspectStoryState(project.id, chapter.orderIndex).info;
+  const stateTokens = estimateTokens(storyState.text ? `## Current story state\n${storyState.text}` : '');
+  const requiredTokens = coreTokens + stateTokens;
   const modelContextLength =
     options.modelContextLength && options.modelContextLength > 0
       ? options.modelContextLength
@@ -369,105 +307,29 @@ export function buildProseContext(
   const loreText = loreContext.text;
   const lore = loreContext.lore;
   const loreTokens = estimateTokens(loreText);
-  const memory = memoryForPrompt(project.id, chapter.id);
-  const memoryBudget = Math.floor(Math.max(0, remaining - loreTokens) * memoryShare(preset));
-
-  const summaryCap = Math.floor(memoryBudget * 0.45);
-  const characterCap = Math.floor(memoryBudget * 0.3);
-  const factCap = Math.max(0, memoryBudget - summaryCap - characterCap);
-
-  // Most recent summaries are the most useful, but render them chronologically.
-  const summariesRecentFirst = [...memory.summaries].reverse();
-  let keptSummaries = takeWithin(summariesRecentFirst, summaryCap, summaryBlock).reverse();
-  let omittedSummaries = memory.summaries.length - keptSummaries.length;
-
-  const rankedCharacters = [...memory.characters].sort((a, b) => {
-    const diff =
-      relevanceScore(b, chapter.brief, memory.summaries, memory.facts) -
-      relevanceScore(a, chapter.brief, memory.summaries, memory.facts);
-    return diff !== 0 ? diff : a.name.localeCompare(b.name);
+  const memory = memoryForPrompt(project.id, chapter.id, { includeSummaries: false });
+  const memoryBudget = Math.min(1400, Math.floor(Math.max(0, remaining - loreTokens) * memoryShare(preset)));
+  const selected = selectStoryReferences({ chapter, additionalInstructions: options.additionalInstructions,
+    state: storyState.text, characters: memory.characters, facts: memory.facts, preset,
+    characterBudget: Math.min(650, Math.floor(memoryBudget / 2)), factBudget: Math.min(650, Math.floor(memoryBudget / 2)),
   });
-  let keptCharacters = takeWithin(rankedCharacters, characterCap, characterBlock);
-  let omittedCharacters = memory.characters.length - keptCharacters.length;
-
-  const factsByRecency = [...memory.facts].sort(
-    (a, b) => (b.chapterOrder ?? -1) - (a.chapterOrder ?? -1),
-  );
-  let keptFacts = takeWithin(factsByRecency, factCap, factLine).sort((a, b) => {
-    if ((a.chapterOrder ?? -1) !== (b.chapterOrder ?? -1)) {
-      return (a.chapterOrder ?? -1) - (b.chapterOrder ?? -1);
-    }
-    return a.createdAt.localeCompare(b.createdAt);
-  });
-  let omittedFacts = memory.facts.length - keptFacts.length;
-
-  const renderMemory = (): string => {
-    const memoryParts: string[] = [];
-    if (keptSummaries.length > 0) {
-      const body = keptSummaries.map(summaryBlock).join('\n\n');
-      memoryParts.push(
-        `### Chapter summaries${
-          omittedSummaries > 0
-            ? ` (${omittedSummaries} earlier ${omittedSummaries === 1 ? 'summary' : 'summaries'} omitted to fit the preset)`
-            : ''
-        }\n${body}`,
-      );
-    }
-    if (keptCharacters.length > 0) {
-      memoryParts.push(
-        `### Characters${
-          omittedCharacters > 0
-            ? ` (${omittedCharacters} other ${omittedCharacters === 1 ? 'character' : 'characters'} omitted to fit the preset)`
-            : ''
-        }\n${keptCharacters.map(characterBlock).join('\n\n')}`,
-      );
-    }
-    if (keptFacts.length > 0) {
-      memoryParts.push(
-        `### Continuity facts${
-          omittedFacts > 0
-            ? ` (${omittedFacts} older ${omittedFacts === 1 ? 'fact' : 'facts'} omitted to fit the preset)`
-            : ''
-        }\n${keptFacts.map(factLine).join('\n')}`,
-      );
-    }
-    return memoryParts.length > 0 ? `## Story memory\n\n${memoryParts.join('\n\n')}` : '';
-  };
-
+  let keptCharacters = selected.characters;
+  let keptFacts = selected.facts;
+  const renderMemory = () => [
+    keptCharacters.length ? `### Relevant characters\n${keptCharacters.map(referenceCharacterText).join('\n\n')}` : '',
+    keptFacts.length ? `### Relevant continuity facts\n${keptFacts.map(referenceFactText).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
   let memoryText = renderMemory();
-  // A single oversized profile or summary can exceed its own slice; shed lower
-  // priority memory rather than silently overflowing the preset budget.
-  if (estimateTokens(memoryText) > memoryBudget && keptFacts.length > 0) {
-    keptFacts = [];
-    omittedFacts = memory.facts.length;
+  while (estimateTokens(memoryText) > memoryBudget && (keptFacts.length || keptCharacters.length)) {
+    if (keptFacts.length) keptFacts = keptFacts.slice(0, -1);
+    else keptCharacters = keptCharacters.slice(0, -1);
     memoryText = renderMemory();
-  }
-  if (estimateTokens(memoryText) > memoryBudget && keptCharacters.length > 0) {
-    keptCharacters = [];
-    omittedCharacters = memory.characters.length;
-    memoryText = renderMemory();
-  }
-  if (estimateTokens(memoryText) > memoryBudget && keptSummaries.length > 1) {
-    keptSummaries = keptSummaries.slice(-1);
-    omittedSummaries = memory.summaries.length - keptSummaries.length;
-    memoryText = renderMemory();
-  }
-  if (estimateTokens(memoryText) > memoryBudget && keptSummaries.length > 0) {
-    keptSummaries = [];
-    omittedSummaries = memory.summaries.length;
-    memoryText = renderMemory();
-    warnings.push(
-      'A single chapter summary was too large for the preset budget and was omitted. Rebuild memory with a shorter summary or choose a broader preset.',
-    );
   }
   const memoryTokens = estimateTokens(memoryText);
-
-  if (memory.staleSummaries > 0) {
-    warnings.push(
-      `${memory.staleSummaries} chapter ${
-        memory.staleSummaries === 1 ? 'summary is' : 'summaries are'
-      } marked outdated because the manuscript changed. Rebuild memory to refresh them.`,
-    );
+  const omittedCharacters = memory.characters.length - keptCharacters.length;
+  const omittedFacts = memory.facts.length - keptFacts.length;
+  if (storyState.status === 'missing' || storyState.status === 'stale') {
+    warnings.push('Story state is missing or outdated. It will be rebuilt in chapter order before drafting; earlier chapter summaries are never appended to the prose prompt.');
   }
   if (memory.pendingFacts > 0) {
     warnings.push(
@@ -492,13 +354,6 @@ export function buildProseContext(
     (entry) => entry.orderIndex < chapter.orderIndex && entry.currentRevisionId && entry.status === 'drafted',
   );
   const previous = preceding.at(-1);
-  const summarisedIds = new Set(memory.summaries.map((entry) => entry.chapterId));
-  const missingSummaries = preceding.filter((entry) => !summarisedIds.has(entry.id)).length;
-  if (missingSummaries > 0) {
-    warnings.push(
-      `${missingSummaries} preceding drafted ${missingSummaries === 1 ? 'chapter has' : 'chapters have'} no summary. Rebuild chapter memory to carry older events forward; only the preceding chapter's ending is included as raw prose.`,
-    );
-  }
   const previousText = previous ? currentChapterText(previous.id).trim() : '';
   const heading = previous ? `### Previous chapter — ${previous.title}\n` : '';
   const tailHeading = `${heading}[Ending excerpt; earlier prose omitted.]\n`;
@@ -534,7 +389,7 @@ export function buildProseContext(
     {
       id: 'instructions',
       label: 'Required instructions',
-      tokens: requiredTokens,
+      tokens: coreTokens,
       included: true,
       detail: 'Project metadata, standing instructions, this chapter brief, extra instructions, and prompt template.',
     },
@@ -554,21 +409,19 @@ export function buildProseContext(
           : undefined,
     },
     {
-      id: 'summaries',
-      label: 'Chapter summaries',
-      tokens: estimateTokens(keptSummaries.map(summaryBlock).join('\n\n')),
-      included: keptSummaries.length > 0,
-      detail: `${keptSummaries.length} of ${memory.summaries.length} preceding chapter ${
-        memory.summaries.length === 1 ? 'summary' : 'summaries'
-      } included${omittedSummaries > 0 ? `, ${omittedSummaries} omitted` : ''}.`,
-      ...(memory.staleSummaries > 0
-        ? { note: `${memory.staleSummaries} marked outdated by manuscript changes.` }
-        : {}),
+      id: 'story-state',
+      label: 'Current story state',
+      tokens: stateTokens,
+      included: storyState.status === 'current',
+      detail: storyState.status === 'current'
+        ? `One compact checkpoint through Chapter ${storyState.throughChapterNumber}; no preceding chapter summary list.`
+        : storyState.status === 'empty' ? 'Opening chapter: no earlier story state.' : 'Checkpoint will be rebuilt before drafting.',
+      note: storyState.status === 'stale' ? 'Earlier manuscript text or summaries changed; the old checkpoint is excluded.' : undefined,
     },
     {
       id: 'characters',
       label: 'Characters',
-      tokens: estimateTokens(keptCharacters.map(characterBlock).join('\n\n')),
+      tokens: estimateTokens(keptCharacters.map(referenceCharacterText).join('\n\n')),
       included: keptCharacters.length > 0,
       detail: `${keptCharacters.length} of ${memory.characters.length} active ${
         memory.characters.length === 1 ? 'profile' : 'profiles'
@@ -577,7 +430,7 @@ export function buildProseContext(
     {
       id: 'facts',
       label: 'Continuity facts',
-      tokens: estimateTokens(keptFacts.map(factLine).join('\n')),
+      tokens: estimateTokens(keptFacts.map(referenceFactText).join('\n')),
       included: keptFacts.length > 0,
       detail: `${keptFacts.length} of ${memory.facts.length} established ${
         memory.facts.length === 1 ? 'fact' : 'facts'
@@ -585,7 +438,7 @@ export function buildProseContext(
         `${memory.pendingFacts > 0 ? `; ${memory.pendingFacts} proposed awaiting review` : ''}.`,
       note:
         memory.facts.some((fact) => fact.sourceOutdated)
-          ? 'Some facts come from an older revision of their source chapter and are labelled for review.'
+          ? 'Facts from outdated source revisions are excluded until reviewed.'
           : undefined,
     },
     {
@@ -595,7 +448,7 @@ export function buildProseContext(
       included: includedChapters > 0,
       detail:
         includedChapters > 0
-          ? `${proseTrimmed ? 'Ending excerpt from' : 'Text from'} the preceding drafted chapter; ${omittedChapters} older chapters excluded from raw prose. Older continuity uses summaries and facts.`
+          ? `${proseTrimmed ? 'Ending excerpt from' : 'Text from'} the preceding drafted chapter; ${omittedChapters} older chapters excluded from raw prose. Earlier continuity uses the compact story state and selected facts.`
           : preceding.length > 0
             ? 'Preceding prose omitted by the context budget.'
             : 'No preceding prose yet.',
@@ -603,6 +456,7 @@ export function buildProseContext(
   ];
 
   return {
+    storyState,
     recentProse,
     memoryText,
     loreText,
@@ -619,10 +473,10 @@ export function buildProseContext(
     preset,
     sections,
     warnings,
-    staleSummaries: memory.staleSummaries,
+    staleSummaries: 0,
     pendingFacts: memory.pendingFacts,
-    includedSummaries: keptSummaries.length,
-    totalSummaries: memory.summaries.length,
+    includedSummaries: 0,
+    totalSummaries: 0,
     includedCharacters: keptCharacters.length,
     totalCharacters: memory.characters.length,
     includedFacts: keptFacts.length,

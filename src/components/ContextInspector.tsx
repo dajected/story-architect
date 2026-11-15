@@ -67,6 +67,13 @@ export function ContextInspector({ info }: { info: ContextInfo }) {
         ))}
       </div>
 
+      {info.storyState?.status === 'current' ? (
+        <details className="small">
+          <summary>View story state through Chapter {info.storyState.throughChapterNumber}</summary>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{info.storyState.text}</p>
+        </details>
+      ) : null}
+
       {info.lore.entries.length > 0 ? (
         <div className="lore-activation">
           <div className="lore-activation-head">

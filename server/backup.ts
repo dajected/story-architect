@@ -10,6 +10,9 @@ import { getProject, type ProjectRow } from './store/projects.js';
 import { imagesRoot, imageFilePath } from './store/images.js';
 import { resolveImagePromptTemplate } from './store/image-templates.js';
 import { resolvePromptTemplate } from './store/templates.js';
+import { listChapters, getChapter } from './store/chapters.js';
+import { inspectStoryState, saveStoryState, stateSource } from './store/story-state.js';
+import type { StoryStateRow } from './store/story-state.js';
 
 const BACKUP_FORMAT = 'story-architect-project';
 const BACKUP_VERSION = 1;
@@ -213,6 +216,7 @@ interface ProjectBackupManifest {
   messages: MessageRow[];
   characters: CharacterRow[];
   chapterMemory: MemoryRow[];
+  storyStates?: Array<{ chapter_id: string; content: string }>;
   facts: FactRow[];
   lorebooks: LorebookRow[];
   loreEntries: LoreEntryRow[];
@@ -416,6 +420,13 @@ export function createProjectBackup(projectId: string): ProjectBackup {
     messages,
     characters,
     chapterMemory,
+    storyStates: (() => {
+      const prefix = inspectStoryState(projectId, Infinity).validPrefix;
+      const through = prefix ? getChapter(prefix.chapter_id).orderIndex : -1;
+      const validIds = new Set(listChapters(projectId).filter((chapter) => chapter.orderIndex <= through).map((chapter) => chapter.id));
+      return dbAll<StoryStateRow>('SELECT * FROM story_states WHERE project_id = ?', projectId)
+        .filter((row) => validIds.has(row.chapter_id)).map((row) => ({ chapter_id: row.chapter_id, content: row.content }));
+    })(),
     facts,
     lorebooks,
     loreEntries,
@@ -746,6 +757,18 @@ export function restoreProjectBackup(body: Buffer): RestoreResult {
           memory.generated_at,
           memory.updated_at,
         );
+      }
+
+      // Checkpoints use newly mapped revision/chapter IDs and a new parent
+      // chain. Older backups simply rebuild them on the next generation.
+      const restoredStates = new Map((Array.isArray(manifest.storyStates) ? manifest.storyStates : [])
+        .map((state) => [chapterMap.get(state.chapter_id), state.content]));
+      for (const chapter of listChapters(projectId).filter((entry) => entry.status === 'drafted')) {
+        const content = restoredStates.get(chapter.id);
+        if (!content) break;
+        const parent = inspectStoryState(projectId, chapter.orderIndex).checkpoint;
+        const signature = stateSource(chapter, parent?.version ?? null).signature;
+        saveStoryState(chapter.id, content, signature, parent?.version ?? null);
       }
 
       for (const fact of manifest.facts) {

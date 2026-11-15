@@ -53,6 +53,7 @@ import {
   finalizeJob,
   getJob,
   getJobRow,
+  getRuntime,
   isCancellation,
   outputSoFar,
   updateJob,
@@ -60,6 +61,7 @@ import {
 } from './jobs.js';
 import { streamChat, ProviderError } from './providers.js';
 import { streamChapter } from './chapter-stream.js';
+import { ensureStoryStateBefore } from './story-state-generation.js';
 import type { ProviderConnection, ProviderMessage } from './providers.js';
 
 function ensureAdditionalInstructions(value: string | undefined): string {
@@ -87,7 +89,7 @@ async function runStream(
     automaticOutput?: boolean;
   },
 ): Promise<StreamOutcome | null> {
-  const runtime = createRuntime(job.id);
+  const runtime = getRuntime(job.id) ?? createRuntime(job.id);
   try {
     const params = {
       model: job.model,
@@ -258,69 +260,70 @@ export function startChapterGeneration(
       : settings.targetWords ?? project.targetChapterWords ?? 1800;
 
   const template = resolvePromptTemplate(project.id, 'prose');
-  const context = buildProseContext(project, getChapter(chapterId), {
-    preset,
-    additionalInstructions: instructions,
-    targetWords,
-    templateContent: template.content,
-    modelContextLength: modelContextLength(model.connectionId, model.model),
-    maxTokens: settings.maxTokens,
-    modelMaxOutputTokens: model.provider.models?.find((entry) => entry.id === model.model)?.maxOutputTokens,
-  });
-  const chapters = listChapters(project.id);
-  const promptMessage = renderContextTemplate(template.content, {
-    project_title: project.title,
-    premise: project.premise,
-    genre: project.genre,
-    tone: project.tone,
-    pov: project.pov,
-    tense: project.tense,
-    style_notes: project.styleNotes,
-    content_preferences: project.contentPreferences,
-    instructions: project.instructions,
-    chapter_number: chapter.order_index + 1,
-    chapter_count: project.chapterCount ?? chapters.length,
-    chapter_title: chapter.title,
-    chapter_brief: chapter.brief,
-    target_words: targetWords,
-    story_memory: context.memoryText || '(No story memory yet.)',
-    lore: context.loreText || '(No lore entries activated.)',
-    recent_prose: context.recentProse,
-    additional_instructions: instructions || 'None.',
-    context_preset: preset,
-  }, {
-    story_memory: { label: 'Story memory', priority: 90, maxTokens: Math.floor(context.availableInputTokens * 0.55) },
-    lore: { label: 'Lore', priority: 70, maxTokens: 3000, trim: 'omit' },
-    recent_prose: { label: 'Recent preceding prose', priority: 100, maxTokens: 2400, trim: 'tail' },
-  });
-  // Custom templates created before stage 2 have no story-memory placeholder;
-  // append the memory block rather than silently dropping it. Stage 3 lore is
-  // appended the same way when a template lacks {{lore}}.
-  if (context.memoryText && !/\{\{\s*story_memory\s*\}\}/.test(template.content)) {
-    promptMessage.contextParts!.push({ label: 'Story memory', text: context.memoryText, priority: 90 });
-  }
-  if (context.loreText && !/\{\{\s*lore\s*\}\}/.test(template.content)) {
-    promptMessage.contextParts!.push({ label: 'Lore', text: context.loreText, priority: 70, maxTokens: 3000, trim: 'omit' });
-  }
+  const buildRequest = () => {
+    const context = buildProseContext(project, getChapter(chapterId), {
+      preset,
+      additionalInstructions: instructions,
+      targetWords,
+      templateContent: template.content,
+      modelContextLength: modelContextLength(model.connectionId, model.model),
+      maxTokens: settings.maxTokens,
+      modelMaxOutputTokens: model.provider.models?.find((entry) => entry.id === model.model)?.maxOutputTokens,
+    });
+    const chapters = listChapters(project.id);
+    const promptMessage = renderContextTemplate(template.content, {
+      project_title: project.title,
+      premise: project.premise,
+      genre: project.genre,
+      tone: project.tone,
+      pov: project.pov,
+      tense: project.tense,
+      style_notes: project.styleNotes,
+      content_preferences: project.contentPreferences,
+      instructions: project.instructions,
+      chapter_number: chapter.order_index + 1,
+      chapter_count: project.chapterCount ?? chapters.length,
+      chapter_title: chapter.title,
+      chapter_brief: chapter.brief,
+      target_words: targetWords,
+      story_state: context.storyState.text || '(Opening chapter; no earlier events.)',
+      story_memory: context.memoryText || '(No story memory yet.)',
+      lore: context.loreText || '(No lore entries activated.)',
+      recent_prose: context.recentProse,
+      additional_instructions: instructions || 'None.',
+      context_preset: preset,
+    }, {
+      story_memory: { label: 'Story memory', priority: 90, maxTokens: Math.floor(context.availableInputTokens * 0.55) },
+      lore: { label: 'Lore', priority: 70, maxTokens: 600, trim: 'omit' },
+      recent_prose: { label: 'Recent preceding prose', priority: 100, maxTokens: 650, trim: 'tail' },
+    });
+    // Custom templates created before stage 2 have no story-memory placeholder;
+    // append the memory block rather than silently dropping it. Stage 3 lore is
+    // appended the same way when a template lacks {{lore}}.
+    if (context.storyState.text && !/\{\{\s*story_state\s*\}\}/.test(template.content)) {
+      promptMessage.content += `\n\n## Current story state\n${context.storyState.text}`;
+    }
+    if (context.memoryText && !/\{\{\s*story_memory\s*\}\}/.test(template.content)) {
+      promptMessage.contextParts!.push({ label: 'Story memory', text: context.memoryText, priority: 90 });
+    }
+    if (context.loreText && !/\{\{\s*lore\s*\}\}/.test(template.content)) {
+      promptMessage.contextParts!.push({ label: 'Lore', text: context.loreText, priority: 70, maxTokens: 600, trim: 'omit' });
+    }
 
-  // Reserve the reply capacity that the context budget assumed, even when the
-  // provider would otherwise apply an unbounded default.
-  const generationSettings = {
-    ...settings,
-    maxTokens: settings.maxTokens ?? context.reservedOutputTokens,
-    inputBudgetTokens: context.availableInputTokens,
-    chapterTargetWords: targetWords,
-    automaticOutput: settings.maxTokens === null,
+    // Reserve the reply capacity that the context budget assumed, even when the
+    // provider would otherwise apply an unbounded default.
+    const generationSettings = {
+      ...settings,
+      maxTokens: settings.maxTokens ?? context.reservedOutputTokens,
+      inputBudgetTokens: context.availableInputTokens,
+      chapterTargetWords: targetWords,
+      automaticOutput: settings.maxTokens === null,
+    };
+
+    return { context, promptMessage, generationSettings };
   };
-
-  const job = createJob({
-    projectId: project.id,
-    kind: 'chapter',
-    chapterId,
-    connectionId: model.connectionId,
-    model: model.model,
-    prompt: template.content,
-    context: {
+  let { context, promptMessage, generationSettings } = buildRequest();
+  const jobContext = () => ({
       preset,
       budgetTokens: context.budgetTokens,
       availableInputTokens: context.availableInputTokens,
@@ -330,6 +333,7 @@ export function startChapterGeneration(
       includedWords: context.includedWords,
       includedChapters: context.includedChapters,
       omittedChapters: context.omittedChapters,
+      storyState: context.storyState,
       includedSummaries: context.includedSummaries,
       totalSummaries: context.totalSummaries,
       includedCharacters: context.includedCharacters,
@@ -345,28 +349,40 @@ export function startChapterGeneration(
       pendingFacts: context.pendingFacts,
       sections: context.sections,
       targetWords,
-    },
+    });
+  const job = createJob({
+    projectId: project.id,
+    kind: 'chapter',
+    chapterId,
+    connectionId: model.connectionId,
+    model: model.model,
+    prompt: template.content,
+    context: jobContext(),
     settings: jobSettingsSnapshot(generationSettings, { contextPreset: preset, targetWords }),
   });
 
-  // Manual pins apply to one generation only.
-  clearLorePins(project.id);
-
   void (async () => {
-    const result = await runStream(
-      job,
-      model.provider,
-      [
-        promptMessage,
-        {
-          role: 'user',
-          content: `Write Chapter ${chapter.order_index + 1}, "${chapter.title}", now. Return prose only.`,
-        },
-      ],
-      generationSettings,
-    );
-    if (!result) return;
+    const runtime = createRuntime(job.id);
     try {
+      await ensureStoryStateBefore(chapterId, runtime.controller.signal);
+      runtime.controller.signal.throwIfAborted();
+      ({ context, promptMessage, generationSettings } = buildRequest());
+      updateJob(job.id, { context_json: JSON.stringify(jobContext()),
+        settings: JSON.stringify(jobSettingsSnapshot(generationSettings, { contextPreset: preset, targetWords })) });
+      clearLorePins(project.id);
+      const result = await runStream(
+        job,
+        model.provider,
+        [
+          promptMessage,
+          {
+            role: 'user',
+            content: `Write Chapter ${chapter.order_index + 1}, "${chapter.title}", now. Return prose only.`,
+          },
+        ],
+        generationSettings,
+      );
+      if (!result) return;
       if (!result.content.trim()) {
         finalizeJob(job.id, 'failed', {
           error: 'The model returned an empty response. Existing chapter text was left untouched.',
@@ -383,7 +399,7 @@ export function startChapterGeneration(
       finalizeJob(job.id, 'completed', { revisionId: revision.id, usage: result.usage });
       if (applied) autoStartChapterMemory(chapterId);
     } catch (error) {
-      finalizeJob(job.id, 'failed', { error: errorMessage(error) });
+      finalizeJob(job.id, isCancellation(error, runtime.controller.signal) ? 'cancelled' : 'failed', { error: errorMessage(error) });
     }
   })();
 
@@ -424,7 +440,7 @@ export function startChatGeneration(params: {
   }
   if (memoryChapterId) {
     try {
-      storyMemory = memoryPromptText(project.id, memoryChapterId);
+      storyMemory = memoryPromptText(project.id, memoryChapterId, content);
     } catch {
       storyMemory = '';
     }
@@ -693,7 +709,7 @@ export function startContinuityReview(chapterId: string): GenerationJob {
     throw conflict('A continuity review is already running for this chapter.');
   }
   const model = resolveTaskModel(project.id, 'memory');
-  const memory = memoryPromptText(project.id, chapterId);
+  const memory = memoryPromptText(project.id, chapterId, text);
   const job = createJob({
     projectId: project.id,
     kind: 'review',

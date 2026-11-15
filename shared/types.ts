@@ -35,22 +35,22 @@ export const CONTEXT_PRESETS: ContextPresetInfo[] = [
     id: 'focused',
     label: 'Focused',
     description:
-      'The brief, key character facts and the last summary or two, with a short run of recent prose.',
-    budgetTokens: 4000,
+      'Current story state, the chapter brief, a few relevant references and a short prose handoff.',
+    budgetTokens: 3000,
   },
   {
     id: 'balanced',
     label: 'Balanced',
     description:
-      'The default. Chapter summaries, active characters and continuity facts plus a few pages of recent prose.',
-    budgetTokens: 8000,
+      'Current story state with relevant characters, continuity facts and the preceding chapter’s ending.',
+    budgetTokens: 4000,
   },
   {
     id: 'broad',
     label: 'Broad',
     description:
-      'More chapter summaries, character profiles and continuity facts, plus the ending of the preceding chapter.',
-    budgetTokens: 16000,
+      'The same compact story state, with room for more relevant references and a longer handoff.',
+    budgetTokens: 5000,
   },
 ];
 
@@ -732,6 +732,7 @@ export interface ContextSection {
 }
 
 export interface ContextInfo {
+  storyState?: StoryStateInfo;
   preset: ContextPreset;
   budgetTokens: number;
   reservedOutputTokens: number;
@@ -753,6 +754,14 @@ export interface ContextInfo {
   omittedChapters: number;
   staleSummaries: number;
   pendingFacts: number;
+}
+
+export interface StoryStateInfo {
+  status: 'empty' | 'current' | 'missing' | 'stale';
+  throughChapterId: string | null;
+  throughChapterNumber: number | null;
+  version: string | null;
+  text: string;
 }
 
 export type ChapterBatchItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';

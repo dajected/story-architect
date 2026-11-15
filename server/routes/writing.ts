@@ -80,6 +80,7 @@ function buildContextInfo(chapterId: string, requestedPreset?: unknown): Context
   }
 
   return {
+    storyState: context.storyState,
     preset,
     budgetTokens: context.budgetTokens,
     reservedOutputTokens: context.reservedOutputTokens,

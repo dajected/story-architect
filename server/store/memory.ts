@@ -12,7 +12,9 @@ import type {
 } from '../../shared/types.js';
 import { dbAll, dbGet, dbRun, timestamp, transaction } from '../db.js';
 import { badRequest, notFound } from '../errors.js';
-import { listChapters, getChapterRow, currentChapterText } from './chapters.js';
+import { listChapters, getChapter, getChapterRow, currentChapterText } from './chapters.js';
+import { inspectStoryState } from './story-state.js';
+import { referenceCharacterText, referenceFactText, selectStoryReferences } from '../story-references.js';
 import { activeCharacters, getCharacterRow } from './characters.js';
 import { touchProject } from './projects.js';
 
@@ -577,7 +579,7 @@ interface PromptMemory {
  * before this chapter are included; facts scoped to later chapters are kept out
  * so future beats never read as history.
  */
-export function memoryForPrompt(projectId: string, chapterId: string): PromptMemory {
+export function memoryForPrompt(projectId: string, chapterId: string, options: { includeSummaries?: boolean } = {}): PromptMemory {
   const chapters = listChapters(projectId);
   const chapter = chapters.find((entry) => entry.id === chapterId);
   if (!chapter) throw notFound('Chapter not found.');
@@ -585,6 +587,7 @@ export function memoryForPrompt(projectId: string, chapterId: string): PromptMem
 
   const summaries: PromptSummary[] = [];
   for (const entry of chapters) {
+    if (options.includeSummaries === false) break;
     if (entry.orderIndex >= chapter.orderIndex) continue;
     const row = getMemoryRow(entry.id);
     const text = snapshots.text.get(entry.id) ?? '';
@@ -661,40 +664,16 @@ export function projectMemoryStats(
   };
 }
 
-export function memoryPromptText(projectId: string, chapterId: string): string {
-  const memory = memoryForPrompt(projectId, chapterId);
+export function memoryPromptText(projectId: string, chapterId: string, taskQuery = ''): string {
+  const chapter = getChapter(chapterId);
+  const memory = memoryForPrompt(projectId, chapterId, { includeSummaries: false });
+  const state = inspectStoryState(projectId, chapter.orderIndex);
+  const references = selectStoryReferences({ chapter, additionalInstructions: taskQuery.slice(0, 8000), state: state.info.text, characters: memory.characters,
+    facts: memory.facts, preset: 'balanced' });
   const parts: string[] = [];
-  if (memory.summaries.length > 0) {
-    parts.push(
-      memory.summaries
-        .map(
-          (entry) =>
-            `### Chapter ${entry.orderIndex + 1} — ${entry.chapterTitle}${
-              entry.stale ? ' (summary may be outdated)' : ''
-            }\n${entry.summary}`,
-        )
-        .join('\n\n'),
-    );
-  }
-  if (memory.characters.length > 0) {
-    parts.push(
-      memory.characters
-        .map((character) => characterProfileText(character))
-        .join('\n\n'),
-    );
-  }
-  if (memory.facts.length > 0) {
-    parts.push(
-      memory.facts
-        .map(
-          (fact) =>
-            `- [${fact.factClass === 'plan' ? 'Plan' : fact.factClass === 'authored' ? 'World fact' : 'Established'}] ${
-              fact.statement
-            }${fact.characterName ? ` (${fact.characterName})` : ''}`,
-        )
-        .join('\n'),
-    );
-  }
+  if (state.info.text) parts.push(`## Current story state\n${state.info.text}`);
+  if (references.characters.length) parts.push(references.characters.map(referenceCharacterText).join('\n\n'));
+  if (references.facts.length) parts.push(references.facts.map(referenceFactText).join('\n'));
   return parts.join('\n\n');
 }
 

@@ -440,12 +440,22 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
 - The latest outline revision must be approved before drafting. Saving changes
   to an approved outline creates a new revision and pauses drafting until that
   revision is approved. Removing a chapter that already has text is refused.
-- Chapter context uses required project instructions and the current brief,
-  accepted character profiles, preceding chapter summaries, established facts,
-  and at most the preceding drafted chapter's ending (800/1,600/2,400 tokens for
-  Focused/Balanced/Broad). Older chapters enter through memory rather than full
-  prose. The preset sets an approximate input budget;
-  the context inspector shows required tokens, sections, trimming, the model's
+- Chapter context uses required project instructions, the current brief, and
+  **one compact story-state checkpoint**, never an accumulated chapter-summary
+  list. Checkpoints describe the current situation, unresolved threads,
+  relationships and character knowledge, and cannot exceed 4,000 characters.
+  Each update uses the previous checkpoint plus one chapter's verified summary
+  (or a bounded source excerpt when no current summary exists).
+  Existing projects build missing checkpoints automatically before drafting.
+  Earlier text or summary edits invalidate dependent checkpoints; stale state
+  is excluded and rebuilt in order. Valid checkpoints are reused and backed up.
+  References are retrieved by relevance to the chapter brief, extra instructions
+  and current state: at most 650 tokens each for selected profiles and facts,
+  and 600 tokens for activated lore. Future, unapproved and outdated facts stay
+  out. Raw prose is limited to the preceding chapter's ending (300/500/650 tokens
+  for Focused/Balanced/Broad). Presets cap input at 3,000/4,000/5,000 tokens;
+  the packet stays bounded as the manuscript grows.
+  The context inspector shows the actual story-state text, selected sections, the model's
   known window, and how much output capacity is reserved. Automatic chapter output
   capacity allows two tokens per target word plus 2,048 tokens, capped by the
   model's reply limit and half its usable context; known model windows

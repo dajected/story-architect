@@ -179,7 +179,7 @@ export function CharactersPanel({
           <p className="eyebrow">Cast</p>
           <h1>Characters</h1>
           <p className="lede">
-            Stable profiles feed every chapter prompt. Proposed characters stay out of context
+            Relevant profiles are selected for each chapter. Proposed characters stay out of context
             until you accept them.
           </p>
         </div>
@@ -323,7 +323,7 @@ export function CharactersPanel({
               </>
             }
           >
-            Add the people the story needs. Their profiles are included in chapter context and
+            Add the people the story needs. Relevant profiles are selected for chapter context and
             their facts appear in continuity review.
           </EmptyState>
         ) : (

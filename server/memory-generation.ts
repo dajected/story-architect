@@ -8,6 +8,7 @@ import {
   createRuntime,
   finalizeJob,
   getJob,
+  getRuntime,
   isCancellation,
   activeJobForChapterKind,
   activeProjectJobKind,
@@ -26,7 +27,7 @@ import { currentChapterText, getChapter, getChapterRow } from './store/chapters.
 import { addProposedCharacters } from './store/characters.js';
 import {
   addExtractedFacts,
-  memoryForPrompt,
+  memoryPromptText,
   precedingSignature,
   saveChapterMemory,
   chapterTextHash,
@@ -35,6 +36,7 @@ import { latestOutlineRevision } from './store/outline.js';
 import { getProject } from './store/projects.js';
 import { resolveTaskModel } from './store/settings.js';
 import { getProviderConnection, modelContextLength } from './store/connections.js';
+import { ensureStoryStateBefore, ensureStoryStateThrough } from './story-state-generation.js';
 
 const memoryQueues = new Map<string, Promise<void>>();
 
@@ -57,7 +59,7 @@ async function runJobStream(
     return null;
   }
   updateJob(job.id, { status: 'running', started_at: new Date().toISOString() });
-  const runtime = createRuntime(job.id);
+  const runtime = getRuntime(job.id) ?? createRuntime(job.id);
   try {
     const result = await streamChat(provider, {
       model: job.model,
@@ -95,35 +97,7 @@ function memoryModel(projectId: string) {
 }
 
 function chapterContextForExtraction(projectId: string, chapterId: string): string {
-  const memory = memoryForPrompt(projectId, chapterId);
-  const parts: string[] = [];
-  if (memory.summaries.length > 0) {
-    parts.push(
-      `### Earlier chapter summaries\n${memory.summaries
-        .map(
-          (entry) =>
-            `Chapter ${entry.orderIndex + 1} — ${entry.chapterTitle}: ${entry.summary}${
-              entry.stale ? ' (may be outdated)' : ''
-            }`,
-        )
-        .join('\n')}`,
-    );
-  }
-  if (memory.facts.length > 0) {
-    parts.push(
-      `### Known facts\n${memory.facts
-        .map((fact) => `- ${fact.statement}${fact.characterName ? ` (${fact.characterName})` : ''}`)
-        .join('\n')}`,
-    );
-  }
-  if (memory.characters.length > 0) {
-    parts.push(
-      `### Cast\n${memory.characters
-        .map((character) => `${character.name}${character.role ? ` — ${character.role}` : ''}`)
-        .join(', ')}`,
-    );
-  }
-  return parts.join('\n\n');
+  return memoryPromptText(projectId, chapterId, currentChapterText(chapterId));
 }
 
 function buildMemoryUserMessage(
@@ -154,6 +128,14 @@ async function runMemoryJob(jobId: string): Promise<void> {
     finalizeJob(jobId, 'failed', { error: 'Memory jobs need a chapter.' });
     return;
   }
+  const runtime = createRuntime(jobId);
+  try {
+    await ensureStoryStateBefore(job.chapterId, runtime.controller.signal);
+  } catch (error) {
+    finalizeJob(jobId, isCancellation(error, runtime.controller.signal) ? 'cancelled' : 'failed', { error: errorMessage(error) });
+    return;
+  }
+  if (!['queued', 'running'].includes(getJob(jobId).status)) return;
   const chapter = getChapterRow(job.chapterId);
   const text = currentChapterText(chapter.id);
   if (!text.trim()) {
@@ -239,6 +221,9 @@ async function finishMemoryJob(
         ? null
         : 'The reply was not valid JSON; the summary text was kept and no new facts were proposed.',
     });
+    // The summary is committed before the checkpoint job starts. This also
+    // lets a waiting chapter preparation share the same checkpoint build.
+    void ensureStoryStateThrough(chapterId).catch(() => {});
   } catch (error) {
     finalizeJob(jobId, 'failed', { error: errorMessage(error), usage: result.usage });
   }
@@ -298,7 +283,7 @@ export function autoStartChapterMemory(chapterId: string): GenerationJob | null 
  */
 export function queueMemoryRebuild(projectId: string, chapterIds: string[]): GenerationJob[] {
   getProject(projectId);
-  const unique = [...new Set(chapterIds)];
+  const unique = [...new Set(chapterIds)].sort((a, b) => getChapterRow(a).order_index - getChapterRow(b).order_index);
   if (unique.length === 0) return [];
   for (const chapterId of unique) {
     const chapter = getChapterRow(chapterId);

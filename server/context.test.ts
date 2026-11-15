@@ -5,11 +5,13 @@ import { buildProseContext } from './context.js';
 import { currentChapterText, listChapters } from './store/chapters.js';
 import { memoryForPrompt } from './store/memory.js';
 import { listLoreEntries } from './store/lore.js';
+import { inspectStoryState } from './store/story-state.js';
 
 vi.mock('./store/chapters.js', () => ({ listChapters: vi.fn(), currentChapterText: vi.fn() }));
 vi.mock('./store/memory.js', () => ({ memoryForPrompt: vi.fn() }));
 vi.mock('./store/lore.js', () => ({ listLoreEntries: vi.fn() }));
 vi.mock('./store/outline.js', () => ({ latestOutlineRevision: vi.fn() }));
+vi.mock('./store/story-state.js', () => ({ inspectStoryState: vi.fn() }));
 
 const project: Project = {
   id: 'novel', title: 'The Observatory', premise: '', genre: '', tone: '', pov: '',
@@ -25,6 +27,13 @@ const chapters: Chapter[] = Array.from({ length: 10 }, (_, orderIndex) => ({
 }));
 
 beforeEach(() => {
+  vi.mocked(inspectStoryState).mockImplementation((_projectId, beforeOrder) => ({
+    checkpoint: null, validPrefix: null, info: {
+      status: beforeOrder ? 'current' : 'empty', text: beforeOrder ? 'COMPACT-STATE: Mara has the key; the observatory is open. Iven is missing.' : '',
+      throughChapterId: beforeOrder ? `chapter-${beforeOrder}` : null, throughChapterNumber: beforeOrder || null,
+      version: beforeOrder ? 'state-version' : null,
+    },
+  }));
   vi.mocked(listChapters).mockReturnValue(chapters);
   vi.mocked(listLoreEntries).mockReturnValue([]);
   vi.mocked(currentChapterText).mockImplementation((id) =>
@@ -40,16 +49,18 @@ beforeEach(() => {
 });
 
 describe('chapter context', () => {
-  it.each<[ContextPreset, number]>([['focused', 800], ['balanced', 1600], ['broad', 2400]])(
-    'bounds chapter 9 raw prose with the %s preset while retaining older memory',
+  it.each<[ContextPreset, number]>([['focused', 300], ['balanced', 500], ['broad', 650]])(
+    'bounds chapter 9 prose with the %s preset and replaces the summary archive with one state',
     (preset, cap) => {
       const context = buildProseContext(project, chapters[8], { preset, modelContextLength: 16000 });
       expect(context.recentProse).toContain('ENDING-chapter-8');
       expect(context.recentProse).not.toContain('UNIQUE-OPENING');
       expect(context.recentProse).not.toContain('ENDING-chapter-7');
       expect(context.recentProse).not.toContain('ENDING-chapter-9');
-      expect(context.memoryText).toContain('SUMMARY-chapter-1');
-      expect(context.memoryText).toContain('SUMMARY-chapter-8');
+      expect(context.memoryText).not.toContain('SUMMARY-chapter-');
+      expect(context.storyState.text).toContain('COMPACT-STATE');
+      expect(context.includedSummaries).toBe(0);
+      expect(memoryForPrompt).toHaveBeenCalledWith(project.id, chapters[8].id, { includeSummaries: false });
       expect(estimateTokens(context.recentProse)).toBeLessThanOrEqual(cap);
       expect(context.includedChapters).toBe(1);
       expect(context.omittedChapters).toBe(7);
@@ -73,9 +84,8 @@ describe('chapter context', () => {
       preset: 'broad', modelContextLength: 16000, targetWords: 4000,
     });
     expect(context.reservedOutputTokens).toBe(7600);
-    expect(context.availableInputTokens).toBe(7600);
-    expect(context.estimatedTokens).toBeLessThanOrEqual(7600);
-    expect(context.warnings.join(' ')).toContain('overhead');
+    expect(context.availableInputTokens).toBe(5000);
+    expect(context.estimatedTokens).toBeLessThanOrEqual(5000);
   });
 
   it('respects an explicit output limit', () => {
@@ -83,7 +93,7 @@ describe('chapter context', () => {
       preset: 'broad', modelContextLength: 16000, maxTokens: 6000,
     });
     expect(context.reservedOutputTokens).toBe(6000);
-    expect(context.availableInputTokens).toBe(9200);
+    expect(context.availableInputTokens).toBe(5000);
   });
 
   it('caps automatic replies to the model output limit even for long chapters', () => {
@@ -91,22 +101,25 @@ describe('chapter context', () => {
       preset: 'broad', modelContextLength: 16000, modelMaxOutputTokens: 2000, targetWords: 10000,
     });
     expect(context.reservedOutputTokens).toBe(2000);
-    expect(context.availableInputTokens).toBe(13200);
+    expect(context.availableInputTokens).toBe(5000);
   });
 
-  it('reports unsummarised older chapters instead of inserting their full prose', () => {
+  it('reports missing story state instead of inserting the chapter archive', () => {
+    vi.mocked(inspectStoryState).mockReturnValue({ checkpoint: null, validPrefix: null, info: {
+      status: 'missing', text: '', throughChapterId: null, throughChapterNumber: null, version: null,
+    } });
     vi.mocked(memoryForPrompt).mockReturnValue({
       summaries: [], characters: [], facts: [], staleSummaries: 0, pendingFacts: 0,
     });
     const context = buildProseContext(project, chapters[8], { preset: 'broad' });
-    expect(context.warnings.join(' ')).toContain('8 preceding drafted chapters have no summary');
+    expect(context.warnings.join(' ')).toContain('will be rebuilt in chapter order');
     expect(context.includedChapters).toBe(1);
     expect(context.recentProse).not.toContain('ENDING-chapter-7');
   });
 
   it('fits a very small remaining budget without leaking omission markers beyond it', () => {
     const context = buildProseContext(project, chapters[8], {
-      preset: 'focused', templateContent: 'x'.repeat(15800), modelContextLength: 16000,
+      preset: 'focused', templateContent: 'x'.repeat(11680), modelContextLength: 16000,
     });
     expect(context.estimatedTokens).toBeLessThanOrEqual(context.availableInputTokens);
     expect(context.includedChapters).toBe(0);

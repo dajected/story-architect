@@ -420,6 +420,18 @@ const migrations: Array<() => void> = [
       CREATE INDEX idx_portrait_batches_character ON portrait_batches(character_id, created_at);
     `);
   },
+  () => {
+    db.exec(`CREATE TABLE story_states (
+      chapter_id TEXT PRIMARY KEY REFERENCES chapters(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      version TEXT NOT NULL,
+      content TEXT NOT NULL,
+      input_signature TEXT NOT NULL,
+      parent_version TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_story_states_project ON story_states(project_id);`);
+  },
 ];
 
 /**

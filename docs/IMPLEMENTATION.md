@@ -165,46 +165,48 @@ role; it does not create prose revisions.
 
 ## Context assembly
 
-The context builder works in two layers:
+The prose request is a bounded chapter packet. It contains the current brief,
+project instructions, one persisted story-state checkpoint, a short prose
+handoff, and references selected for this chapter. Archived chapter summaries
+are never concatenated into generation context.
 
-1. **Required input** — project metadata, standing instructions, the chapter
-   brief, additional instructions, and the prompt template. Estimated tokens for
-   this layer are checked first. Output capacity is reserved from the smaller of
-   the configured max-output tokens or roughly 1.5 tokens per target word, with a
-   800-token floor.
-2. **Optional lore, memory and prose** — within the remaining input budget, capped by
-   the selected model's known context window when available:
-   - activated lore entries (see below);
-   - chapter summaries (most recent first, rendered chronologically);
-   - active character profiles ranked by mention in the brief, recent summaries,
-     and linked facts;
-   - established, in-scope facts. Facts from later chapters and plans scoped to
-     later chapters are excluded;
-   - recent preceding prose trimmed at a line boundary.
+- `story_states` stores a checkpoint per written chapter, capped at 4,000
+  characters. Each has a new version, the parent's version, and a fingerprint
+  of its own manuscript revision/content and verified summary.
+- `store/story-state.ts` validates the complete prefix before exposing a
+  checkpoint. Editing an earlier chapter (including in-place autosave), editing
+  a summary, replacing a revision, or changing chapter order invalidates the
+  affected checkpoint chain. Invalid state is never presented as current.
+- `story-state-generation.ts` folds missing/invalid checkpoints in order. Each
+  model call receives one prior checkpoint and one current chapter summary or
+  source excerpt. Existing projects bootstrap automatically. Concurrent builds
+  share work; cancellation and source changes cannot commit stale results.
+- The story-state text is required prompt input, including for older custom
+  templates without `{{story_state}}`. Oversized essential input is rejected.
+- `story-references.ts` ranks accepted profiles and facts by the brief, extra
+  instructions, and compact current state. Old relevant details can outrank
+  recent unrelated ones. Future, unapproved, outdated and out-of-scope facts
+  are excluded. Profile/fact token ceilings are 650 each; preset count limits
+  also apply. Lore is capped at 600 tokens. Prose handoffs are capped at
+  300/500/650 tokens, drawn only from the preceding drafted chapter.
+- Focused/Balanced/Broad input ceilings are 3,000/4,000/5,000 tokens. Spare model
+  capacity is not filled with more historical chapters. The final rendered
+  request is checked again by `request-context.ts` after reserving reply space.
 
-Presets are roughly 4,000 / 8,000 / 16,000 input tokens for Focused, Balanced,
-and Broad. A single oversized section is shed rather than allowed to overflow.
-If required input cannot fit, generation returns a 409 with the estimate, the
-preset or model window, and the reserved output capacity instead of silently
-dropping instructions. All token counts are estimates (four characters per
-token) and are labelled as such in the interface.
-
-Lore takes roughly 16 / 20 / 24 percent of the remaining input budget, capped at
-12,000 tokens. Memory then takes its usual share of what remains, and recent
-prose gets the rest.
-
-The inspector response and the job's `context_json` record each section's
-included state, token estimate, item counts, omissions, stale-summary count, and
-pending-fact count. Custom prose templates without `{{story_memory}}` still
-receive the memory block, appended after rendering.
+The inspector shows the current checkpoint, its source chapter, selected
+references, omissions and budget estimates. Job metadata records the checkpoint
+version and actual request. Project backups carry only the valid checkpoint
+prefix; restore remaps IDs and creates new provenance. Older backups without
+checkpoints remain supported and rebuild on demand.
 
 ## Memory flow
 
 1. When a generated or recovered chapter draft becomes current, an automatic
    `memory` job starts if a memory role resolves. Editing, restoring, or choosing
    an alternative does not auto-run; staleness is shown and rebuild is explicit.
-2. The memory job reads the current chapter revision plus preceding summaries,
-   established facts, and cast names, and requests JSON with a summary and facts.
+2. The memory job reads the current chapter revision, compact preceding state,
+   and selected references, and requests JSON with a summary and facts. After
+   committing the summary, a state job updates that chapter?s checkpoint.
 3. The summary is saved against the source revision and a fingerprint of every
    preceding chapter revision. Unparseable output keeps the job and raw reply for
    retry; a prose-only reply can still be saved as a summary.

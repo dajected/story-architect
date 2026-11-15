@@ -388,11 +388,15 @@ export function updateJob(
       | 'revision_id'
       | 'finished_at'
       | 'started_at'
+      | 'context_json'
+      | 'settings'
     >
   >,
 ): GenerationJob {
   const fields: string[] = [];
   const values: Array<string | number | null> = [];
+  if (patch.context_json !== undefined) { fields.push('context_json = ?'); values.push(patch.context_json); }
+  if (patch.settings !== undefined) { fields.push('settings = ?'); values.push(patch.settings); }
   if (patch.status !== undefined) {
     fields.push('status = ?');
     values.push(patch.status);

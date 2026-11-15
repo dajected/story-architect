@@ -38,6 +38,7 @@ const MEMORY = JSON.stringify({
     },
   ],
 });
+const STORY_STATE = 'Situation: Mara has entered the observatory with the brass key.\nOpen threads: discover who made the key and find the missing records.\nRelationships: Mara distrusts Iven, her former partner.\nKnowledge: Mara knows the key opens the observatory; Iven has not been told what she found.';
 
 const CAST = JSON.stringify({
   characters: [
@@ -89,6 +90,20 @@ let lastImagePromptSystem = '';
 function json(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(value));
+}
+
+function legacyBackupWithoutStoryStates(bytes: ArrayBuffer): Buffer {
+  const tar = zlib.gunzipSync(Buffer.from(bytes));
+  const size = Number.parseInt(tar.subarray(124, 136).toString('ascii').replace(/\0/g, '').trim(), 8);
+  const manifest = JSON.parse(tar.subarray(512, 512 + size).toString('utf8'));
+  delete manifest.storyStates;
+  const payload = Buffer.from(JSON.stringify(manifest));
+  const header = Buffer.from(tar.subarray(0, 512));
+  header.write(payload.length.toString(8).padStart(11, '0') + '\0', 124, 'ascii');
+  header.fill(32, 148, 156);
+  header.write([...header].reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, '0') + '\0 ', 148, 'ascii');
+  return zlib.gzipSync(Buffer.concat([header, payload, Buffer.alloc((512 - payload.length % 512) % 512),
+    tar.subarray(512 + Math.ceil(size / 512) * 512)]));
 }
 
 function startMock(): Promise<void> {
@@ -198,7 +213,9 @@ function startMock(): Promise<void> {
               ? IMAGE_PROMPT
               : system.includes('chapter-by-chapter outline')
                 ? OUTLINE
-                : system.includes('continuity archivist')
+                : system.includes('story-state editor')
+                  ? STORY_STATE
+                  : system.includes('continuity archivist')
                   ? MEMORY
                   : system.includes('casting editor')
                     ? CAST
@@ -498,6 +515,100 @@ describe('stage 1 workflow', () => {
 });
 
 describe('stage 2 memory, cast, and context', () => {
+  it('uses one cached state for a long novel, rebuilds after edits, and restores checkpoint provenance', async () => {
+    const { inspectStoryState, stateSource, saveStoryState } = await import('./store/story-state.js');
+    const { getChapter } = await import('./store/chapters.js');
+    const { getJobRow } = await import('./jobs.js');
+    const { dbAll } = await import('./db.js');
+    const { ensureStoryStateThrough } = await import('./story-state-generation.js');
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Long Novel State', chapterCount: 26,
+    });
+    const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: revision.id,
+      chapters: Array.from({ length: 26 }, (_, index) => ({
+        id: index === 0 ? revision.chapters[0].id : `${project.id}-${index}`,
+        title: `State Chapter ${index + 1}`, brief: 'Mara uses the brass key to enter the north door.',
+      })),
+    });
+    await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+    for (const [index, chapter] of chapters.entries()) {
+      await request('PUT', `/chapters/${chapter.id}/content`, { content: `${PROSE}\nMANUSCRIPT_SOURCE_${index + 1}` });
+      if (index < 25) await request('PATCH', `/chapters/${chapter.id}/memory`, {
+        summary: `ARCHIVE_SUMMARY_${index + 1}: Mara carries the brass key through the observatory.`,
+      });
+    }
+    await request('POST', `/projects/${project.id}/memory/facts`, {
+      statement: 'The brass key opens only the north door. IMPORTANT_OLD_DETAIL.', factClass: 'authored',
+    });
+    await request('POST', `/projects/${project.id}/memory/facts`, {
+      statement: 'A distant librarian enjoys rose tea. IRRELEVANT_ARCHIVE_DETAIL.', factClass: 'authored',
+    });
+    const target = chapters[25].id;
+    const initial = await request<{ storyState: { status: string } }>('GET', `/chapters/${target}/context`);
+    expect(initial.storyState.status).toBe('missing');
+    const draft = await request<{ job: { id: string } }>('POST', `/chapters/${target}/generate`, {});
+    expect((await waitForJob(draft.job.id)).status).toBe('completed');
+    const prompt = getJobRow(draft.job.id).prompt;
+    expect(prompt).toContain(STORY_STATE);
+    expect(prompt).toContain('IMPORTANT_OLD_DETAIL');
+    expect(prompt).not.toContain('IRRELEVANT_ARCHIVE_DETAIL');
+    expect(prompt).not.toContain('ARCHIVE_SUMMARY_');
+    expect(prompt).not.toContain('MANUSCRIPT_SOURCE_26');
+    const info = await request<{ storyState: { status: string; throughChapterNumber: number }; estimatedTokens: number }>('GET', `/chapters/${target}/context`);
+    expect(info.storyState.status).toBe('current');
+    expect(info.storyState.throughChapterNumber).toBe(25);
+    expect(info.estimatedTokens).toBeLessThan(2500);
+    const checkpointJobs = () => dbAll<{ context_json: string; prompt: string }>('SELECT context_json, prompt FROM generation_jobs WHERE project_id = ?', project.id)
+      .filter((job) => JSON.parse(job.context_json ?? '{}').stage === 'story_state');
+    expect(checkpointJobs()).toHaveLength(25);
+    expect(checkpointJobs().every((job) => (job.prompt.match(/ARCHIVE_SUMMARY_/g) ?? []).length === 1)).toBe(true);
+    const cached = await request<{ job: { id: string } }>('POST', `/chapters/${target}/generate`, {});
+    expect((await waitForJob(cached.job.id)).status).toBe('completed');
+    expect(checkpointJobs()).toHaveLength(25);
+
+    const bytes = await fetch(`${baseUrl}/api/projects/${project.id}/backup`).then((response) => response.arrayBuffer());
+    const restored = await fetch(`${baseUrl}/api/projects/restore`, {
+      method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: bytes,
+    }).then((response) => response.json()) as { project: { id: string } };
+    const restoredState = inspectStoryState(restored.project.id, 25);
+    expect(restoredState.info.status).toBe('current');
+    expect(restoredState.info.text).toBe(STORY_STATE);
+    expect(restoredState.info.throughChapterId).not.toBe(chapters[24].id);
+
+    const legacyResponse = await fetch(`${baseUrl}/api/projects/restore`, {
+      method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body: legacyBackupWithoutStoryStates(bytes),
+    });
+    expect(legacyResponse.status).toBe(201);
+    const legacy = await legacyResponse.json() as { project: { id: string } };
+    const legacyChapters = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${legacy.project.id}/chapters`);
+    expect(inspectStoryState(legacy.project.id, 25).info.status).toBe('missing');
+    const legacyDraft = await request<{ job: { id: string } }>('POST', `/chapters/${legacyChapters.chapters[25].id}/generate`, {});
+    expect((await waitForJob(legacyDraft.job.id)).status).toBe('completed');
+    expect(inspectStoryState(legacy.project.id, 25).info.status).toBe('current');
+
+    const oldVersion = inspectStoryState(project.id, 25).checkpoint!.version;
+    const oldSource = stateSource(getChapter(chapters[24].id), inspectStoryState(project.id, 24).checkpoint!.version);
+    const revisionId = getChapter(chapters[0].id).currentRevisionId;
+    await request('PUT', `/chapters/${chapters[0].id}/content`, { content: 'Mara left the key outside. EDITED_SOURCE.' });
+    expect(getChapter(chapters[0].id).currentRevisionId).toBe(revisionId);
+    expect(inspectStoryState(project.id, 25).info.status).toBe('stale');
+    expect(inspectStoryState(project.id, 25).info.text).toBe('');
+    expect(() => saveStoryState(chapters[24].id, 'Stale update', oldSource.signature,
+      inspectStoryState(project.id, 24).checkpoint?.version ?? null)).toThrow(/changed/);
+    const refreshed = await request<{ job: { id: string } }>('POST', `/chapters/${target}/generate`, {});
+    expect((await waitForJob(refreshed.job.id)).status).toBe('completed');
+    expect(inspectStoryState(project.id, 25).info.status).toBe('current');
+    expect(inspectStoryState(project.id, 25).checkpoint!.version).not.toBe(oldVersion);
+    await request('PATCH', `/chapters/${chapters[12].id}/memory`, { summary: 'Mara now knows Iven hid the records.' });
+    expect(inspectStoryState(project.id, 12).info.status).toBe('current');
+    expect(inspectStoryState(project.id, 25).info.status).toBe('stale');
+    await ensureStoryStateThrough(chapters[24].id);
+    expect(inspectStoryState(project.id, 25).info.status).toBe('current');
+  }, 30000);
+
   it('resumes a limited chapter as one saved revision and builds memory only after completion', async () => {
     const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
       title: 'Resumable Chapter', chapterCount: 2,
@@ -751,15 +862,15 @@ describe('stage 2 memory, cast, and context', () => {
       'GET',
       `/chapters/${first.id}/context?preset=balanced`,
     );
-    expect(firstContext.sections.find((section) => section.id === 'summaries')?.included).toBe(
+    expect(firstContext.sections.find((section) => section.id === 'story-state')?.included).toBe(
       false,
     );
     expect(firstContext.sections.find((section) => section.id === 'characters')?.included).toBe(
       true,
     );
-    // Only the story-wide authored fact is available before chapter 1.
+    // The unrelated world fact stays archived until it is relevant.
     expect(firstContext.sections.find((section) => section.id === 'facts')?.detail).toContain(
-      '1 of 1',
+      '0 of 1',
     );
     expect(firstContext.estimatedTokens + firstContext.reservedOutputTokens).toBeGreaterThan(
       firstContext.requiredTokens,
@@ -770,7 +881,7 @@ describe('stage 2 memory, cast, and context', () => {
       'GET',
       `/chapters/${second.id}/context?preset=balanced`,
     );
-    expect(secondContext.sections.find((section) => section.id === 'summaries')?.included).toBe(
+    expect(secondContext.sections.find((section) => section.id === 'story-state')?.included).toBe(
       true,
     );
     // Chapter 1 summary, accepted plot fact, authored world fact, and scoped plan.
@@ -800,13 +911,13 @@ describe('stage 2 memory, cast, and context', () => {
     );
     expect(superseded.count).toBeGreaterThanOrEqual(1);
 
-    // Superseded facts leave prompts; the world fact and scoped plan remain.
+    // Superseded facts leave prompts; without a valid state only the scoped plan is relevant.
     const afterSupersedeContext = await request<ContextResponse>(
       'GET',
       `/chapters/${second.id}/context?preset=balanced`,
     );
     expect(afterSupersedeContext.sections.find((section) => section.id === 'facts')?.detail).toContain(
-      '2 of 2',
+      '1 of 2',
     );
 
     // Rebuilding refreshes the summary against the edited revision.

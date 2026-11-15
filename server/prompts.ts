@@ -50,7 +50,10 @@ Content preferences: {{content_preferences}}
 ## Project instructions
 {{instructions}}
 
-## Story memory
+## Current story state
+{{story_state}}
+
+## Relevant story references
 {{story_memory}}
 
 ## Lore
