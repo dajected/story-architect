@@ -49,7 +49,7 @@ export function WorkspacePage({
   // Tabs stay mounted after their first visit so filters and scroll positions survive switching.
   const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(['outline', 'manuscript']));
   const [imagesFocus, setImagesFocus] = useState<{ characterId: string; nonce: number } | null>(null);
-  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1180 && localStorage.getItem('assistant-open') === 'true');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'story'>('story');
@@ -71,7 +71,6 @@ export function WorkspacePage({
       if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
         if (event.key.toLowerCase() === 'f') {event.preventDefault(); setFocusMode(v => !v);}
         if (event.key.toLowerCase() === 'a') {event.preventDefault(); setAssistantOpen(v => !v);}
-        if (event.key.toLowerCase() === 'p') {event.preventDefault(); window.dispatchEvent(new Event('toggle-manuscript-preview'));}
       }
       if (event.key === 'Escape') setFocusMode(false);
       if (event.altKey && ['ArrowLeft','ArrowRight'].includes(event.key)) {
@@ -127,7 +126,7 @@ export function WorkspacePage({
 
       if (!initialised.current) {
         initialised.current = true;
-        const storedTab = new URLSearchParams(location.search).get('tab') ?? localStorage.getItem(`workspace-tab-${projectId}`);
+        const storedTab = new URLSearchParams(location.search).get('tab') ?? (loadedProject.currentWords > 0 ? 'manuscript' : localStorage.getItem(`workspace-tab-${projectId}`));
         setTab(storedTab && ['manuscript','outline','cast','memory','lore','activity','images'].includes(storedTab) ? storedTab as Tab : loadedProject.outlineStatus === 'approved' ? 'manuscript' : 'outline');
       }
 
@@ -274,7 +273,7 @@ export function WorkspacePage({
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
           <button aria-pressed={tab === 'manuscript'} className={tab === 'manuscript' ? 'active' : ''} onClick={() => setTab('manuscript')}>
-            Manuscript
+            Read story
           </button>
           <button aria-pressed={tab === 'outline'} className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
             Outline
@@ -359,7 +358,7 @@ export function WorkspacePage({
         </Banner>
       ) : null}
 
-      {project.outlineStatus !== 'approved' || totalWords === 0 ? <section className="next-step" aria-label="Next step"><div><strong>{project.outlineStatus === 'approved' ? 'Next: start chapter 1' : project.outlineStatus === 'draft' ? 'Next: review and approve your outline' : 'Next: create your outline'}</strong><p className="muted small">{project.outlineStatus === 'approved' ? 'Write yourself or open Generate draft in the editor.' : 'Approving creates your chapter list and unlocks AI drafting. Review the titles and briefs first.'}</p></div><button className="button button-primary button-small" onClick={() => {setTab(project.outlineStatus === 'approved' ? 'manuscript' : 'outline'); if (project.outlineStatus === 'approved' && chapters[0]) void selectChapter(chapters[0].id);}}>{project.outlineStatus === 'approved' ? 'Start chapter 1' : 'Open outline'}</button></section> : null}
+      {project.outlineStatus !== 'approved' || totalWords === 0 ? <section className="next-step" aria-label="Next step"><div><strong>{project.outlineStatus === 'approved' ? 'Next: start chapter 1' : project.outlineStatus === 'draft' ? 'Next: review and approve your outline' : 'Next: create your outline'}</strong><p className="muted small">{project.outlineStatus === 'approved' ? 'Generate a draft, then read your chapter here.' : 'Approving creates your chapter list and unlocks AI drafting. Review the titles and briefs first.'}</p></div><button className="button button-primary button-small" onClick={() => {setTab(project.outlineStatus === 'approved' ? 'manuscript' : 'outline'); if (project.outlineStatus === 'approved' && chapters[0]) void selectChapter(chapters[0].id);}}>{project.outlineStatus === 'approved' ? 'Start chapter 1' : 'Open outline'}</button></section> : null}
       <div className="workspace-main">
         <ChapterSidebar
           chapters={chapters}
@@ -495,14 +494,14 @@ export function WorkspacePage({
         </div>
 
         {assistantOpen ? <PanelResize label="Resize Assistant" value={preferences.assistantWidth!} min={280} max={600} reverse onChange={value => setPreference('assistantWidth',value)} /> : null}
-        <AssistantPanel
+        {assistantOpen ? <AssistantPanel
           project={project}
           chapter={chapterDetail}
           open={assistantOpen}
           onClose={() => setAssistantOpen(false)}
           onChapterUpdated={handleChapterUpdated}
           modelLabel={modelLabel}
-        />
+        /> : null}
       </div>
 
       <ProjectSettingsModal

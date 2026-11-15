@@ -4442,3 +4442,10 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
 .returning-library .lede, .returning-library .eyebrow { display:none; }
 .workspace-actions { flex-wrap:wrap; }
 @media (max-width:720px) { .proposal-comparison { grid-template-columns:1fr; } .next-step { align-items:flex-start; padding:12px; } }
+
+/* Reading uses the available workspace rather than an editor-sized column. */
+.manuscript-preview { width:100%; max-width:var(--writing-textWidth,1200px); padding:32px 40px 80px; }
+.manuscript-preview .markdown { max-width:none; }
+.assistant-panel:not(.open) { display:none; }
+.focus-mode .editor-header, .focus-mode .generate-panel, .focus-mode .stream-panel, .focus-mode .review-panel { display:none; }
+@media(max-width:720px) { .manuscript-preview { padding:20px 18px 60px; } }

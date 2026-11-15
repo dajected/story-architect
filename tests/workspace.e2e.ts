@@ -50,7 +50,7 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
   await expect(studio.getByLabel('Chapter state (optional)')).toHaveValue(chapterId);
   await studio.getByLabel('Story moment').selectOption('start');await expect(studio.getByLabel('Story moment')).toHaveValue('start');
   await page.keyboard.press('Escape');await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Focus',exact:true}).click();await expect(page.locator('.chapter-sidebar')).toBeHidden();await expect(page.locator('.compact-portraits')).toBeHidden();
+  await page.getByRole('button',{name:'Focus on story',exact:true}).click();await expect(page.locator('.chapter-sidebar')).toBeHidden();await expect(page.locator('.compact-portraits')).toBeHidden();
   await page.keyboard.press('Escape');await expect(page.locator('.compact-portraits')).toBeVisible();
   await page.getByRole('button',{name:'Characters',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();
   await expect(page.getByRole('heading',{name:'Images',exact:true})).toBeVisible();
@@ -103,4 +103,19 @@ test('workspace navigation returns to the same chapter and separates app setting
   await page.getByRole('link', {name:'Library',exact:true}).click();
   await page.getByRole('link', {name:'Continue chapter 1: After the storm',exact:true}).click();
   await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
+});
+
+
+test('generated story opens in a wide reader with the assistant hidden', async ({page}) => {
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto(`/projects/${projectId}?tab=manuscript`);
+  await expect(page.getByRole('article', {name:'Story reader'})).toContainText('Mara stopped beneath the clock tower');
+  await expect(page.getByRole('textbox', {name:'Chapter manuscript'})).toHaveCount(0);
+  await expect(page.locator('.assistant-panel')).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-theme','light');
+  expect((await page.locator('.manuscript-preview').boundingBox())!.width).toBeGreaterThan(800);
+  await page.getByRole('button',{name:'Show assistant',exact:true}).click();
+  await expect(page.locator('.assistant-panel')).toBeVisible();
+  await page.getByRole('button',{name:'Hide assistant',exact:true}).click();
+  await expect(page.locator('.assistant-panel')).toHaveCount(0);
 });

@@ -3,7 +3,8 @@ import { Modal } from './ui';
 
 export function useWritingPreferences() {
   const [preferences, setPreferences] = useState(() => {
-    try {return {fontSize: 18, lineHeight: 1.8, textWidth: 720, sidebarWidth: 258, assistantWidth: 360, ...JSON.parse(localStorage.getItem('writing-preferences') ?? '{}')} as Record<string, number>;} catch {return {fontSize:18,lineHeight:1.8,textWidth:720,sidebarWidth:258,assistantWidth:360};}
+    if (localStorage.getItem('reading-width-version') !== '1') {const saved = JSON.parse(localStorage.getItem('writing-preferences') ?? '{}'); saved.textWidth = 1200; localStorage.setItem('writing-preferences', JSON.stringify(saved)); localStorage.setItem('reading-width-version', '1');}
+    try {return {fontSize: 18, lineHeight: 1.8, textWidth: 1200, sidebarWidth: 258, assistantWidth: 360, ...JSON.parse(localStorage.getItem('writing-preferences') ?? '{}')} as Record<string, number>;} catch {return {fontSize:18,lineHeight:1.8,textWidth:1200,sidebarWidth:258,assistantWidth:360};}
   });
   useEffect(() => {localStorage.setItem('writing-preferences', JSON.stringify(preferences));}, [preferences]);
   const style = Object.fromEntries(Object.entries(preferences).map(([key,value]) => [`--writing-${key}`, key === 'lineHeight' ? String(value) : `${value}px`])) as CSSProperties;
@@ -16,8 +17,8 @@ export function WritingPreferences({open, onClose, preferences, onChange}: {open
 
 export function WritingPreferencesContent({preferences, onChange}: {preferences: Record<string, number>; onChange: (key: string, value: number) => void}) {
   return <div className="stack">{[
-    ['fontSize','Prose font size',14,28,1,'px'],['lineHeight','Line spacing',1.3,2.4,.1,'×'],['textWidth','Text width',400,1000,20,'px'],['sidebarWidth','Chapter panel width',200,400,10,'px'],['assistantWidth','Assistant width',280,600,10,'px'],
-  ].map(([key,label,min,max,step,unit]) => <label key={key}> {label}: {Number(preferences[String(key)]).toFixed(key === 'lineHeight' ? 1 : 0)} {unit}<input type="range" min={min} max={max} step={step} value={preferences[String(key)]} onChange={e => onChange(String(key), Number(e.target.value))} /></label>)}<h3>Keyboard shortcuts</h3><p>Ctrl / ⌘ + Shift + F — Focus mode<br />Ctrl / ⌘ + Shift + A — Assistant<br />Ctrl / ⌘ + Shift + P — Write / preview<br />Alt + ← / → — Previous / next chapter<br />Escape — Leave focus mode or close a dialog</p></div>;
+    ['fontSize','Prose font size',14,28,1,'px'],['lineHeight','Line spacing',1.3,2.4,.1,'×'],['textWidth','Reading width',600,1600,20,'px'],['sidebarWidth','Chapter panel width',200,400,10,'px'],['assistantWidth','Assistant width',280,600,10,'px'],
+  ].map(([key,label,min,max,step,unit]) => <label key={key}> {label}: {Number(preferences[String(key)]).toFixed(key === 'lineHeight' ? 1 : 0)} {unit}<input type="range" min={min} max={max} step={step} value={preferences[String(key)]} onChange={e => onChange(String(key), Number(e.target.value))} /></label>)}<h3>Keyboard shortcuts</h3><p>Ctrl / ⌘ + Shift + F — Focus mode<br />Ctrl / ⌘ + Shift + A — Assistant<br />Alt + ← / → — Previous / next chapter<br />Escape — Leave focus mode or close a dialog</p></div>;
 }
 
 export function PanelResize({label, value, min, max, onChange, reverse = false}: {label:string;value:number;min:number;max:number;onChange:(value:number)=>void;reverse?:boolean}) {

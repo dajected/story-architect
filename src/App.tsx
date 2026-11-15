@@ -7,8 +7,12 @@ import { WorkspacePage } from './pages/WorkspacePage';
 type Theme = 'dark' | 'light';
 
 function currentTheme(): Theme {
-  const stored = localStorage.getItem('story-architect-theme');
-  return stored === 'light' ? 'light' : 'dark';
+  // Apply the reading appearance once, including to existing installations.
+  if (localStorage.getItem('reading-appearance-version') !== '1') {
+    localStorage.setItem('reading-appearance-version', '1');
+    localStorage.setItem('story-architect-theme', 'light');
+  }
+  return localStorage.getItem('story-architect-theme') === 'dark' ? 'dark' : 'light';
 }
 
 export function App() {

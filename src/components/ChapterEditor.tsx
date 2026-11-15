@@ -52,7 +52,7 @@ export function ChapterEditor({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'write' | 'preview'>('write');
+
   const [historyOpen, setHistoryOpen] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [instructions, setInstructions] = useState('');
@@ -84,7 +84,6 @@ export function ChapterEditor({
   useEffect(() => {const handler = (event: Event) => setImageCount((event as CustomEvent<number>).detail); window.addEventListener('chapter-image-count',handler);return () => window.removeEventListener('chapter-image-count',handler);}, []);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {const handler = () => setMode(current => current === 'write' ? 'preview' : 'write'); window.addEventListener('toggle-manuscript-preview', handler); return () => window.removeEventListener('toggle-manuscript-preview',handler);}, []);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const initialRevisionRef = useRef(chapter.currentRevisionId);
   const contentRef = useRef(content);
@@ -721,63 +720,6 @@ export function ChapterEditor({
         </section>
       ) : null}
 
-      {mode === 'write' && selection ? (
-        <section className="selection-tools">
-          <div className="selection-head">
-            <span className="eyebrow">Selected passage</span>
-            <span className="muted small">
-              {formatWords(countWords(selection.text))} words
-            </span>
-            <button
-              className="button button-ghost button-small selection-clear"
-              onClick={() => setSelection(null)}
-            >
-              Clear selection
-            </button>
-          </div>
-          <div className="selection-controls">
-            <input
-              value={rewriteInstruction}
-              onChange={(event) => setRewriteInstruction(event.target.value)}
-              placeholder="Optional focus or style note, e.g. colder, more clipped, keep the image of the door."
-              aria-label="Rewrite instruction"
-            />
-            {savedInstructions.length > 0 ? (
-              <select
-                value=""
-                onChange={(event) => {
-                  const found = savedInstructions.find((entry) => entry.id === event.target.value);
-                  if (found) setRewriteInstruction(found.text);
-                }}
-                aria-label="Use a saved instruction"
-              >
-                <option value="">Use a saved instruction…</option>
-                {savedInstructions.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-          </div>
-          <div className="selection-actions">
-            {(['rewrite', 'expand', 'shorten', 'style'] as RewriteAction[]).map((action) => (
-              <button
-                key={action}
-                className="button button-small"
-                onClick={() => void startRewrite(action)}
-                disabled={rewriteStream.running}
-              >
-                {REWRITE_ACTION_LABELS[action]}
-              </button>
-            ))}
-            <span className="muted small">
-              The model proposes a replacement. Nothing changes until you apply it.
-            </span>
-          </div>
-        </section>
-      ) : null}
-
       {rewriteStream.job ? (
         <section className="rewrite-panel">
           <div className="stream-head">
@@ -803,13 +745,7 @@ export function ChapterEditor({
             <Banner tone="danger">{rewriteStream.job.error}</Banner>
           ) : null}
           {rewriteStream.job.status === 'completed' ? (
-            <div className="proposal-comparison"><section><h3>Original passage</h3><blockquote>{originalPassage}</blockquote></section><section><h3>Suggested passage</h3><textarea
-              className="rewrite-proposal"
-              value={proposal}
-              onChange={(event) => setProposal(event.target.value)}
-              spellCheck
-              aria-label="Proposed replacement text"
-            /></section></div>
+            <div className="proposal-comparison"><section><h3>Original passage</h3><blockquote>{originalPassage}</blockquote></section><section><h3>Suggested passage</h3><div className="rewrite-proposal"><Markdown text={proposal} /></div></section></div>
           ) : (
             <div className="stream-output">
               {rewriteStream.output || (rewriteStream.running ? 'Waiting for the first tokens…' : 'No output.')}
@@ -879,46 +815,12 @@ export function ChapterEditor({
         </section>
       ) : null}
 
-      <div className="editor-toolbar"><button className="button button-small" onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}>Focus</button>
-        <div className="segmented">
-          <button aria-pressed={mode === 'write'} className={mode === 'write' ? 'active' : ''} onClick={() => setMode('write')}>
-            Write
-          </button>
-          <button aria-pressed={mode === 'preview'} className={mode === 'preview' ? 'active' : ''} onClick={() => setMode('preview')}>
-            Preview
-          </button>
+      <div className="editor-toolbar"><button className="button button-small" onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}>Focus on story</button><span className="muted small">Read your generated story</span></div>
+      <article className="editor-surface" aria-label="Story reader">
+        <div className="manuscript-preview">
+          {content.trim() ? <Markdown text={content} /> : <div className="empty-state"><h2>Your story will appear here</h2><p>Generate a draft to start reading this chapter.</p><button className="button button-primary" onClick={() => setShowGenerate(true)}>Generate draft</button></div>}
         </div>
-        <span className="muted small">
-          Markdown accepted. Autosaves as you go.
-        </span>
-      </div>
-
-      <div className="editor-surface">
-        {mode === 'write' ? (
-          <textarea
-            ref={node => {textareaRef.current = node; if (node) node.scrollTop = Number(sessionStorage.getItem(`chapter-scroll-${chapter.id}`) ?? 0);}}
-            onScroll={event => sessionStorage.setItem(`chapter-scroll-${chapter.id}`, String(event.currentTarget.scrollTop))}
-            aria-label="Chapter manuscript"
-            className="manuscript-textarea"
-            value={content}
-            onChange={(event) => {
-              setContent(event.target.value);
-              setSelection(null);
-            }}
-            onSelect={captureSelection}
-            placeholder="Begin the chapter, or generate a draft and edit it here."
-            spellCheck
-          />
-        ) : (
-          <div className="manuscript-preview">
-            {content.trim() ? (
-              <Markdown text={content} />
-            ) : (
-              <p className="muted">Nothing to preview yet.</p>
-            )}
-          </div>
-        )}
-      </div>
+      </article>
 
       <RevisionHistory
         open={historyOpen}
