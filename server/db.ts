@@ -456,6 +456,9 @@ const migrations: Array<() => void> = [
       CREATE INDEX idx_character_appearances_character ON character_appearances(character_id, chapter_id);
     `);
   },
+  () => {
+    db.exec('ALTER TABLE role_assignments ADD COLUMN provider_slug TEXT;');
+  },
 ];
 
 /**

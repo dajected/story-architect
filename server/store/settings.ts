@@ -21,6 +21,7 @@ interface RoleRow {
   role: TaskRole;
   connection_id: string | null;
   model: string | null;
+  provider_slug: string | null;
 }
 
 interface ProjectRowForSettings {
@@ -163,7 +164,7 @@ export function setProjectVisualStyle(projectId: string, visualStyle: string): v
 
 export function getRoleAssignments(scope: 'global' | 'project', scopeId = ''): RoleAssignment[] {
   const rows = dbAll<RoleRow>(
-    'SELECT role, connection_id, model FROM role_assignments WHERE scope = ? AND scope_id = ?',
+    'SELECT role, connection_id, model, provider_slug FROM role_assignments WHERE scope = ? AND scope_id = ?',
     scope,
     scopeId,
   );
@@ -171,6 +172,7 @@ export function getRoleAssignments(scope: 'global' | 'project', scopeId = ''): R
     role: row.role,
     connectionId: row.connection_id,
     model: row.model,
+    providerSlug: row.provider_slug,
   }));
 }
 
@@ -198,20 +200,24 @@ export function setRoleAssignments(
       );
       continue;
     }
-    getConnectionRow(assignment.connectionId);
+    const connection = getConnectionRow(assignment.connectionId);
+    if (assignment.providerSlug && connection.kind !== 'openrouter') {
+      throw badRequest('Provider selection is only available for OpenRouter connections.');
+    }
     if (!assignment.model?.trim()) {
       throw badRequest('Choose a model for each assigned role, or clear the assignment.');
     }
     dbRun(
-      `INSERT INTO role_assignments (scope, scope_id, role, connection_id, model, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO role_assignments (scope, scope_id, role, connection_id, model, provider_slug, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(scope, scope_id, role)
-       DO UPDATE SET connection_id = excluded.connection_id, model = excluded.model, updated_at = excluded.updated_at`,
+       DO UPDATE SET connection_id = excluded.connection_id, model = excluded.model, provider_slug = excluded.provider_slug, updated_at = excluded.updated_at`,
       scope,
       scopeId,
       assignment.role,
       assignment.connectionId,
       assignment.model.trim(),
+      assignment.providerSlug?.trim() || null,
       timestamp(),
     );
   }
@@ -221,6 +227,7 @@ interface ResolvedAssignment {
   role: TaskRole;
   connectionId: string;
   model: string;
+  providerSlug?: string | null;
   source: 'project' | 'global';
 }
 
@@ -236,6 +243,7 @@ function assignmentMaps(projectId?: string): {
           role: assignment.role,
           connectionId: assignment.connectionId,
           model: assignment.model,
+          providerSlug: assignment.providerSlug,
           source,
         });
       }
@@ -259,6 +267,7 @@ export function resolveRoles(projectId?: string): ResolvedRole[] {
         role,
         connectionId: own.connectionId,
         model: own.model,
+        providerSlug: own.providerSlug ?? null,
         connectionName: connectionNameSafe(own.connectionId),
         source: own.source,
       };
@@ -268,6 +277,7 @@ export function resolveRoles(projectId?: string): ResolvedRole[] {
         role,
         connectionId: defaultAssignment.connectionId,
         model: defaultAssignment.model,
+        providerSlug: defaultAssignment.providerSlug ?? null,
         connectionName: connectionNameSafe(defaultAssignment.connectionId),
         source: 'default',
       };
@@ -306,7 +316,10 @@ export function resolveTaskModel(
     connectionId: resolved.connectionId,
     model: resolved.model,
     role,
-    provider: getProviderConnection(resolved.connectionId),
+    provider: {
+      ...getProviderConnection(resolved.connectionId),
+      providerSlug: resolved.providerSlug ?? null,
+    },
   };
 }
 

@@ -75,7 +75,7 @@ export function ProjectSettingsModal({
   };
 
   const saveRoles = async (
-    assignments: Array<{ role: TaskRole; connectionId: string | null; model: string | null }>,
+    assignments: Array<{ role: TaskRole; connectionId: string | null; model: string | null; providerSlug: string | null }>,
   ) => {
     await api.setModelRoles({ scope: 'project', projectId: project.id, assignments });
     const roles = await api.getModelRoles(project.id);

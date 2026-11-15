@@ -1139,6 +1139,11 @@ textarea:disabled {
   min-width: 130px;
 }
 
+.role-inputs select.role-provider-select {
+  width: 28%;
+  min-width: 125px;
+}
+
 .role-inputs input {
   flex: 1;
   font-family: var(--font-mono);

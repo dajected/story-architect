@@ -1,4 +1,4 @@
-import type { ConnectionKind, ModelOption } from '../shared/types.js';
+import type { ConnectionKind, ModelOption, ModelProviderOption } from '../shared/types.js';
 import { prepareRequest } from './request-context.js';
 import type { PreparedRequest, RequestMessage } from './request-context.js';
 
@@ -9,6 +9,7 @@ export interface ProviderConnection {
   baseUrl: string;
   apiKey: string | null;
   models?: ModelOption[];
+  providerSlug?: string | null;
 }
 
 export interface ProviderMessage extends RequestMessage {}
@@ -140,6 +141,9 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
   body.max_tokens = prepared.maxTokens;
   if (connection.kind === 'openrouter') {
     body.stream_options = { include_usage: true };
+    if (connection.providerSlug) {
+      body.provider = { only: [connection.providerSlug], allow_fallbacks: false };
+    }
   }
 
   const response = await fetch(chatEndpoint(connection.baseUrl), {
@@ -286,6 +290,39 @@ export async function fetchModels(
 
   models.sort((a, b) => a.id.localeCompare(b.id));
   return models;
+}
+
+export async function fetchModelProviders(
+  connection: ProviderConnection,
+  model: string,
+): Promise<ModelProviderOption[]> {
+  const modelPath = model.split('/').map((part) => encodeURIComponent(part)).join('/');
+  const response = await fetch(`${normaliseBaseUrl(connection.baseUrl)}/models/${modelPath}/endpoints`, {
+    method: 'GET',
+    headers: {
+      ...(connection.apiKey ? { Authorization: `Bearer ${connection.apiKey}` } : {}),
+      ...headers(connection),
+      Accept: 'application/json',
+    },
+  });
+  await ensureOk(response);
+  const payload = (await response.json()) as Record<string, unknown>;
+  const data = payload.data as Record<string, unknown> | undefined;
+  const endpoints = Array.isArray(data?.endpoints) ? data.endpoints : [];
+  const options = new Map<string, ModelProviderOption>();
+  for (const value of endpoints) {
+    if (!value || typeof value !== 'object') continue;
+    const endpoint = value as Record<string, unknown>;
+    const slug =
+      typeof endpoint.provider_slug === 'string'
+        ? endpoint.provider_slug
+        : typeof endpoint.tag === 'string'
+          ? endpoint.tag
+          : null;
+    const name = typeof endpoint.provider_name === 'string' ? endpoint.provider_name : slug;
+    if (slug && name) options.set(slug, { slug, name });
+  }
+  return [...options.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function testConnection(

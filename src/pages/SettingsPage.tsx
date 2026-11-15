@@ -254,7 +254,7 @@ export function SettingsPage({
   };
 
   const saveRoles = async (
-    assignments: Array<{ role: TaskRole; connectionId: string | null; model: string | null }>,
+    assignments: Array<{ role: TaskRole; connectionId: string | null; model: string | null; providerSlug: string | null }>,
   ) => {
     await api.setModelRoles({ scope: 'global', assignments });
     await refreshSettings();
@@ -518,7 +518,7 @@ export function SettingsPage({
                 />
               </div>
               <div className="field">
-                <label htmlFor="connection-kind">Type</label>
+                <label htmlFor="connection-kind">Model provider</label>
                 <select
                   id="connection-kind"
                   value={editor.kind}

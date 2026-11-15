@@ -33,6 +33,7 @@ import type {
   Lorebook,
   MemoryOverview,
   ModelOption,
+  ModelProviderOption,
   OutlineChapter,
   OutlineRevision,
   PortraitBatch,
@@ -228,6 +229,11 @@ export const api = {
       'POST',
       `/connections/${id}/refresh-models`,
     ),
+  getModelProviders: (id: string, model: string) =>
+    request<{ providers: ModelProviderOption[] }>(
+      'GET',
+      `/connections/${id}/model-providers?model=${encodeURIComponent(model)}`,
+    ).then((r) => r.providers),
 
   // Global settings and roles
   getSettings: () => request<SettingsResponse>('GET', '/settings'),
@@ -243,7 +249,7 @@ export const api = {
   setModelRoles: (params: {
     scope: 'global' | 'project';
     projectId?: string;
-    assignments: Array<{ role: TaskRole; connectionId: string | null; model: string | null }>;
+    assignments: Array<{ role: TaskRole; connectionId: string | null; model: string | null; providerSlug?: string | null }>;
   }) => request<{ roles: ResolvedRole[] }>('PUT', '/model-roles', params),
 
   // Prompt templates

@@ -24,7 +24,7 @@ import {
   setDefaultPromptTemplate,
   updatePromptTemplate,
 } from '../store/templates.js';
-import { fetchModels, testConnection } from '../providers.js';
+import { fetchModelProviders, fetchModels, testConnection } from '../providers.js';
 import { suggestProjectField } from '../generation.js';
 import { AppError, badRequest, errorMessage } from '../errors.js';
 import { parseBody, stringParam, wrap } from './helpers.js';
@@ -95,6 +95,17 @@ settingsRouter.post(
   }),
 );
 
+settingsRouter.get(
+  '/connections/:id/model-providers',
+  wrap(async (req, res) => {
+    const connection = getProviderConnection(stringParam(req.params.id, 'connection id'));
+    const model = typeof req.query.model === 'string' ? req.query.model : '';
+    if (!model.trim()) throw badRequest('A model ID is required.');
+    if (connection.kind !== 'openrouter') throw badRequest('Provider selection is only available for OpenRouter.');
+    res.json({ providers: await fetchModelProviders(connection, model) });
+  }),
+);
+
 settingsRouter.get('/settings', (_req, res) => {
   res.json({
     generation: getGlobalSettings().generation,
@@ -125,6 +136,7 @@ const assignmentSchema = z.object({
       role: z.enum(TASK_ROLES as [string, ...string[]]),
       connectionId: z.string().nullable(),
       model: z.string().nullable(),
+      providerSlug: z.string().nullable().optional(),
     }),
   ),
 });

@@ -95,11 +95,17 @@ export interface RoleAssignment {
   role: TaskRole;
   connectionId: string | null;
   model: string | null;
+  providerSlug?: string | null;
 }
 
 export interface ResolvedRole extends RoleAssignment {
   connectionName: string | null;
   source: 'project' | 'global' | 'default' | 'unset';
+}
+
+export interface ModelProviderOption {
+  name: string;
+  slug: string;
 }
 
 export interface GlobalSettings {
