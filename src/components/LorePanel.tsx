@@ -321,9 +321,9 @@ export function LorePanel({ project }: { project: Project }) {
       <header className="panel-header lore-header">
         <div>
           <p className="eyebrow">Lore</p>
-          <h1>Lorebooks</h1>
+          <h1>World notes</h1>
           <p className="lede">
-            Entries activate from keywords in the chapter brief, your generation instructions,
+            Places, rules and background you provide. Entries are used when their keywords match the chapter brief, your generation instructions,
             and recent prose. Pinned and always-include entries are used every time, within the
             lore budget.
           </p>
@@ -583,7 +583,7 @@ export function LorePanel({ project }: { project: Project }) {
       <section className="prose-instructions">
         <div className="lore-book-head">
           <div>
-            <h2>Saved prose instructions</h2>
+            <h2 id="saved-writing-instructions">Saved writing instructions</h2>
             <p className="muted small">
               Reusable notes you can drop into chapter generation or a style rewrite. They never
               change the manuscript by themselves.

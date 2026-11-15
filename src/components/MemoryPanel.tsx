@@ -31,10 +31,12 @@ export function MemoryPanel({
   project,
   onProjectChanged,
   onOpenSettings,
+  onOpenChapter,
 }: {
   project: Project;
   onProjectChanged: () => Promise<void>;
   onOpenSettings: () => void;
+  onOpenChapter?: (id: string) => void;
 }) {
   const [data, setData] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -248,9 +250,9 @@ export function MemoryPanel({
       <header className="panel-header memory-header">
         <div>
           <p className="eyebrow">Story memory</p>
-          <h1>Memory</h1>
+          <h1>Story memory</h1>
           <p className="lede">
-            Summaries and facts are derived from accepted manuscript revisions. Proposed canon
+            Facts and summaries collected from your chapters. Accepting a fact guides future AI drafts; it does not edit your manuscript. Proposed canon
             only enters later prompts after you accept it.
           </p>
         </div>
@@ -385,7 +387,7 @@ export function MemoryPanel({
 
                   <div className="memory-row-body">
                     <div className="memory-row-head">
-                      <h3>{formatChapterLabel(memory.chapterTitle, memory.orderIndex)}</h3>
+                      <h3>{formatChapterLabel(memory.chapterTitle, memory.orderIndex)}</h3>{onOpenChapter ? <button className="button button-small" onClick={() => onOpenChapter(memory.chapterId)}>Open this chapter</button> : null}
                       <MemoryBadge status={memory.status} />
                       <span className="muted small">
                         {formatWords(memory.wordCount)} words · source{' '}

@@ -280,7 +280,7 @@ export function SettingsPage({
 
       <main className="settings-layout">
         <aside className="settings-nav">
-          <p className="eyebrow">Settings</p>
+          <p className="eyebrow">App settings</p>
           <nav>
             <button aria-pressed={tab === 'connections'} className={tab === 'connections' ? 'active' : ''} onClick={() => setTab('connections')}>
               Connections
@@ -289,7 +289,7 @@ export function SettingsPage({
               Models &amp; roles
             </button>
             <button aria-pressed={tab === 'generation'} className={tab === 'generation' ? 'active' : ''} onClick={() => setTab('generation')}>
-              Generation
+              Advanced generation
             </button>
             <button aria-pressed={tab === 'prompts'} className={tab === 'prompts' ? 'active' : ''} onClick={() => setTab('prompts')}>
               Prompt templates
@@ -313,7 +313,7 @@ export function SettingsPage({
           </p>
         </aside>
 
-        <section className="settings-content">
+        <section className="settings-content"><section className="setup-checklist"><h2>Set up your writing model</h2><p className="muted">These defaults apply to every novel unless you choose an override.</p><ol className="setup-steps"><li><button className="button button-small" onClick={() => setTab('connections')}>1. Connect and test</button></li><li><button className="button button-small" onClick={() => setTab('models')}>2. Choose your default model</button></li><li><Link className="button button-small" to={returnTo}>3. {returnTo === '/' ? 'Return to library' : 'Return to novel'}</Link></li></ol></section>
           {error ? <Banner tone="danger">{error}</Banner> : null}
           {notice ? <Banner tone="success">{notice}</Banner> : null}
 

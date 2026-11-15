@@ -250,7 +250,7 @@ export function CharactersPanel({
       {proposed.length > 0 ? (
       <section className="cast-section">
           <div className="cast-section-head">
-            <h2>Proposed cast</h2>
+            <h2>Proposed characters</h2><p className="muted small">Accepting adds a character to your story reference for future AI drafts. It does not change existing manuscript text.</p>
             <span className="badge badge-warning">{proposed.length} awaiting review</span>
           </div>
           <div className="cast-grid">
@@ -297,7 +297,7 @@ export function CharactersPanel({
 
       <section className="cast-section">
         <div className="cast-section-head">
-          <h2>The cast</h2>
+          <h2>Characters</h2>
           <span className="muted small">
             {active.length} active {active.length === 1 ? 'character' : 'characters'}
           </span>

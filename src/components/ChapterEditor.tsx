@@ -75,6 +75,7 @@ export function ChapterEditor({
   );
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [proposal, setProposal] = useState('');
+  const [originalPassage, setOriginalPassage] = useState('');
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applyingRewrite, setApplyingRewrite] = useState(false);
   const [savedInstructions, setSavedInstructions] = useState<ProseInstruction[]>([]);
@@ -304,6 +305,7 @@ export function ChapterEditor({
     if (!selection) return;
     setApplyError(null);
     setProposal('');
+    setOriginalPassage(selection.text);
     try {
       const job = await api.rewriteChapter(chapter.id, {
         action,
@@ -429,7 +431,7 @@ export function ChapterEditor({
   const finishedJob = !stream.running && stream.job ? stream.job : null;
 
   return (
-    <div className="chapter-editor">
+    <div className="chapter-editor" ref={node => {if (node) node.scrollTop = Number(sessionStorage.getItem(`editor-scroll-${chapter.id}`) ?? 0);}} onScroll={event => {if (event.target === event.currentTarget) sessionStorage.setItem(`editor-scroll-${chapter.id}`, String(event.currentTarget.scrollTop));}}>
       <header className="editor-header">
         <div className="editor-title">
 
@@ -475,7 +477,7 @@ export function ChapterEditor({
             Edit outline
           </button>
           <button className="button button-ghost button-small" onClick={onOpenMemory}>
-            Memory
+            Story memory
           </button>
           <button className="button button-ghost button-small" onClick={() => void startReview()}>
             Review continuity
@@ -485,7 +487,7 @@ export function ChapterEditor({
           </button>
           </div></details>
           <button className="button button-primary button-small" onClick={() => setShowGenerate((open) => !open)}>
-            {showGenerate ? 'Hide generation' : 'Generate chapter'}
+            {showGenerate ? 'Hide generation' : 'Generate draft'}
           </button>
         </div>
       </header>
@@ -793,7 +795,7 @@ export function ChapterEditor({
                 className="button button-ghost button-small stream-dismiss"
                 onClick={dismissRewrite}
               >
-                Discard
+                Keep original
               </button>
             ) : null}
           </div>
@@ -801,13 +803,13 @@ export function ChapterEditor({
             <Banner tone="danger">{rewriteStream.job.error}</Banner>
           ) : null}
           {rewriteStream.job.status === 'completed' ? (
-            <textarea
+            <div className="proposal-comparison"><section><h3>Original passage</h3><blockquote>{originalPassage}</blockquote></section><section><h3>Suggested passage</h3><textarea
               className="rewrite-proposal"
               value={proposal}
               onChange={(event) => setProposal(event.target.value)}
               spellCheck
               aria-label="Proposed replacement text"
-            />
+            /></section></div>
           ) : (
             <div className="stream-output">
               {rewriteStream.output || (rewriteStream.running ? 'Waiting for the first tokens…' : 'No output.')}
@@ -832,7 +834,7 @@ export function ChapterEditor({
               }
             >
               {applyingRewrite ? <Spinner /> : null}
-              Apply rewrite
+              Use this
             </button>
           </div>
         </section>
@@ -877,7 +879,7 @@ export function ChapterEditor({
         </section>
       ) : null}
 
-      <div className="editor-toolbar">
+      <div className="editor-toolbar"><button className="button button-small" onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}>Focus</button>
         <div className="segmented">
           <button aria-pressed={mode === 'write'} className={mode === 'write' ? 'active' : ''} onClick={() => setMode('write')}>
             Write
@@ -894,7 +896,8 @@ export function ChapterEditor({
       <div className="editor-surface">
         {mode === 'write' ? (
           <textarea
-            ref={textareaRef}
+            ref={node => {textareaRef.current = node; if (node) node.scrollTop = Number(sessionStorage.getItem(`chapter-scroll-${chapter.id}`) ?? 0);}}
+            onScroll={event => sessionStorage.setItem(`chapter-scroll-${chapter.id}`, String(event.currentTarget.scrollTop))}
             aria-label="Chapter manuscript"
             className="manuscript-textarea"
             value={content}

@@ -52,8 +52,8 @@ export function WorkspacePage({
   const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1180 && localStorage.getItem('assistant-open') === 'true');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'story' | 'app'>('story');
-  const openSettings = (section: 'story' | 'app' = 'story') => {setSettingsSection(section); setSettingsOpen(true);};
+  const [settingsSection, setSettingsSection] = useState<'story'>('story');
+  const openSettings = (section: 'story' | 'app' | 'instructions' = 'story') => { if (section === 'app') { navigate(`/settings?tab=image-connections&returnTo=${encodeURIComponent(`/projects/${projectId}?tab=${tab}`)}`); return; } if (section === 'instructions') {setSettingsOpen(false); setTab('lore'); setTimeout(() => document.getElementById('saved-writing-instructions')?.scrollIntoView({block: 'start'}), 100); return;} setSettingsSection('story'); setSettingsOpen(true); };
   const initialised = useRef(false);
   const [focusMode, setFocusMode] = useState(false);
   const [chaptersVisible, setChaptersVisible] = useState(() => localStorage.getItem('chapters-visible') !== 'false');
@@ -61,6 +61,7 @@ export function WorkspacePage({
   const setPreference = (key: string, value: number) => setPreferences(current => ({...current, [key]:value}));
   useEffect(() => {if (project) localStorage.setItem(`workspace-tab-${projectId}`, tab);}, [tab, project, projectId]);
   useEffect(() => {setVisited(current => current.has(tab) ? current : new Set(current).add(tab));}, [tab]);
+  useEffect(() => {const toggle = () => setFocusMode(v => !v); window.addEventListener('toggle-writing-focus', toggle); return () => window.removeEventListener('toggle-writing-focus', toggle);}, []);
   useEffect(() => {localStorage.setItem('assistant-open', String(assistantOpen));}, [assistantOpen]);
   useEffect(() => {localStorage.setItem('chapters-visible', String(chaptersVisible));}, [chaptersVisible]);
   useEffect(() => {const handler = () => {if (window.innerWidth <= 1180) setAssistantOpen(false);};window.addEventListener('resize', handler);return () => window.removeEventListener('resize',handler);}, []);
@@ -94,6 +95,7 @@ export function WorkspacePage({
     try {
       const detail = await api.getChapter(id);
       setChapterDetail(detail);
+      localStorage.setItem(`last-chapter-${projectId}`, JSON.stringify({title: detail.title, orderIndex: detail.orderIndex}));
     } catch (err) {
       setChapterError(errorText(err));
       setChapterDetail(null);
@@ -278,13 +280,13 @@ export function WorkspacePage({
             Outline
           </button>
           <button aria-pressed={tab === 'cast'} className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>
-            Cast
+            Characters
           </button>
           <button aria-pressed={tab === 'memory'} className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
-            Memory
+            Story memory
           </button>
           <button aria-pressed={tab === 'lore'} className={tab === 'lore' ? 'active' : ''} onClick={() => setTab('lore')}>
-            Lore
+            World notes
           </button>
           <button
             aria-pressed={tab === 'activity'} className={tab === 'activity' ? 'active' : ''}
@@ -296,15 +298,8 @@ export function WorkspacePage({
         </nav>
 
         <div className="workspace-actions">
-          {focusMode ? <button className="button button-small" onClick={() => setFocusMode(false)}>Exit focus</button> : null}
-          <button className="button button-small" onClick={() => openSettings()}>Settings</button>
-          <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content" onClick={event => {
-            if ((event.target as HTMLElement).closest('button, a')) {
-              const menu = event.currentTarget.closest('details');
-              menu?.removeAttribute('open');
-              menu?.querySelector('summary')?.focus();
-            }
-          }}>
+
+          <button className="button button-small" onClick={() => openSettings()}>Novel settings</button>
           {tab === 'manuscript' ? <button className="button button-ghost button-small" aria-pressed={window.innerWidth <= 1180 ? sidebarOpen : chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
             {sidebarOpen || (window.innerWidth > 1180 && chaptersVisible) ? 'Hide chapters' : 'Show chapters'}
           </button> : null}
@@ -315,8 +310,16 @@ export function WorkspacePage({
           >
             {assistantOpen ? 'Hide assistant' : 'Show assistant'}
           </button>
-          <button className="button button-small" aria-pressed={focusMode} onClick={() => {setTab('manuscript'); setFocusMode(v => !v);}}>{focusMode ? 'Exit focus' : 'Focus'}</button>
+          {focusMode ? <button className="button button-small" onClick={() => setFocusMode(false)}>Exit focus</button> : null}
           <Link className="button button-small" to="/">Library</Link>
+          <Link className="button button-small" to={`/settings?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=${tab}`)}`}>App settings</Link>
+          <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content" onClick={event => {
+            if ((event.target as HTMLElement).closest('button, a')) {
+              const menu = event.currentTarget.closest('details');
+              menu?.removeAttribute('open');
+              menu?.querySelector('summary')?.focus();
+            }
+          }}>
           <a className="button button-ghost button-small" href={`/api/projects/${project.id}/export.html`}>Export HTML (chapter images)</a>
           <a className="button button-ghost button-small" href={api.exportUrl(project.id)}>
             Export Markdown
@@ -356,6 +359,7 @@ export function WorkspacePage({
         </Banner>
       ) : null}
 
+      {project.outlineStatus !== 'approved' || totalWords === 0 ? <section className="next-step" aria-label="Next step"><div><strong>{project.outlineStatus === 'approved' ? 'Next: start chapter 1' : project.outlineStatus === 'draft' ? 'Next: review and approve your outline' : 'Next: create your outline'}</strong><p className="muted small">{project.outlineStatus === 'approved' ? 'Write yourself or open Generate draft in the editor.' : 'Approving creates your chapter list and unlocks AI drafting. Review the titles and briefs first.'}</p></div><button className="button button-primary button-small" onClick={() => {setTab(project.outlineStatus === 'approved' ? 'manuscript' : 'outline'); if (project.outlineStatus === 'approved' && chapters[0]) void selectChapter(chapters[0].id);}}>{project.outlineStatus === 'approved' ? 'Start chapter 1' : 'Open outline'}</button></section> : null}
       <div className="workspace-main">
         <ChapterSidebar
           chapters={chapters}
@@ -466,6 +470,7 @@ export function WorkspacePage({
                 <MemoryPanel
                   project={project}
                   onProjectChanged={refreshAll}
+                  onOpenChapter={(id) => {setTab('manuscript'); void selectChapter(id);}}
                   onOpenSettings={() => openSettings()}
                 />
               </div>
@@ -503,7 +508,7 @@ export function WorkspacePage({
       <ProjectSettingsModal
         initialSection={settingsSection}
         theme={theme} onThemeChange={onThemeChange}
-        displayPreferences={<><ThemeToggle theme={theme} onChange={onThemeChange} /><WritingPreferencesContent preferences={preferences} onChange={setPreference} /></>}
+        displayPreferences={<><button className="button" onClick={() => openSettings('instructions')}>Manage saved writing instructions</button><ThemeToggle theme={theme} onChange={onThemeChange} /><WritingPreferencesContent preferences={preferences} onChange={setPreference} /></>}
         open={settingsOpen}
         project={project}
         connections={connections}

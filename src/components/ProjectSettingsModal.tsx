@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { SettingsPage } from '../pages/SettingsPage';
 import type { Theme } from './Chrome';
 import { confirmAction } from './ui';
 import { useEffect, useState } from 'react';
@@ -21,7 +20,7 @@ import { TemplateManager } from './TemplateManager';
 import { Banner, Modal, Spinner } from './ui';
 import { errorText } from '../utils';
 
-type Section = 'story' | 'generation' | 'models' | 'prompts' | 'images' | 'danger' | 'app' | 'display';
+type Section = 'story' | 'generation' | 'models' | 'prompts' | 'images' | 'danger' | 'display';
 
 export function ProjectSettingsModal({
   open,
@@ -32,7 +31,7 @@ export function ProjectSettingsModal({
   onArchived,
   theme, onThemeChange, displayPreferences, initialSection = 'story',
 }: {
-  initialSection?: 'story' | 'app';
+  initialSection?: 'story';
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   displayPreferences: ReactNode;
@@ -114,16 +113,15 @@ export function ProjectSettingsModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={`Settings — ${project.title}`}
+      title={`Novel settings — ${project.title}`}
       width="wide"
     >
       <div className="project-settings">
-        <nav className="subnav">
+        <nav className="subnav" aria-label="Novel settings">
           {(
             [
               ['story', 'Story setup'],
               ['display', 'Writing & appearance'],
-              ['app', 'App defaults & connections'],
               ['generation', 'Generation'],
               ['models', 'Model overrides'],
               ['prompts', 'Prompt templates'],
@@ -142,7 +140,6 @@ export function ProjectSettingsModal({
         </nav>
 
         <div className="project-settings-body">
-          {section === 'app' ? <SettingsPage embedded startTab={initialSection === 'app' ? 'image-connections' : undefined} theme={theme} onThemeChange={onThemeChange} /> : null}
           {section === 'display' ? displayPreferences : null}
           {error ? <Banner tone="danger">{error}</Banner> : null}
 

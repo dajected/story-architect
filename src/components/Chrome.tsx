@@ -59,7 +59,7 @@ export function PageHeader({
       <nav className="page-nav">
         {children}
         <Link className="button button-ghost button-small" to="/settings">
-          Settings
+          App settings
         </Link>
         <ThemeToggle theme={theme} onChange={onThemeChange} />
       </nav>

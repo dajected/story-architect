@@ -116,7 +116,7 @@ export function LibraryPage({
       </PageHeader>
 
       <main className="page-body">
-        <section className="library-hero">
+        <section className={`library-hero ${active.length ? 'returning-library' : ''}`}>
           <div>
             <p className="eyebrow">Novel workspace</p>
             <h1>Your library</h1>
@@ -220,7 +220,7 @@ export function LibraryPage({
           </section>
         ) : null}
 
-        <section className="library-footnote">
+        <details className="library-footnote"><summary>Model connections and setup</summary>
           <div>
             <h3>Bring your own models</h3>
             <p className="muted">
@@ -231,7 +231,7 @@ export function LibraryPage({
           <Link className="button" to="/settings">
             Configure connections
           </Link>
-        </section>
+        </details>
       </main>
 
       <Modal
@@ -256,6 +256,8 @@ function ProjectCard({
   onArchive?: (project: Project) => void;
   onRestore?: (project: Project) => void;
 }) {
+  let lastChapter: { title: string; orderIndex: number } | null = null;
+  try { lastChapter = JSON.parse(localStorage.getItem(`last-chapter-${project.id}`) ?? 'null'); } catch { /* Ignore old browser data. */ }
   return (
     <article className="project-card">
       <Link className="project-card-main" to={`/projects/${project.id}${project.currentWords > 0 ? '?tab=manuscript' : ''}`}>
@@ -278,7 +280,7 @@ function ProjectCard({
       </Link>
       <div className="project-card-actions">
         <Link className="button button-ghost button-small" to={`/projects/${project.id}${project.currentWords > 0 ? '?tab=manuscript' : ''}`}>
-          {project.currentWords > 0 ? 'Continue writing →' : project.outlineStatus === 'draft' ? 'Review outline →' : 'Open project →'}
+          {project.currentWords > 0 ? lastChapter ? `Continue chapter ${lastChapter.orderIndex + 1}: ${lastChapter.title}` : 'Continue writing →' : project.outlineStatus === 'draft' ? 'Review outline →' : 'Open project →'}
         </Link>
         <BackupButton projectId={project.id} label="Back up" />
         {onArchive ? (

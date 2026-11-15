@@ -4430,3 +4430,15 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
   .memory-row { grid-template-columns: minmax(0, 1fr); }
   .memory-row-actions { grid-column: 1; }
 }
+
+/* Keep the writing journey and review decisions easy to find. */
+.next-step { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 24px; border-bottom:1px solid var(--border); }
+.next-step p { margin:4px 0 0; }
+.proposal-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; padding:16px; }
+.proposal-comparison section { min-width:0; }
+.proposal-comparison blockquote { white-space:pre-wrap; margin:0; padding:12px; }
+.proposal-comparison textarea { width:100%; }
+.returning-library { padding-block:20px; }
+.returning-library .lede, .returning-library .eyebrow { display:none; }
+.workspace-actions { flex-wrap:wrap; }
+@media (max-width:720px) { .proposal-comparison { grid-template-columns:1fr; } .next-step { align-items:flex-start; padding:12px; } }

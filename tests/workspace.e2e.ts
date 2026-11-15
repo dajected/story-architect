@@ -35,14 +35,14 @@ test.afterAll(async()=>{await new Promise<void>(resolve=>provider.close(()=>reso
 test('chapter images, viewer, studio, timeline and focus mode work with keyboard access',async({page})=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`/projects/${projectId}?tab=manuscript`);
-  await expect(page.getByRole('heading',{name:'After the storm',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Chapter 1: After the storm',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Chapter images',exact:true}).click();
-  const gallery=page.getByRole('dialog',{name:'Chapter images — After the storm'});
+  const gallery=page.getByRole('dialog',{name:/Chapter images .*Chapter 1: After the storm/});
   await expect(gallery).toBeVisible();
   await gallery.getByRole('button',{name:'View image of Mara Voss'}).click();
-  const viewer=page.getByRole('dialog',{name:'Mara Voss — Image viewer'});await expect(viewer).toBeVisible();
+  const viewer=page.getByRole('dialog',{name:/^Mara Voss .*Chapter 1: After the storm$/});await expect(viewer).toBeVisible();
   await page.keyboard.press('Escape');await expect(viewer).not.toBeVisible();await expect(gallery).toBeVisible();
-  await gallery.getByLabel('Select Mara Voss for generation').check();await gallery.getByLabel('Select Elias for generation').check();
+  await gallery.getByRole('button',{name:'Generate images',exact:true}).click();await gallery.getByLabel('Select Mara Voss for generation').check();await gallery.getByLabel('Select Elias for generation').check();
   await gallery.getByRole('button',{name:'Generate selected (2)'}).click();await page.getByRole('dialog',{name:'Confirm action'}).getByRole('button',{name:'Continue'}).click();
   await expect(gallery.getByText('completed: 2',{exact:true})).toBeVisible();
   await gallery.locator('.portrait-cast-row').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Customize',exact:true}).click();
@@ -52,7 +52,7 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
   await page.keyboard.press('Escape');await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Focus',exact:true}).click();await expect(page.locator('.chapter-sidebar')).toBeHidden();await expect(page.locator('.compact-portraits')).toBeHidden();
   await page.keyboard.press('Escape');await expect(page.locator('.compact-portraits')).toBeVisible();
-  await page.getByRole('button',{name:'Cast',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();
+  await page.getByRole('button',{name:'Characters',exact:true}).click();await page.locator('.cast-card').filter({hasText:'Mara Voss'}).getByRole('button',{name:'Appearance timeline'}).click();
   await expect(page.getByRole('heading',{name:'Images',exact:true})).toBeVisible();
   await expect(page.locator('.images-filter select').first()).toHaveValue(castCharacterId);
   await expect(page.getByLabel('Selected chapter images only')).toBeChecked();
@@ -64,10 +64,10 @@ test('chapter images, viewer, studio, timeline and focus mode work with keyboard
 test('populated layouts fit small screens and settings dialogs retain keyboard focus',async({page})=>{
   for(const width of [1440,1024,720,390,320]) {
     await page.setViewportSize({width,height:900});await page.goto(`/projects/${projectId}?tab=manuscript`);
-    await expect(page.getByRole('heading',{name:'After the storm',exact:true})).toBeVisible();
+    await expect(page.getByRole('heading',{name:'Chapter 1: After the storm',exact:true})).toBeVisible();
     const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2);expect(overflow,`workspace overflow at ${width}px`).toBe(false);
     await page.getByRole('button',{name:'Chapter images',exact:true}).click();
-    const dialog=page.getByRole('dialog',{name:'Chapter images — After the storm'});await expect(dialog).toBeVisible();
+    const dialog=page.getByRole('dialog',{name:/Chapter images .*Chapter 1: After the storm/});await expect(dialog).toBeVisible();
     expect(await dialog.evaluate(el=>el.getBoundingClientRect().width<=innerWidth),`image dialog at ${width}px`).toBe(true);
     await page.keyboard.press('Escape');
     const titleBox=await page.locator('.workspace-topbar-left').boundingBox();const actionsBox=await page.locator('.workspace-actions').boundingBox();
@@ -80,10 +80,27 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
   await modal.getByRole('button',{name:'Save connection'}).focus();await page.keyboard.press('Tab');expect(await modal.evaluate(el=>el.contains(document.activeElement))).toBe(true);
   await page.keyboard.press('Escape');await expect(modal).not.toBeVisible();
   await expect(page.getByRole('button',{name:'Add connection',exact:true})).toBeFocused();
-  await page.goto('/');await expect(page.locator('.version-badge')).toHaveText(/^v\d+\.\d+\.\d+ · [0-9a-z]{3,}$/);await page.getByRole('button',{name:'Compact view'}).click();await expect(page.locator('.compact-library')).toBeVisible();
+  await page.goto('/');await expect(page.getByRole('heading',{name:'Your library',exact:true})).toBeVisible();await page.getByRole('button',{name:'Compact view'}).click();await expect(page.locator('.compact-library')).toBeVisible();
   await page.getByLabel('Search projects').fill('no matching novel');await expect(page.getByRole('heading',{name:'No novels match that search'})).toBeVisible();
   await page.getByLabel('Search projects').fill('');await page.getByRole('button',{name:'New novel',exact:true}).click();
   await expect(page.getByRole('textbox',{name:'Title',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'Writing style',exact:true})).toBeHidden();await page.keyboard.press('Escape');
   await page.goto(`/projects/${projectId}?tab=manuscript`);await page.evaluate(()=>{document.documentElement.style.zoom='2';});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'workspace fits at 200% CSS zoom').toBe(true);
+});
+
+
+test('workspace navigation returns to the same chapter and separates app settings', async ({page}) => {
+  await page.goto(`/projects/${projectId}?tab=manuscript`);
+  await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
+  await page.getByRole('button', {name:'Novel settings',exact:true}).click();
+  const settings = page.getByRole('dialog', {name:/Novel settings/});
+  await expect(settings).toBeVisible();
+  await expect(settings.getByRole('button', {name:'App defaults & connections'})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('link', {name:'App settings',exact:true}).click();
+  await page.getByRole('link', {name:'3. Return to novel'}).click();
+  await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
+  await page.getByRole('link', {name:'Library',exact:true}).click();
+  await page.getByRole('link', {name:'Continue chapter 1: After the storm',exact:true}).click();
+  await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
 });

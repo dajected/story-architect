@@ -251,7 +251,7 @@ export function AssistantPanel({
         <header className="assistant-head">
           <div>
             <p className="eyebrow">Writing assistant</p>
-            <h2>Workshop</h2>
+            <h2>Assistant</h2>
           </div>
           <div className="assistant-head-actions">
             <button className="button button-ghost button-small" onClick={newConversation}>

@@ -25,6 +25,7 @@ export function RoleEditor({
   ) => Promise<void>;
 }) {
   const [rows, setRows] = useState<Record<string, EditRow>>(() => initialRows(roles, scope));
+  const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -87,8 +88,8 @@ export function RoleEditor({
         </Banner>
       ) : null}
 
-      <div className="role-list">
-        {TASK_ROLES.map((role) => {
+      <p className="muted">Choose a default model for all writing tasks. You can choose different models for individual tasks under Advanced.</p><button type="button" className="button button-small" aria-expanded={advanced} onClick={() => setAdvanced(v => !v)}>Advanced: models for individual tasks</button><div className="role-list">
+        {TASK_ROLES.filter(role => advanced || role === 'default').map((role) => {
           const row = rows[role] ?? { connectionId: '', model: '' };
           const connection = connections.find((entry) => entry.id === row.connectionId);
           const resolved = resolvedByRole.get(role);
