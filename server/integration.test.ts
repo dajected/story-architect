@@ -890,30 +890,20 @@ describe('stage 2 memory, cast, and context', () => {
     );
     const [first, second] = chapters.chapters;
 
-    // Manual cast plus a proposal from the outline.
-    await request('POST', `/projects/${project.id}/characters`, {
-      name: 'Mara',
-      role: 'protagonist',
-      identity: 'A surveyor who maps abandoned places.',
+    // Outline generation automatically creates active characters.
+    const pendingCast = await request<{ activeJob: { id: string } | null }>('GET', `/projects/${project.id}/characters`);
+    if (pendingCast.activeJob) expect((await waitForJob(pendingCast.activeJob.id)).status).toBe('completed');
+    const cast = await request<{ characters: Array<{ id: string; name: string; status: string }> }>('GET', `/projects/${project.id}/characters`);
+    const mara = cast.characters.find((character) => character.name === 'Mara');
+    const iven = cast.characters.find((character) => character.name === 'Iven');
+    expect(mara?.status).toBe('active');
+    expect(iven?.status).toBe('active');
+    await request('PATCH', `/characters/${mara!.id}`, {
+      role: 'protagonist', identity: 'A surveyor who maps abandoned places.',
       appearance: 'Cropped hair and a heavy canvas coat.',
-      personality: 'Patient, stubborn, uneasy with company.',
-      goals: 'Learn what the key opens.',
+      personality: 'Patient, stubborn, uneasy with company.', goals: 'Learn what the key opens.',
       relationships: 'Distrusts her former partner, Iven.',
     });
-    const castJob = await request<{ job: { id: string } }>(
-      'POST',
-      `/projects/${project.id}/characters/propose`,
-      {},
-    );
-    expect((await waitForJob(castJob.job.id)).status).toBe('completed');
-    const cast = await request<{ characters: Array<{ id: string; name: string; status: string }> }>(
-      'GET',
-      `/projects/${project.id}/characters`,
-    );
-    const iven = cast.characters.find((character) => character.name === 'Iven');
-    expect(iven?.status).toBe('proposed');
-    expect(cast.characters.some((character) => character.name === 'Mara')).toBe(true);
-    await request('POST', `/characters/${iven!.id}/accept`);
 
     // Draft chapter 1; the memory role should summarise it automatically.
     const chapterJob = await request<{ job: { id: string } }>(

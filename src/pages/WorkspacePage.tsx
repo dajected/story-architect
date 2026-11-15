@@ -455,7 +455,7 @@ export function WorkspacePage({
 
           {visited.has('images') ? (
             <div className={`workspace-view ${tab === 'images' ? '' : 'is-hidden'}`}>
-              <div className="workspace-scroll">
+              <div className="workspace-scroll workspace-standard-padding">
                 <ProjectImagesPanel onOpenSettings={() => openSettings('app')} project={project} focus={imagesFocus} active={tab === 'images'} onOpenCast={() => setTab('cast')} />
               </div>
             </div>
@@ -497,7 +497,7 @@ export function WorkspacePage({
 
           {visited.has('activity') ? (
             <div className={`workspace-view ${tab === 'activity' ? '' : 'is-hidden'}`}>
-              <div className="workspace-scroll">
+              <div className="workspace-scroll workspace-standard-padding">
                 <GenerationHistoryPanel project={project} />
               </div>
             </div>

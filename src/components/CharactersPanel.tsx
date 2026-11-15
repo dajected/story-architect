@@ -34,6 +34,7 @@ export function CharactersPanel({
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [managing, setManaging] = useState<Character | null>(null);
+  const [profile, setProfile] = useState<Character | null>(null);
   const loadPortraits = async () => {
     const [images, list] = await Promise.all([api.listProjectImages(project.id), api.listChapters(project.id)]);
     setAssets(images); setChapters(list);
@@ -101,7 +102,7 @@ export function CharactersPanel({
         if (job.status === 'completed') {
           setNotice(
             job.error ??
-              'Proposed characters are ready for review. Accept the ones that belong in the cast.',
+              'Characters added from the outline.',
           );
         } else if (job.status === 'failed') {
           setError(job.error || 'Character casting failed.');
@@ -111,6 +112,19 @@ export function CharactersPanel({
       })();
     };
   });
+
+  const createPortraits = async (cast: Character[]) => {
+    if (!firstChapter) { setError('Approve the outline to create chapter 1 before generating images.'); return; }
+    setError(null); setBusyId('portraits');
+    const failures: string[] = [];
+    for (const character of cast) {
+      try { await api.startChapterPortrait(firstChapter.id, { characterId: character.id, moment: 'start' }); }
+      catch (err) { failures.push(`${character.name}: ${errorText(err)}`); }
+    }
+    setBusyId(null);
+    if (failures.length) setError(failures.join('\n'));
+    else setNotice(`Image generation started for ${cast.length} character(s). See Activity for progress.`);
+  };
 
   const propose = async () => {
     setError(null);
@@ -183,28 +197,26 @@ export function CharactersPanel({
 
   return (
     <div className="cast-panel">
+      <Modal open={Boolean(profile)} title={profile?.name ?? "Full profile"} onClose={() => setProfile(null)}>{profile ? <ProfileSummary character={profile} /> : null}</Modal>
       <header className="panel-header cast-header">
         <div>
           <p className="eyebrow">Cast</p>
           <h1>Characters</h1>
           <p className="lede">
-            Relevant profiles are selected for each chapter. Proposed characters stay out of context
-            until you accept them.
+            Characters are created from your outline and used as story context.
           </p>
         </div>
         <div className="cast-header-actions">
           <button
             className="button button-primary"
             onClick={propose}
-            disabled={stream.running || project.outlineStatus !== 'approved'}
+            disabled={stream.running || project.outlineStatus === 'none'}
             title={
-              project.outlineStatus === 'approved'
-                ? undefined
-                : 'Approve the outline before proposing characters.'
+              project.outlineStatus !== 'none' ? undefined : 'Create an outline first.'
             }
           >
             {stream.running ? <Spinner /> : null}
-            {stream.running ? 'Casting…' : 'Propose from outline'}
+            {stream.running ? 'Casting…' : 'Generate from outline'}
           </button>
           <button
             className="button"
@@ -275,7 +287,7 @@ export function CharactersPanel({
                   </div>
                   <span className="badge badge-warning">Proposal</span>
                 </div>
-                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
+                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
                 <div className="row-actions">
                   <button
                     className="button button-primary button-small"
@@ -308,6 +320,7 @@ export function CharactersPanel({
       <section className="cast-section">
         <div className="cast-section-head">
           <h2>Characters</h2>
+          <button className="button button-small" disabled={!active.length || busyId === 'portraits'} onClick={() => void createPortraits(active)}>Create images for all</button>
           <span className="muted small">
             {active.length} active {active.length === 1 ? 'character' : 'characters'}
           </span>
@@ -320,9 +333,9 @@ export function CharactersPanel({
                 <button
                   className="button button-primary"
                   onClick={propose}
-                  disabled={stream.running || project.outlineStatus !== 'approved'}
+                  disabled={stream.running || project.outlineStatus === 'none'}
                 >
-                  Propose from outline
+                  Generate from outline
                 </button>
                 <button
                   className="button"
@@ -354,13 +367,14 @@ export function CharactersPanel({
                   </div>
                   <span className="badge badge-accent">Active</span>
                 </div>
-                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><details><summary>Full profile</summary><ProfileSummary character={character} /></details><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
+                <p className="muted small character-short-description">{character.identity || character.appearance || 'Add a short identity or appearance in the profile.'}</p><button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button><button className="button button-ghost button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
                 <div className="row-actions">
                   <button
                     className="button button-small"
-                    onClick={() => setStudioCharacter(character)}
+                    disabled={busyId === 'portraits'}
+                    onClick={() => void createPortraits([character])}
                   >
-                    Create portrait
+                    Create image
                   </button>
                   <button className="button button-small" onClick={() => setManaging(character)}>Manage portraits</button>
                   <button

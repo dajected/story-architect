@@ -4483,3 +4483,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
 .search-input { max-width: 380px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font-size: 14px; }
 .workspace-tabs button { font-size: 13px; font-weight: 500; }
 @media (max-width: 720px) { .page-body { padding-inline: 20px; } .project-grid { gap: 14px; } }
+
+.workspace-standard-padding { padding: 28px 30px 48px; }
+@media (max-width: 600px) { .workspace-standard-padding { padding: 20px 16px 36px; } }
+
+.cast-panel, .memory-panel, .lore-panel, .outline-panel { max-width: none; }

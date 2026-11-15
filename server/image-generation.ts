@@ -433,7 +433,7 @@ export function startChapterPortraitRequest(
     throw conflict(`A portrait is already being generated for ${character.name}.`);
   }
   const text = currentChapterText(chapterId);
-  if (!text.trim()) {
+  if (!text.trim() && input.moment !== 'start') {
     throw conflict('Draft this chapter before generating a portrait of its closing state.');
   }
 

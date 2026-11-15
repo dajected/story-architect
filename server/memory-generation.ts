@@ -1,6 +1,5 @@
 import type { GenerationJob } from '../shared/types.js';
 import { countWords, jobSettingsSnapshot } from '../shared/utils.js';
-import { approvedOutlineText } from './context.js';
 import { badRequest, conflict, errorMessage } from './errors.js';
 import {
   appendOutput,
@@ -338,14 +337,14 @@ export function queueMemoryRebuild(projectId: string, chapterIds: string[]): Gen
 export function startCharacterProposal(projectId: string): GenerationJob {
   const project = getProject(projectId);
   const latest = latestOutlineRevision(projectId);
-  if (!latest || latest.status !== 'approved') {
-    throw conflict('Approve the outline before proposing characters from it.');
+  if (!latest) {
+    throw conflict('Create an outline before generating characters.');
   }
   if (activeProjectJobKind(projectId, 'characters')) {
     throw conflict('A character casting pass is already running for this project.');
   }
   const model = memoryModel(projectId);
-  const outline = approvedOutlineText(projectId);
+  const outline = latest.chapters.map((chapter, index) => `Chapter ${index + 1}: ${chapter.title}\n${chapter.brief}`).join('\n\n');
   const job = createJob({
     projectId,
     kind: 'characters',
@@ -363,7 +362,7 @@ Genre: ${project.genre || '(not set)'}
 Tone: ${project.tone || '(not set)'}
 Point of view: ${project.pov || '(not set)'}
 
-Propose the cast from the approved outline now. Return only the JSON object.`,
+Create the cast from the outline now. Return only the JSON object.`,
       contextParts: [{ label: 'Approved outline', text: outline, priority: 100, minTokens: 256, maxTokens: 9000, trim: 'both' }],
     };
     const result = await runJobStream(job, CHARACTER_CASTING_PROMPT, user, {

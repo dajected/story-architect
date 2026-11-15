@@ -64,6 +64,8 @@ const characterSelect = `
 
 export function listCharacters(projectId: string): Character[] {
   getProjectRow(projectId);
+  // Bring characters created by the old proposal workflow into the cast.
+  dbRun("UPDATE characters SET status = 'active', updated_at = ? WHERE project_id = ? AND status = 'proposed'", timestamp(), projectId);
   const rows = dbAll<CharacterQueryRow>(
     `${characterSelect} WHERE c.project_id = ? ORDER BY
        CASE c.status WHEN 'active' THEN 0 WHEN 'proposed' THEN 1 ELSE 2 END,
@@ -204,7 +206,7 @@ export function addProposedCharacters(
     if (findCharacterByName(projectId, name)) continue;
     try {
       created.push(
-        createCharacter(projectId, { ...entry, name }, { status: 'proposed', source }),
+        createCharacter(projectId, { ...entry, name }, { status: 'active', source }),
       );
     } catch {
       // A malformed proposal should not abort the rest of the cast.

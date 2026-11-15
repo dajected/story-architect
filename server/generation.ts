@@ -218,6 +218,12 @@ export function startOutlineGeneration(
         return;
       }
       const revision = createOutlineFromGeneration(projectId, chapters, result.content);
+      try {
+        const { startCharacterProposal } = await import('./memory-generation.js');
+        startCharacterProposal(projectId);
+      } catch (error) {
+        console.error('Automatic character generation failed:', error);
+      }
       finalizeJob(job.id, 'completed', { revisionId: revision.id, usage: result.usage });
     } catch (error) {
       finalizeJob(job.id, 'failed', { error: errorMessage(error) });
