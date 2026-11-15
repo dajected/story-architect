@@ -181,6 +181,19 @@ async function runBatch(
         item.error = errorMessage(error);
       }
       updateChapterBatch(batchId, { items });
+      if (item.status === 'failed') {
+        for (const later of items) {
+          if (later.status === 'pending') {
+            later.status = 'skipped';
+            later.error = `Not generated because Chapter ${item.orderIndex + 1} failed. Resolve that chapter before continuing the story.`;
+          }
+        }
+        updateChapterBatch(batchId, {
+          status: 'interrupted', items,
+          message: `Stopped at Chapter ${item.orderIndex + 1}: ${item.error} Completed drafts are saved; later chapters were not generated.`,
+        });
+        return;
+      }
     }
 
     if (state.cancelled) {

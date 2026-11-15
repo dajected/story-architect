@@ -72,9 +72,9 @@ describe('chapter context', () => {
     const context = buildProseContext(project, chapters[8], {
       preset: 'broad', modelContextLength: 16000, targetWords: 4000,
     });
-    expect(context.reservedOutputTokens).toBe(8512);
-    expect(context.availableInputTokens).toBe(6688);
-    expect(context.estimatedTokens).toBeLessThanOrEqual(6688);
+    expect(context.reservedOutputTokens).toBe(7600);
+    expect(context.availableInputTokens).toBe(7600);
+    expect(context.estimatedTokens).toBeLessThanOrEqual(7600);
     expect(context.warnings.join(' ')).toContain('overhead');
   });
 
@@ -84,6 +84,14 @@ describe('chapter context', () => {
     });
     expect(context.reservedOutputTokens).toBe(6000);
     expect(context.availableInputTokens).toBe(9200);
+  });
+
+  it('caps automatic replies to the model output limit even for long chapters', () => {
+    const context = buildProseContext(project, chapters[8], {
+      preset: 'broad', modelContextLength: 16000, modelMaxOutputTokens: 2000, targetWords: 10000,
+    });
+    expect(context.reservedOutputTokens).toBe(2000);
+    expect(context.availableInputTokens).toBe(13200);
   });
 
   it('reports unsummarised older chapters instead of inserting their full prose', () => {

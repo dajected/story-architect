@@ -447,10 +447,15 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
   prose. The preset sets an approximate input budget;
   the context inspector shows required tokens, sections, trimming, the model's
   known window, and how much output capacity is reserved. Automatic chapter output
-  capacity allows two tokens per target word plus 512 tokens; known model windows
+  capacity allows two tokens per target word plus 2,048 tokens, capped by the
+  model's reply limit and half its usable context; known model windows
   also leave 5% (at least 256 tokens) for estimation and message overhead. Replies
-  that reach a token limit are flagged as failed with recoverable partial output
-  rather than applied as complete chapters.
+  that reach a token limit continue from a bounded excerpt of the current draft's
+  ending, with at most four requests per chapter. Automatic reply allowances can
+  grow within the model limits; explicit max-output settings stay fixed. Usage
+  is accumulated across requests and partial output stays recoverable on failure
+  or cancellation. A full-story batch stops if a chapter still fails, leaving
+  later chapters untouched rather than continuing with broken continuity.
 - Every language-model request is budgeted again after rendering, including all
   messages, custom-template substitutions, reply capacity, and message overhead.
   Chat, memory, reviews, rewrites, casting, and image prompts share this check.

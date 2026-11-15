@@ -571,8 +571,12 @@ export function recordPreparedRequest(jobId: string, request: PreparedRequest): 
   let context: Record<string, unknown> = {};
   try { context = row.context_json ? JSON.parse(row.context_json) : {}; } catch { /* Legacy context. */ }
   const settings = parseSettings(row.settings);
+  const prompt = request.messages.map((message) => `## ${message.role}\n${message.content}`).join('\n\n');
+  const attempts = Array.isArray(context.requestAttempts) ? context.requestAttempts : [];
+  const budget = { ...request.report, requestCount: attempts.length + 1 };
   dbRun('UPDATE generation_jobs SET prompt = ?, context_json = ?, settings = ? WHERE id = ?',
-    request.messages.map((message) => `## ${message.role}\n${message.content}`).join('\n\n'),
-    JSON.stringify({ ...context, requestBudget: request.report }),
+    prompt,
+    JSON.stringify({ ...context, requestBudget: budget,
+      requestAttempts: [...attempts, { prompt, budget }] }),
     JSON.stringify({ ...settings, maxTokens: request.maxTokens }), jobId);
 }

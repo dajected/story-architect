@@ -21,7 +21,7 @@ import {
   resolveRoles,
 } from '../store/settings.js';
 import { buildProseContext } from '../context.js';
-import { modelContextLength } from '../store/connections.js';
+import { modelContextLength, modelOutputLimit } from '../store/connections.js';
 import { resolvePromptTemplate } from '../store/templates.js';
 import { startChapterGeneration, applyPartialJob, applyRewriteJob, startContinuityReview, startRewriteGeneration } from '../generation.js';
 import { cancelJob, getJob, isTerminal, liveOutput, subscribe } from '../jobs.js';
@@ -65,6 +65,8 @@ function buildContextInfo(chapterId: string, requestedPreset?: unknown): Context
     templateContent: template.content,
     modelContextLength: contextLength,
     maxTokens: settings.maxTokens,
+    modelMaxOutputTokens: proseRole?.connectionId && proseRole.model
+      ? modelOutputLimit(proseRole.connectionId, proseRole.model) : undefined,
   });
 
   const warnings = [...context.warnings];

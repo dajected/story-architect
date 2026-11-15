@@ -17,6 +17,7 @@ import { memoryForPrompt } from './store/memory.js';
 import { listLoreEntries } from './store/lore.js';
 import { conflict } from './errors.js';
 import { FALLBACK_CONTEXT_LENGTH } from './request-context.js';
+import { automaticChapterReplyTokens } from './chapter-stream.js';
 
 export interface ProseContext {
   recentProse: string;
@@ -52,6 +53,7 @@ export interface ContextBuildOptions {
   templateContent?: string;
   modelContextLength?: number | null;
   maxTokens?: number | null;
+  modelMaxOutputTokens?: number;
 }
 
 // Raw prose provides the immediate handoff; summaries and facts carry the story
@@ -303,9 +305,8 @@ export function buildProseContext(
   const preset = options.preset;
   const presetTokens = presetBudget(preset);
   const targetWords = options.targetWords ?? project.targetChapterWords ?? 1800;
-  const reservedOutputTokens = Math.max(
-    800,
-    Math.round(options.maxTokens ?? targetWords * 2 + 512),
+  const reservedOutputTokens = options.maxTokens ?? automaticChapterReplyTokens(
+    targetWords, options.modelContextLength, options.modelMaxOutputTokens,
   );
 
   const requiredText = projectFixedText(

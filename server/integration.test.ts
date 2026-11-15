@@ -186,7 +186,11 @@ function startMock(): Promise<void> {
           return;
         }
         if (system.includes('art director')) lastImagePromptSystem = system;
-        const text = (system + user).includes('REFUSE_PROMPT')
+        const continuing = user.includes('Continue the SAME chapter');
+        const recoverCutoff = system.includes('RECOVER_CUTOFF') && system.includes('drafting prose for a novel');
+        const text = recoverCutoff
+          ? continuing ? PROSE.slice(80) : PROSE.slice(0, 80)
+          : (system + user).includes('REFUSE_PROMPT')
           ? "I'm sorry, but I need the character's details (name, appearance, clothing, and setting) before I can write the prompt. Please provide that information."
           : (system + user).includes('JSON_PROMPT')
             ? JSON.stringify({ prompt: IMAGE_PROMPT })
@@ -211,7 +215,7 @@ function startMock(): Promise<void> {
           for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
           }
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: (system + user).includes('TRUNCATE_CHAPTER') ? 'length' : 'stop' }] })}\n\n`);
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
           res.write(
             `data: ${JSON.stringify({
               choices: [],
@@ -494,6 +498,56 @@ describe('stage 1 workflow', () => {
 });
 
 describe('stage 2 memory, cast, and context', () => {
+  it('resumes a limited chapter as one saved revision and builds memory only after completion', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Resumable Chapter', chapterCount: 2,
+    });
+    const outline = await request<{ job: { id: string } }>('POST', `/projects/${project.id}/outline/generate`, {});
+    expect((await waitForJob(outline.job.id)).status).toBe('completed');
+    const { latest } = await request<{ latest: { id: string } }>('GET', `/projects/${project.id}/outline`);
+    await request('POST', `/projects/${project.id}/outline/${latest.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+    const { job } = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[0].id}/generate`, {
+      instructions: 'RECOVER_CUTOFF',
+    });
+    const completed = await waitForJob(job.id);
+    expect(completed.status).toBe('completed');
+    expect(completed.output).toBe(PROSE);
+    expect(completed.usage).toMatchObject({ promptTokens: 200, completionTokens: 100, totalTokens: 300 });
+    const { chapter } = await request<{ chapter: { content: string; currentRevisionId: string } }>('GET', `/chapters/${chapters[0].id}`);
+    expect(chapter.content).toBe(PROSE);
+    expect(chapter.currentRevisionId).toBe(completed.revisionId);
+    const { getJobRow } = await import('./jobs.js');
+    const context = JSON.parse(getJobRow(job.id).context_json!);
+    expect(context.requestAttempts).toHaveLength(2);
+    expect(context.requestAttempts[1].prompt).toContain('Continue the SAME chapter');
+    await waitForMemory(chapters[0].id);
+  });
+
+  it('stops a full-story batch when a chapter cannot make progress after a cutoff', async () => {
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Stop on Chapter Failure', chapterCount: 2, instructions: 'TRUNCATE_CHAPTER',
+    });
+    // A manual outline avoids truncating the outline-generation response too.
+    const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, {
+      revisionId: revision.id,
+      chapters: [
+        { id: revision.chapters[0].id, title: 'The Key', brief: 'Mara finds the key.' },
+        { id: 'later-chapter', title: 'The Door', brief: 'Mara opens the door.' },
+      ],
+    });
+    await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+    await request('POST', `/projects/${project.id}/chapter-batch`, { mode: 'regenerate' });
+    const batch = await waitForChapterBatch(project.id);
+    expect(batch.status).toBe('interrupted');
+    expect(batch.items.map((item) => item.status)).toEqual(['failed', 'skipped']);
+    expect(batch.message).toMatch(/Stopped at Chapter 1/);
+    expect(batch.items[1].error).toMatch(/Chapter 1 failed/);
+    const { chapters } = await request<{ chapters: Array<{ currentRevisionId: string | null }> }>('GET', `/projects/${project.id}/chapters`);
+    expect(chapters.every((chapter) => chapter.currentRevisionId === null)).toBe(true);
+  });
+
   it('fits combined memory, review, chat history, and drafting to a small model window', async () => {
     const { listConnections, saveConnectionModels } = await import('./store/connections.js');
     const { addMessage } = await import('./store/chat.js');
@@ -584,7 +638,7 @@ describe('stage 2 memory, cast, and context', () => {
       expect(finished.error).toMatch(/token limit/i);
       expect(finished.output).toBe(PROSE);
       expect(finished.revisionId).toBeNull();
-      expect(finished.usage).toMatchObject({ completionTokens: 50 });
+      expect(finished.usage).toMatchObject({ completionTokens: 100 });
       const { chapter: detail } = await request<{ chapter: { content: string } }>(
         'GET', `/chapters/${chapter.id}`,
       );

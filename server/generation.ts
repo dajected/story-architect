@@ -59,6 +59,7 @@ import {
   recordPreparedRequest,
 } from './jobs.js';
 import { streamChat, ProviderError } from './providers.js';
+import { streamChapter } from './chapter-stream.js';
 import type { ProviderConnection, ProviderMessage } from './providers.js';
 
 function ensureAdditionalInstructions(value: string | undefined): string {
@@ -82,11 +83,13 @@ async function runStream(
     topP: number | null;
     maxTokens: number | null;
     inputBudgetTokens?: number;
+    chapterTargetWords?: number;
+    automaticOutput?: boolean;
   },
 ): Promise<StreamOutcome | null> {
   const runtime = createRuntime(job.id);
   try {
-    const result = await streamChat(provider, {
+    const params = {
       model: job.model,
       messages,
       temperature: settings.temperature,
@@ -94,9 +97,16 @@ async function runStream(
       maxTokens: settings.maxTokens,
       inputBudgetTokens: settings.inputBudgetTokens,
       signal: runtime.controller.signal,
-      onDelta: (text) => appendOutput(job.id, text),
-      onPrepared: (request) => recordPreparedRequest(job.id, request),
-    });
+      onDelta: (text: string) => appendOutput(job.id, text),
+      onPrepared: (request: Parameters<typeof recordPreparedRequest>[1]) => recordPreparedRequest(job.id, request),
+    };
+    const result = settings.chapterTargetWords
+      ? await streamChapter(provider, params, {
+        targetWords: settings.chapterTargetWords,
+        automaticOutput: settings.automaticOutput ?? false,
+        onUsage: (usage) => updateJob(job.id, { usage: usage ? JSON.stringify(usage) : null }),
+      })
+      : await streamChat(provider, params);
     if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
       finalizeJob(job.id, 'failed', {
         error: 'The model reached its reply token limit. Partial output is kept. Lower the requested output length or increase max output tokens within the model limits.',
@@ -255,6 +265,7 @@ export function startChapterGeneration(
     templateContent: template.content,
     modelContextLength: modelContextLength(model.connectionId, model.model),
     maxTokens: settings.maxTokens,
+    modelMaxOutputTokens: model.provider.models?.find((entry) => entry.id === model.model)?.maxOutputTokens,
   });
   const chapters = listChapters(project.id);
   const promptMessage = renderContextTemplate(template.content, {
@@ -298,6 +309,8 @@ export function startChapterGeneration(
     ...settings,
     maxTokens: settings.maxTokens ?? context.reservedOutputTokens,
     inputBudgetTokens: context.availableInputTokens,
+    chapterTargetWords: targetWords,
+    automaticOutput: settings.maxTokens === null,
   };
 
   const job = createJob({

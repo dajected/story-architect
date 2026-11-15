@@ -127,7 +127,7 @@ export function GenerationSettingsForm({
           />
         </div>
         <div className="field">
-          <label htmlFor="max-tokens">Max output tokens</label>
+          <label htmlFor="max-tokens">Max output tokens per reply</label>
           <input
             id="max-tokens"
             type="number"
@@ -145,7 +145,8 @@ export function GenerationSettingsForm({
       </div>
       <p className="field-hint">
         Empty temperature and Top P fields use the provider defaults. For chapters, an empty max output
-        field reserves room automatically from the target word count.
+        field reserves room automatically from the target word count and model limits. A limited
+        chapter can continue across up to four replies.
       </p>
       </details><div className="form-actions inline">
         <button type="submit" className="button button-primary button-small" disabled={saving}>

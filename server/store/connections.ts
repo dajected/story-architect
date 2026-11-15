@@ -170,6 +170,12 @@ export function modelContextLength(connectionId: string, model: string): number 
   }
 }
 
+export function modelOutputLimit(connectionId: string, model: string): number | undefined {
+  const entry = parseModels(getConnectionRow(connectionId).models).find((option) => option.id === model);
+  const limit = entry?.maxOutputTokens;
+  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? limit : undefined;
+}
+
 function pricePerToken(value: string | undefined): number | null {
   if (value === undefined || value === '') return null;
   const price = Number(value);

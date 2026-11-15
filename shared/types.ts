@@ -242,6 +242,7 @@ export interface JobPricing {
 }
 
 export interface RequestBudgetInfo {
+  requestCount?: number;
   contextLength: number;
   contextLengthKnown: boolean;
   inputBudgetTokens: number;
