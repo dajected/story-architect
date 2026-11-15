@@ -584,3 +584,15 @@ export function recordPreparedRequest(jobId: string, request: PreparedRequest): 
       requestAttempts: [...attempts, { prompt, budget }] }),
     JSON.stringify({ ...settings, maxTokens: request.maxTokens }), jobId);
 }
+
+/** Keep retry diagnostics and total paid usage, including discarded attempts. */
+export function recordBackgroundAttempt(jobId: string, result: { content: string; finishReason: string | null; usage: TokenUsage | null }, totalUsage: TokenUsage | null): void {
+  const row = getJobRow(jobId);
+  const context = row.context_json ? JSON.parse(row.context_json) : {};
+  const attempts = Array.isArray(context.requestAttempts) ? context.requestAttempts : [];
+  if (attempts.length) Object.assign(attempts[attempts.length - 1], {
+    output: result.content, finishReason: result.finishReason, usage: result.usage,
+  });
+  updateJob(jobId, { context_json: JSON.stringify({ ...context, requestAttempts: attempts }),
+    usage: totalUsage ? JSON.stringify(totalUsage) : null });
+}

@@ -14,6 +14,7 @@ import {
   activeProjectJobKind,
   updateJob,
   recordPreparedRequest,
+  recordBackgroundAttempt,
 } from './jobs.js';
 import {
   CHARACTER_CASTING_PROMPT,
@@ -21,7 +22,8 @@ import {
   parseCharacterProposals,
   parseMemoryExtraction,
 } from './prompts.js';
-import { streamChat, ProviderError } from './providers.js';
+import { ProviderError } from './providers.js';
+import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
 import type { ProviderMessage } from './providers.js';
 import { currentChapterText, getChapter, getChapterRow } from './store/chapters.js';
 import { addProposedCharacters } from './store/characters.js';
@@ -49,7 +51,7 @@ async function runJobStream(
   job: GenerationJob,
   system: string,
   user: string | ProviderMessage,
-  options: { temperature: number | null; maxTokens: number | null },
+  options: { temperature: number | null },
 ): Promise<RunResult | null> {
   let provider;
   try {
@@ -61,7 +63,7 @@ async function runJobStream(
   updateJob(job.id, { status: 'running', started_at: new Date().toISOString() });
   const runtime = getRuntime(job.id) ?? createRuntime(job.id);
   try {
-    const result = await streamChat(provider, {
+    const result = await streamBackgroundTask(provider, {
       model: job.model,
       messages: [
         { role: 'system', content: system },
@@ -69,15 +71,17 @@ async function runJobStream(
       ],
       temperature: options.temperature,
       topP: null,
-      maxTokens: options.maxTokens,
+      maxTokens: backgroundReplyTokens(provider, job.model),
       signal: runtime.controller.signal,
       onDelta: (text) => appendOutput(job.id, text),
       onPrepared: (request) => recordPreparedRequest(job.id, request),
+    }, {
+      label: job.kind === 'characters' ? 'Character proposals' : 'Chapter memory',
+      validate: (content) => job.kind === 'characters'
+        ? parseCharacterProposals(content).length > 0
+        : (() => { const parsed = parseMemoryExtraction(content); return parsed.parsed && !!parsed.summary.trim(); })(),
+      onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage),
     });
-    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
-      finalizeJob(job.id, 'failed', { error: 'The model reached its reply token limit. Partial output is kept; no incomplete memory or character proposals were applied.', usage: result.usage });
-      return null;
-    }
     return result;
   } catch (error) {
     if (isCancellation(error, runtime.controller.signal)) {
@@ -156,7 +160,7 @@ async function runMemoryJob(jobId: string): Promise<void> {
     job,
     MEMORY_EXTRACTION_PROMPT,
     user,
-    { temperature: 0.2, maxTokens: 1100 },
+    { temperature: 0.2 },
   );
   if (!result) {
     return;
@@ -255,7 +259,7 @@ export function startChapterMemoryGeneration(
     prompt: MEMORY_EXTRACTION_PROMPT,
     status: options.queued ? 'queued' : 'running',
     context: { stage: 'memory', connectionContextLength: contextLength },
-    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1100 }),
+    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model) }),
   });
   if (!options.queued) void runMemoryJob(job.id);
   return job;
@@ -309,7 +313,7 @@ export function queueMemoryRebuild(projectId: string, chapterIds: string[]): Gen
       prompt: MEMORY_EXTRACTION_PROMPT,
       status: 'queued',
       context: { stage: 'memory', batch: unique.length, connectionContextLength: contextLength },
-      settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1100 }),
+      settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model) }),
     }),
   );
   const previous = memoryQueues.get(projectId) ?? Promise.resolve();
@@ -349,7 +353,7 @@ export function startCharacterProposal(projectId: string): GenerationJob {
     model: model.model,
     prompt: CHARACTER_CASTING_PROMPT,
     context: { stage: 'characters', outlineTokens: Math.ceil(outline.length / 4) },
-    settings: jobSettingsSnapshot({ temperature: 0.7, topP: null, maxTokens: 2500 }),
+    settings: jobSettingsSnapshot({ temperature: 0.7, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model) }),
   });
 
   void (async () => {
@@ -364,7 +368,6 @@ Propose the cast from the approved outline now. Return only the JSON object.`,
     };
     const result = await runJobStream(job, CHARACTER_CASTING_PROMPT, user, {
       temperature: 0.7,
-      maxTokens: 2500,
     });
     if (!result) return;
     const parsed = parseCharacterProposals(result.content);

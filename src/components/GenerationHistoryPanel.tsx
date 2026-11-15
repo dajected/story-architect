@@ -239,7 +239,8 @@ function HistoryRow({ entry }: { entry: GenerationHistoryEntry }) {
             <summary>Context details</summary>
             <p>About {entry.requestBudget.estimatedInputTokens.toLocaleString()} input tokens;
               {' '}{entry.requestBudget.reservedOutputTokens.toLocaleString()} reserved for the reply.</p>
-            {(entry.requestBudget.requestCount ?? 1) > 1 ? <p>{entry.requestBudget.requestCount} replies requested, including continuations.</p> : null}
+            {(entry.requestBudget.requestCount ?? 1) > 1 ? <p>{entry.requestBudget.requestCount} model requests used for this job.</p> : null}
+            {(entry.usage?.reasoningTokens ?? 0) > 0 ? <p>{entry.usage!.reasoningTokens!.toLocaleString()} reasoning tokens included in output usage.</p> : null}
             {!entry.requestBudget.contextLengthKnown ? <p>Model window unknown; using a conservative 16,000-token budget.</p> : null}
             {entry.requestBudget.sections.map((section, index) => (
               <div key={index}>{section.label}: {section.included ? section.trimmed ? 'excerpt' : 'included' : 'omitted'}</div>

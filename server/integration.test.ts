@@ -193,7 +193,7 @@ function startMock(): Promise<void> {
       let body = '';
       req.on('data', (chunk) => (body += chunk));
       req.on('end', () => {
-        const parsed = JSON.parse(body) as { messages: Array<{ role: string; content: string }> };
+        const parsed = JSON.parse(body) as { max_tokens?: number; messages: Array<{ role: string; content: string }> };
         const system = parsed.messages.find((message) => message.role === 'system')?.content ?? '';
         const user = [...parsed.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
         if ((system + user).includes('FAIL')) {
@@ -203,7 +203,12 @@ function startMock(): Promise<void> {
         if (system.includes('art director')) lastImagePromptSystem = system;
         const continuing = user.includes('Continue the SAME chapter');
         const recoverCutoff = system.includes('RECOVER_CUTOFF') && system.includes('drafting prose for a novel');
-        const text = recoverCutoff
+        const background = system.includes('continuity archivist') || system.includes('story-state editor');
+        const retryMemory = background && (system + user).includes('MEMORY_REPLY_RETRY');
+        const exhaustMemory = background && (system + user).includes('MEMORY_REPLY_EXHAUST');
+        const limitedMemory = exhaustMemory || (retryMemory && (parsed.max_tokens ?? 0) < 6000);
+        const text = limitedMemory ? '{"summary":"partial memory'
+          : recoverCutoff
           ? continuing ? PROSE.slice(80) : PROSE.slice(0, 80)
           : (system + user).includes('REFUSE_PROMPT')
           ? "I'm sorry, but I need the character's details (name, appearance, clothing, and setting) before I can write the prompt. Please provide that information."
@@ -232,11 +237,13 @@ function startMock(): Promise<void> {
           for (const chunk of text.match(/[\s\S]{1,24}/g) ?? [text]) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
           }
-          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: limitedMemory || (system + user).includes('TRUNCATE_CHAPTER') || (recoverCutoff && !continuing) ? 'length' : 'stop' }] })}\n\n`);
+          const completionTokens = limitedMemory ? parsed.max_tokens! : retryMemory ? 1500 : 50;
           res.write(
             `data: ${JSON.stringify({
               choices: [],
-              usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+              usage: { prompt_tokens: 100, completion_tokens: completionTokens, total_tokens: 100 + completionTokens,
+                ...(limitedMemory || retryMemory ? { completion_tokens_details: { reasoning_tokens: limitedMemory ? completionTokens - 32 : 400 } } : {}) },
             })}\n\n`,
           );
           res.write('data: [DONE]\n\n');
@@ -515,6 +522,61 @@ describe('stage 1 workflow', () => {
 });
 
 describe('stage 2 memory, cast, and context', () => {
+  it('retries reasoning-limited memory and checkpoint updates as complete responses', async () => {
+    const { getJobRow } = await import('./jobs.js');
+    const { inspectStoryState } = await import('./store/story-state.js');
+    const { dbAll } = await import('./db.js');
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'MEMORY_REPLY_RETRY', chapterCount: 1,
+    });
+    const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, { revisionId: revision.id,
+      chapters: [{ id: revision.chapters[0].id, title: 'The Key', brief: 'Mara enters the observatory.' }] });
+    await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+    await request('PUT', `/chapters/${chapters[0].id}/content`, { content: PROSE });
+    const { job } = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[0].id}/memory/rebuild`, {});
+    const completed = await waitForJob(job.id);
+    expect(completed.status).toBe('completed');
+    expect(completed.output).toBe(MEMORY);
+    expect(completed.usage).toMatchObject({ completionTokens: 5596, reasoningTokens: 4464 });
+    const attempts = JSON.parse(getJobRow(job.id).context_json!).requestAttempts;
+    expect(attempts.map((attempt: { budget: { reservedOutputTokens: number } }) => attempt.budget.reservedOutputTokens)).toEqual([4096, 8192]);
+    expect(attempts[0].output).toBe('{"summary":"partial memory');
+    expect(attempts[1].output).toBe(MEMORY);
+    expect(attempts[0].prompt).toBe(attempts[1].prompt);
+    await waitForMemory(chapters[0].id);
+    expect(inspectStoryState(project.id, 1).info.status).toBe('current');
+    const checkpoint = dbAll<{ context_json: string; output: string; status: string }>(
+      'SELECT context_json, output, status FROM generation_jobs WHERE project_id = ?', project.id,
+    ).find((row) => JSON.parse(row.context_json).stage === 'story_state')!;
+    expect(checkpoint.status).toBe('completed');
+    expect(checkpoint.output).toBe(STORY_STATE);
+    expect(JSON.parse(checkpoint.context_json).requestAttempts).toHaveLength(2);
+  });
+
+  it('keeps failed memory unapplied and accounts for all capped retry attempts', async () => {
+    const { getChapterMemory } = await import('./store/memory.js');
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'MEMORY_REPLY_EXHAUST', chapterCount: 1,
+    });
+    const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, { revisionId: revision.id,
+      chapters: [{ id: revision.chapters[0].id, title: 'The Key', brief: 'Mara enters the observatory.' }] });
+    await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+    await request('PUT', `/chapters/${chapters[0].id}/content`, { content: PROSE });
+    const { job } = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[0].id}/memory/rebuild`, {});
+    const failed = await waitForJob(job.id);
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toMatch(/after 3 request/);
+    expect(failed.output).toBe('{"summary":"partial memory');
+    expect(failed.usage).toMatchObject({ completionTokens: 28672, reasoningTokens: 28576 });
+    expect(getChapterMemory(chapters[0].id).status).toBe('missing');
+    const { chapter } = await request<{ chapter: { content: string } }>('GET', `/chapters/${chapters[0].id}`);
+    expect(chapter.content).toBe(PROSE);
+  });
+
   it('uses one cached state for a long novel, rebuilds after edits, and restores checkpoint provenance', async () => {
     const { inspectStoryState, stateSource, saveStoryState } = await import('./store/story-state.js');
     const { getChapter } = await import('./store/chapters.js');

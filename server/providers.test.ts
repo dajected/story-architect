@@ -4,6 +4,21 @@ import { streamChat } from './providers.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('stream finish reasons', () => {
+  it('retains reasoning-token usage within completion usage', async () => {
+    const body = [
+      { choices: [{ delta: { content: 'Summary.' }, finish_reason: 'stop' }] },
+      { choices: [], usage: { prompt_tokens: 3000, completion_tokens: 1100, total_tokens: 4100,
+        completion_tokens_details: { reasoning_tokens: 900 } } },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body)));
+    const result = await streamChat({ id: 'local', name: 'Local', kind: 'openai-compatible',
+      baseUrl: 'http://localhost/v1', apiKey: null }, {
+      model: 'test', messages: [], maxTokens: 4096, temperature: null, topP: null,
+      signal: new AbortController().signal, onDelta: () => {},
+    });
+    expect(result.usage).toEqual({ promptTokens: 3000, completionTokens: 1100, totalTokens: 4100, reasoningTokens: 900 });
+  });
+
   it('rejects an oversized complete request before contacting the provider', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

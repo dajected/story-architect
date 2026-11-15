@@ -29,6 +29,7 @@ export interface ChatUsage {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  reasoningTokens?: number;
 }
 
 export interface ChatResult {
@@ -197,6 +198,8 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
         promptTokens: numberOrUndefined(raw.prompt_tokens),
         completionTokens: numberOrUndefined(raw.completion_tokens),
         totalTokens: numberOrUndefined(raw.total_tokens),
+        ...((raw.completion_tokens_details as Record<string, unknown> | undefined)?.reasoning_tokens !== undefined
+          ? { reasoningTokens: numberOrUndefined((raw.completion_tokens_details as Record<string, unknown>).reasoning_tokens) } : {}),
       };
     }
   };

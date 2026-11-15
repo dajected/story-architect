@@ -206,10 +206,17 @@ checkpoints remain supported and rebuild on demand.
    an alternative does not auto-run; staleness is shown and rebuild is explicit.
 2. The memory job reads the current chapter revision, compact preceding state,
    and selected references, and requests JSON with a summary and facts. After
-   committing the summary, a state job updates that chapter?s checkpoint.
+   committing the summary, a state job updates that chapter's checkpoint.
 3. The summary is saved against the source revision and a fingerprint of every
-   preceding chapter revision. Unparseable output keeps the job and raw reply for
-   retry; a prose-only reply can still be saved as a summary.
+   preceding chapter revision. Memory/state/casting requests use
+   `background-generation.ts`: normally 4,096 reply tokens, increasing on failure
+   to 8,192 and 16,384 when model limits and the frozen input permit it. This
+   allows room for reasoning as well as visible output. At most three complete
+   attempts are made. Truncated or malformed JSON never becomes a summary or
+   fact proposal; invalid/oversized state never replaces a checkpoint. Retry
+   output is replaced rather than concatenated. The final partial response stays
+   on a failed/cancelled job; request history keeps all attempts and aggregate
+   paid usage, including reasoning tokens where the provider reports them.
 4. Facts are inserted as `proposed`. Identical statements already proposed,
    established, or rejected in that chapter are skipped; superseded facts may be
    proposed again after a rebuild.

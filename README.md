@@ -477,6 +477,16 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
   provider. Generation history's Context details show what was included,
   excerpted, or omitted. Token-limit replies remain partial instead of being
   applied as completed chapters, memory, rewrites, or image prompts.
+- Memory extraction, story-state updates and cast proposals use a shared
+  background reply policy instead of fixed 1,100/1,600-token caps. It normally
+  starts at 4,096 output tokens and can retry at 8,192 then 16,384, within the
+  model's reply and context limits. Reasoning tokens can consume the reply
+  allowance too ([OpenRouter documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)).
+  The initial bounded input is frozen across retries; increasing reply room
+  never silently removes more evidence. Cut-off or invalid results are
+  regenerated as complete responses, with at most three requests per job.
+  Partial JSON is never appended or applied as memory. All attempts' token
+  usage is counted, and reported reasoning usage appears in Activity details.
 - Editing or restoring a chapter changes its revision ID. Its summary is marked
   stale, and later summaries whose preceding revisions changed are marked
   potentially outdated. Rebuilding replaces the derived memory from the current

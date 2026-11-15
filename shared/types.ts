@@ -223,6 +223,7 @@ export interface TokenUsage {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  reasoningTokens?: number;
 }
 
 /** Sampling settings captured when a job is created, for the generation log. */

@@ -34,7 +34,7 @@ export function appendWithoutOverlap(previous: string, next: string): string {
 function totalUsage(results: ChatResult[]): ChatUsage | null {
   if (results.some((result) => !result.usage)) return null;
   const usage: ChatUsage = {};
-  for (const key of ['promptTokens', 'completionTokens', 'totalTokens'] as const) {
+  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'reasoningTokens'] as const) {
     if (results.every((result) => result.usage?.[key] !== undefined)) {
       usage[key] = results.reduce((sum, result) => sum + result.usage![key]!, 0);
     }

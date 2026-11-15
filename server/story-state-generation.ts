@@ -1,7 +1,7 @@
 import { countWords, jobSettingsSnapshot } from '../shared/utils.js';
 import { conflict, errorMessage } from './errors.js';
-import { activeJobForChapterKind, appendOutput, createJob, createRuntime, finalizeJob, getJob, isCancellation, isTerminal, recordPreparedRequest } from './jobs.js';
-import { streamChat } from './providers.js';
+import { activeJobForChapterKind, appendOutput, createJob, createRuntime, finalizeJob, getJob, isCancellation, isTerminal, recordPreparedRequest, recordBackgroundAttempt } from './jobs.js';
+import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
 import { getChapter, listChapters } from './store/chapters.js';
 import { getProject } from './store/projects.js';
 import { resolveTaskModel } from './store/settings.js';
@@ -42,14 +42,14 @@ async function buildState(chapterId: string, signal?: AbortSignal) {
   const job = createJob({ projectId: chapter.projectId, kind: 'memory', chapterId,
     connectionId: model.connectionId, model: model.model, prompt: STORY_STATE_PROMPT,
     context: { stage: 'story_state', parentVersion, inputSignature: source.signature },
-    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: 1600 }),
+    settings: jobSettingsSnapshot({ temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model) }),
   });
   const runtime = createRuntime(job.id);
   const abort = () => runtime.controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   try {
-    const result = await streamChat(model.provider, {
-      model: model.model, temperature: 0.2, topP: null, maxTokens: 1600,
+    const result = await streamBackgroundTask(model.provider, {
+      model: model.model, temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model),
       signal: runtime.controller.signal, onDelta: (text) => appendOutput(job.id, text),
       onPrepared: (request) => recordPreparedRequest(job.id, request),
       messages: [{ role: 'system', content: STORY_STATE_PROMPT }, {
@@ -59,13 +59,13 @@ async function buildState(chapterId: string, signal?: AbortSignal) {
             priority: 100, minTokens: 256, maxTokens: source.summary ? 3500 : 7000, trim: 'both' },
         ],
       }],
+    }, {
+      label: 'Story-state update',
+      validate: (content) => !!content.trim() && content.trim().length <= STORY_STATE_MAX_CHARS && countWords(content) <= 650,
+      onAttempt: (result, usage) => recordBackgroundAttempt(job.id, result, usage),
     });
     runtime.controller.signal.throwIfAborted();
-    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') throw conflict('Story-state update reached the reply limit; the existing checkpoint was kept. Retry memory rebuilding.');
     const state = result.content.trim();
-    if (!state || state.length > STORY_STATE_MAX_CHARS || countWords(state) > 650) {
-      throw conflict('The memory model returned an empty or oversized story state. No checkpoint was replaced. Rebuild memory to retry.');
-    }
     saveStoryState(chapterId, state, source.signature, parentVersion);
     finalizeJob(job.id, 'completed', { usage: result.usage });
   } catch (error) {
