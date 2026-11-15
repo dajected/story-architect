@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import type { MemoryOverview } from '../../shared/types.js';
+import type { Chapter, ChapterMemory, MemoryOverview } from '../../shared/types.js';
 import { listChapters } from '../store/chapters.js';
 import {
   getChapterMemory,
@@ -24,6 +24,18 @@ import { queueMemoryRebuild, startChapterMemoryGeneration } from '../memory-gene
 import { parseBody, stringParam, wrap } from './helpers.js';
 
 export const memoryRouter = Router();
+
+function memoryRebuildChapterIds(chapters: Chapter[], memories: ChapterMemory[]): string[] {
+  const memoryByChapter = new Map(memories.map((memory) => [memory.chapterId, memory]));
+  return chapters
+    .filter((chapter) => chapter.currentRevisionId)
+    .filter((chapter) => {
+      const memory = memoryByChapter.get(chapter.id);
+      if (memory?.status === 'stale' || memory?.status === 'missing') return true;
+      return listChapterAppearances(chapter.id).some((entry) => entry.status !== 'current');
+    })
+    .map((chapter) => chapter.id);
+}
 
 const factKinds = [
   'character_development',
@@ -73,6 +85,7 @@ memoryRouter.get(
     const overview: MemoryOverview = {
       projectId,
       chapters: chapterMemory,
+      rebuildChapterIds: memoryRebuildChapterIds(chapters, chapterMemory),
       characters,
       facts,
       counts: projectMemoryStats(projectId, chapterMemory, facts, characters),
@@ -141,14 +154,10 @@ memoryRouter.post(
     const snapshots = chapterSnapshots(chapters);
     const ids =
       body.chapterIds ??
-      chapters
-        .filter((chapter) => chapter.currentRevisionId)
-        .filter((chapter) => {
-          const memory = getChapterMemory(chapter.id, { chapters, snapshots });
-          if (memory.status === 'stale' || memory.status === 'missing') return true;
-          return listChapterAppearances(chapter.id).some((entry) => entry.status !== 'current');
-        })
-        .map((chapter) => chapter.id);
+      memoryRebuildChapterIds(
+        chapters,
+        chapters.map((chapter) => getChapterMemory(chapter.id, { chapters, snapshots })),
+      );
     if (ids.length === 0) {
       res.status(202).json({ jobs: [] });
       return;

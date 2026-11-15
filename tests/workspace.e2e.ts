@@ -12,7 +12,22 @@ test.beforeAll(async ({request,browser}) => {
   const canvasPage = await browser.newPage();
   png = await canvasPage.evaluate(() => {const canvas=document.createElement('canvas');canvas.width=180;canvas.height=240;const ctx=canvas.getContext('2d')!;ctx.fillStyle='#455b63';ctx.fillRect(0,0,180,240);ctx.fillStyle='#d5b69a';ctx.beginPath();ctx.ellipse(90,95,35,48,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#283943';ctx.fillRect(35,145,110,95);return canvas.toDataURL('image/png').split(',')[1]!;});
   await canvasPage.close();
-  provider=http.createServer((req,res)=>{if(req.url === '/v1/chat/completions') {res.setHeader('Content-Type','text/event-stream');res.end(`data: ${JSON.stringify({choices:[{delta:{content:'A painterly portrait in a storm-worn coat.'}}]})}\n\ndata: [DONE]\n\n`);return;}res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{b64_json:png}]}));});
+  provider=http.createServer((req,res)=>{
+    if(req.url === '/v1/chat/completions') {
+      let body = '';
+      req.on('data', chunk => {body += chunk;});
+      req.on('end', () => {
+        const {messages} = JSON.parse(body);
+        const content = messages[0].content.includes('continuity archivist')
+          ? JSON.stringify({summary:'The traveller reached the harbour.',facts:[],appearances:[]})
+          : 'A painterly portrait in a storm-worn coat.';
+        res.setHeader('Content-Type','text/event-stream');
+        res.end(`data: ${JSON.stringify({choices:[{delta:{content}}]})}\n\ndata: [DONE]\n\n`);
+      });
+      return;
+    }
+    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{b64_json:png}]}));
+  });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const post=async(url:string,data:unknown={})=>{const result=await request.post(`/api${url}`,{data});expect(result.ok(),await result.text()).toBeTruthy();return result.json();};
   const {project}=await post('/projects',{title:'The Glass Harbour',premise:'A salvage diver returns to a harbour full of secrets.'});projectId=project.id;
@@ -31,6 +46,67 @@ test.beforeAll(async ({request,browser}) => {
   await post(`/chapters/${chapterId}/selected-image`,{assetId:assets[0].id});
 });
 test.afterAll(async()=>{await new Promise<void>(resolve=>provider.close(()=>resolve()));});
+
+test('bulk memory rebuild includes late key characters and outdated appearance records', async ({page, request}) => {
+  const post = async (url: string, data: unknown = {}) => {
+    const response = await request.post(`/api${url}`, {data});
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  };
+  const {project} = await post('/projects', {title:'Late key character', chapterCount:3});
+  const {revision} = await post(`/projects/${project.id}/outline/manual`);
+  const outline = await request.put(`/api/projects/${project.id}/outline`, {data:{revisionId:revision.id,chapters:[
+    {id:revision.chapters[0].id,title:'Arrival',brief:'The traveller reaches the harbour.'},
+    {id:`${project.id}-second`,title:'Departure',brief:'The traveller leaves the harbour.'},
+    {id:`${project.id}-empty`,title:'Return',brief:'The traveller returns.'},
+  ]}});
+  expect(outline.ok()).toBeTruthy();
+  await post(`/projects/${project.id}/outline/${revision.id}/approve`);
+  const chaptersResponse = await request.get(`/api/projects/${project.id}/chapters`);
+  const {chapters} = await chaptersResponse.json();
+  const written = chapters.slice(0, 2) as Array<{id:string}>;
+  for (const chapter of written) {
+    const content = await request.put(`/api/chapters/${chapter.id}/content`, {data:{content:'A traveller reaches the harbour.'}});
+    expect(content.ok()).toBeTruthy();
+    const memory = await request.patch(`/api/chapters/${chapter.id}/memory`, {data:{summary:'The traveller reaches the harbour.'}});
+    expect(memory.ok()).toBeTruthy();
+  }
+  const {character} = await post(`/projects/${project.id}/characters`, {name:'The traveller', appearance:'Dark hair and a navy coat.'});
+  const {connection} = await post('/connections', {name:'Memory rebuild test',kind:'openai-compatible',baseUrl:`http://127.0.0.1:${(provider.address() as AddressInfo).port}/v1`});
+  const roles = await request.put('/api/model-roles', {data:{scope:'project',projectId:project.id,assignments:[{role:'memory',connectionId:connection.id,model:'test'}]}});
+  expect(roles.ok()).toBeTruthy();
+
+  await page.goto(`/projects/${project.id}?tab=memory`);
+  await expect(page.getByRole('button', {name:'Memory up to date',exact:true})).toBeDisabled();
+  await page.getByRole('button', {name:'Characters',exact:true}).click();
+  await page.locator('.cast-card').filter({hasText:'The traveller'}).getByRole('button', {name:'Mark as key character',exact:true}).click();
+  await page.getByRole('button', {name:'Story memory',exact:true}).click();
+  const rebuildTwo = page.getByRole('button', {name:'Rebuild 2 chapters',exact:true});
+  await expect(rebuildTwo).toBeEnabled();
+  const overview = await (await request.get(`/api/projects/${project.id}/memory`)).json();
+  expect(overview.chapters.filter((chapter: {status:string}) => chapter.status === 'current')).toHaveLength(2);
+  expect(overview.rebuildChapterIds).toEqual(written.map(chapter => chapter.id));
+  await rebuildTwo.click();
+  await expect(page.getByText('2 chapter refreshes are queued.', {exact:false})).toBeVisible();
+  await expect(page.getByRole('button', {name:'Memory up to date',exact:true})).toBeDisabled();
+  for (const chapter of written) {
+    const portraits = await (await request.get(`/api/chapters/${chapter.id}/portraits`)).json();
+    expect(portraits.appearances).toEqual([expect.objectContaining({characterId:character.id,status:'current'})]);
+  }
+
+  // Changing an earlier record outdates the next chapter's appearance without
+  // changing either summary. The empty third chapter must stay out of the queue.
+  await page.getByRole('button', {name:'Read story',exact:true}).click();
+  const edit = await request.patch(`/api/chapters/${written[0].id}/appearances/${character.id}`, {data:{appearance:'Dark hair, a navy coat and a bandaged hand.'}});
+  expect(edit.ok()).toBeTruthy();
+  await page.getByRole('button', {name:'Story memory',exact:true}).click();
+  const rebuildOne = page.getByRole('button', {name:'Rebuild 1 chapter',exact:true});
+  await expect(rebuildOne).toBeEnabled();
+  await rebuildOne.click();
+  await expect(page.getByRole('button', {name:'Memory up to date',exact:true})).toBeDisabled();
+  const repaired = await (await request.get(`/api/chapters/${written[1].id}/portraits`)).json();
+  expect(repaired.appearances).toEqual([expect.objectContaining({status:'current',appearance:'Dark hair, a navy coat and a bandaged hand.'})]);
+});
 
 test('chapter images, viewer, studio, timeline and focus mode work with keyboard access',async({page})=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));

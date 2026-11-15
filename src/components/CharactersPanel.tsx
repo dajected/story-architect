@@ -479,8 +479,9 @@ export function CharactersPanel({
                 Key character
               </label>
               <p className="field-hint">
-                Key characters always appear in every chapter&rsquo;s image section. Other
-                characters are hidden there.
+                Key characters appear in every chapter&rsquo;s image section and get appearance
+                records during chapter memory generation. Mark them before generating chapters.
+                If chapters are already written, use Rebuild in Story memory before generating images.
               </p>
             </div>
             <div className="form-row">

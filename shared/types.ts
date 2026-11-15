@@ -489,6 +489,8 @@ export interface MemoryCounts {
 export interface MemoryOverview {
   projectId: string;
   chapters: ChapterMemory[];
+  /** Written chapters with missing or outdated summaries or key-character appearances. */
+  rebuildChapterIds: string[];
   characters: Character[];
   facts: Fact[];
   counts: MemoryCounts;

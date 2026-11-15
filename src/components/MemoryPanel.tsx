@@ -29,11 +29,13 @@ const FACT_CLASSES: FactClass[] = ['authored', 'established', 'plan'];
 
 export function MemoryPanel({
   project,
+  active = true,
   onProjectChanged,
   onOpenSettings,
   onOpenChapter,
 }: {
   project: Project;
+  active?: boolean;
   onProjectChanged: () => Promise<void>;
   onOpenSettings: () => void;
   onOpenChapter?: (id: string) => void;
@@ -69,8 +71,8 @@ export function MemoryPanel({
   );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (active) void load();
+  }, [load, project.updatedAt, active]);
 
   useEffect(() => {
     if (!data || data.activeJobs.length === 0) return;
@@ -231,9 +233,7 @@ export function MemoryPanel({
   const proposed = data.facts.filter((fact) => fact.status === 'proposed');
   const established = data.facts.filter((fact) => fact.status === 'established');
   const archived = data.facts.filter((fact) => ['superseded', 'rejected'].includes(fact.status));
-  const needsRebuild = data.chapters.filter(
-    (memory) => memory.status === 'stale' || memory.status === 'missing',
-  );
+  const needsRebuild = data.rebuildChapterIds;
   const running = data.activeJobs.filter((job) => job.kind === 'memory');
   const lastProblemJob = data.recentJobs.find(
     (job) =>
@@ -252,7 +252,7 @@ export function MemoryPanel({
           <p className="eyebrow">Story memory</p>
           <h1>Story memory</h1>
           <p className="lede">
-            Facts and summaries collected from your chapters. Accepting a fact guides future AI drafts; it does not edit your manuscript. Proposed canon
+            Facts, summaries, and key-character appearance records collected from your chapters. Accepting a fact guides future AI drafts; it does not edit your manuscript. Proposed canon
             only enters later prompts after you accept it.
           </p>
         </div>

@@ -489,6 +489,7 @@ export function WorkspacePage({
               <div className="workspace-scroll">
                 <MemoryPanel
                   project={project}
+                  active={tab === 'memory'}
                   onProjectChanged={refreshAll}
                   onOpenChapter={(id) => {setTab('manuscript'); void selectChapter(id);}}
                   onOpenSettings={() => openSettings()}

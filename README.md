@@ -390,15 +390,18 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
 3. Create a novel in the library. Use **Suggest** on any field, or leave it blank.
 4. In the project, generate an outline or write one manually. Edit titles and
    briefs, save, then **Approve outline**.
-5. Select a chapter and **Generate chapter**. Watch tokens arrive, stop if
+5. Open **Cast** and review the characters created from the outline, or add your
+   own. Mark the characters you want chapter images for as **Key character**
+   before drafting, so chapter memory generation records their appearance.
+6. Select a chapter and **Generate chapter**. Watch tokens arrive, stop if
    needed, then edit the draft in the manuscript.
-6. Open **History** to compare revisions, use a generated alternative, or
+7. Open **History** to compare revisions, use a generated alternative, or
    restore an older version as a new revision.
-7. Open **Cast** to add characters or propose them from the outline. Accept the
-   proposals you want in the story.
-8. After a chapter becomes current, open **Continuity** to review its summary
+8. After a chapter becomes current, open **Story memory** to review its summary
    and proposed facts. Accept the facts that are canon, supersede anything the
-   new text has made obsolete, and rebuild stale summaries after editing.
+   new text has made obsolete, and rebuild stale summaries after editing. If you
+   mark a character as key after drafting, use the bulk **Rebuild** button here
+   to fill missing appearance records in chapter order before generating images.
 9. Open **Lore** to create a lorebook, add keyword-triggered entries, and pin
    anything that must appear in the next generation. Link the same book from
    another novel to reuse it.
