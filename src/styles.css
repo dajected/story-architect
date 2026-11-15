@@ -4082,10 +4082,8 @@ textarea:disabled {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  max-height: 340px;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
   list-style: none;
 }
 
@@ -4219,9 +4217,6 @@ textarea:disabled {
   gap: 8px;
 }
 
-.portrait-batch-progress .batch-items {
-  max-height: 220px;
-}
 
 
 .portrait-cast-row {
