@@ -257,7 +257,7 @@ export function WorkspacePage({
   };
 
   return (
-    <div className={`workspace-shell ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
+    <div className={`workspace-shell ${tab === 'outline' && !focusMode ? 'outline-page' : ''} ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
       <header className="workspace-topbar">
         <div className="workspace-topbar-left">
           <div className="workspace-title">

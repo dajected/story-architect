@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter } from '@shared/types';
 import { formatWords } from '../utils';
@@ -71,7 +72,6 @@ export function ChapterSidebar({
             <p className="muted small sidebar-empty">No chapters match “{query}”.</p>
           ) : (
             filtered.map((chapter) => {
-              const index = chapters.indexOf(chapter);
               return (
                 <button
                   aria-current={selectedId === chapter.id ? 'page' : undefined}
@@ -83,9 +83,9 @@ export function ChapterSidebar({
                     onClose();
                   }}
                 >
-                  <span className="chapter-number">{String(index + 1).padStart(2, '0')}</span>
+
                   <span className="chapter-item-copy">
-                    <span className="chapter-item-title">{chapter.title}</span>
+                    <span className="chapter-item-title">{formatChapterLabel(chapter.title, chapter.orderIndex)}</span>
                     <span className="chapter-item-meta">
                       <StatusDot status={chapter.status} />
                       {chapter.wordCount > 0 ? `${formatWords(chapter.wordCount)} words` : 'No draft'}

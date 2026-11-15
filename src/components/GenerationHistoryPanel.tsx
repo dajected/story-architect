@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   GenerationHistory,
@@ -221,7 +222,7 @@ function HistoryRow({ entry }: { entry: GenerationHistoryEntry }) {
         <div className="history-when">{formatDate(entry.createdAt)}</div>
         <div className="muted small">
           {entry.chapterTitle
-            ? `Ch. ${(entry.chapterOrder ?? 0) + 1}: ${entry.chapterTitle}`
+            ? formatChapterLabel(entry.chapterTitle, entry.chapterOrder ?? 0)
             : entry.durationMs !== null
               ? `${(entry.durationMs / 1000).toFixed(1)}s`
               : ''}

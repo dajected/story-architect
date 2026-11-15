@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
@@ -431,8 +432,8 @@ export function ChapterEditor({
     <div className="chapter-editor">
       <header className="editor-header">
         <div className="editor-title">
-          <span className="eyebrow">Chapter {chapter.orderIndex + 1}</span>
-          <h1>{chapter.title}</h1>
+
+          <h1>{formatChapterLabel(chapter.title, chapter.orderIndex)}</h1>
           <div className="editor-meta" role="status" aria-live="polite">
             <span>{formatWords(localWords)} words</span>
             <span>

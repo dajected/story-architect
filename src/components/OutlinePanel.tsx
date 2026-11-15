@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { confirmAction } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -309,7 +310,7 @@ export function OutlinePanel({
     const chapter = chapters.find((entry) => entry.id === id);
     if (!chapter) return;
     if (chapter.brief || chapter.title) {
-      if (!await confirmAction(`Remove "${chapter.title}" from the outline?`)) return;
+      if (!await confirmAction(`Remove "${formatChapterLabel(chapter.title, chapters.indexOf(chapter))}" from the outline?`)) return;
     }
     setChapters((current) => current.filter((entry) => entry.id !== id));
     setDirty(true);
@@ -345,7 +346,7 @@ export function OutlinePanel({
     const removed = existing.filter(c => !latest.chapters.some(e => e.id === c.id));
     const moved = latest.chapters.filter((c,i) => existing.some(e => e.id === c.id && e.orderIndex !== i));
     const changed = latest.chapters.filter(c => existing.some(e => e.id === c.id && (e.brief !== c.brief || e.title !== c.title)));
-    if (!await confirmAction(`Approve ${latest.chapters.length} chapters and unlock AI drafting?\n${added.length} new chapters; ${moved.length} reordered; ${changed.length} titles or briefs changed.\n${removed.length ? `Remove: ${removed.map(c => c.title + (c.wordCount ? ' (contains manuscript text — removal is blocked)' : '')).join(', ')}.` : 'No existing chapters removed.'}\nExisting prose and revision history are retained for chapters that remain.`)) return;
+    if (!await confirmAction(`Approve ${latest.chapters.length} chapters and unlock AI drafting?\n${added.length} new chapters; ${moved.length} reordered; ${changed.length} titles or briefs changed.\n${removed.length ? `Remove: ${removed.map(c => formatChapterLabel(c.title, c.orderIndex) + (c.wordCount ? ' (contains manuscript text — removal is blocked)' : '')).join(', ')}.` : 'No existing chapters removed.'}\nExisting prose and revision history are retained for chapters that remain.`)) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -644,8 +645,9 @@ export function OutlinePanel({
               <div className="outline-chapter-list">
                 {chapters.map((chapter, index) => (
                   <div className="outline-chapter-card" key={chapter.id}>
-                    <div className="outline-chapter-index">{String(index + 1).padStart(2, '0')}</div>
+
                     <div className="outline-chapter-fields">
+                      <span className="eyebrow">Chapter {index + 1}</span>
                       <input
                         className="outline-title-input"
                         value={chapter.title}
@@ -662,7 +664,7 @@ export function OutlinePanel({
                         aria-label={`Chapter ${index + 1} brief`}
                       />
                     </div>
-                    {chapterImages(chapter.id, chapter.title)}
+                    {chapterImages(chapter.id, formatChapterLabel(chapter.title, index))}
                     <details className="outline-chapter-actions action-menu"><summary className="button button-small" aria-label={`Actions for chapter ${index + 1}`}>Edit order</summary><div className="action-menu-content">
                       <button
                         className="icon-button"
@@ -701,12 +703,12 @@ export function OutlinePanel({
               <div className="outline-readonly">
                 {viewed?.chapters.map((chapter, index) => (
                   <article key={chapter.id} className="outline-readonly-row">
-                    <span className="outline-chapter-index">{String(index + 1).padStart(2, '0')}</span>
+
                     <div>
-                      <h3>{chapter.title}</h3>
+                      <h3>{formatChapterLabel(chapter.title, index)}</h3>
                       <p>{chapter.brief || 'No brief.'}</p>
                     </div>
-                    {chapterImages(chapter.id, chapter.title)}
+                    {chapterImages(chapter.id, formatChapterLabel(chapter.title, index))}
                   </article>
                 ))}
                 {viewed?.chapters.length === 0 ? <p className="muted">This revision has no chapters.</p> : null}
@@ -888,17 +890,15 @@ function BatchPanel({
           </div>
           {running ? (
             <p className="muted small batch-running">
-              Now {batch.mode === 'regenerate' ? 'rewriting' : 'drafting'} {running.orderIndex + 1}.{' '}
-              {running.title}…
+              Now {batch.mode === 'regenerate' ? 'rewriting' : 'drafting'} {' '}
+              {formatChapterLabel(running.title, running.orderIndex)}…
             </p>
           ) : null}
           <ol className="batch-items">
             {items.map((item) => (
               <li className={`batch-item ${item.status}`} key={item.chapterId}>
-                <span className="batch-item-index">
-                  {String(item.orderIndex + 1).padStart(2, '0')}
-                </span>
-                <span className="batch-item-title">{item.title}</span>
+
+                <span className="batch-item-title">{formatChapterLabel(item.title, item.orderIndex)}</span>
                 <span className={`badge ${batchItemBadge(item.status)}`}>
                   {batchItemLabel(item.status)}
                 </span>

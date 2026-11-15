@@ -1,3 +1,8 @@
+/** Chapter order is stored as a zero-based index; labels are one-based. */
+export function formatChapterLabel(title: string, orderIndex: number): string {
+  return `Chapter ${orderIndex + 1}: ${title}`;
+}
+
 export function formatWords(words: number): string {
   if (words >= 1_000_000) return `${(words / 1_000_000).toFixed(1)}m`;
   if (words >= 10_000) return `${Math.round(words / 100) / 10}k`;

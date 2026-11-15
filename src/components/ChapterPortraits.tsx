@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
@@ -31,6 +32,13 @@ function batchBadge(status: PortraitBatch['items'][number]['status']): string {
 export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: string; revisionKey?: string | null; project: Project}) {
   const [data, setData] = useState<ChapterPortraitOverview | null>(null);
   const [open, setOpen] = useState(false);
+  const [imageTab, setImageTab] = useState<'gallery' | 'generate'>('gallery');
+  const [viewAssetId, setViewAssetId] = useState<string | null>(null);
+  const openImages = (assetId: string | null = null) => {
+    setViewAssetId(assetId);
+    setImageTab('gallery');
+    setOpen(true);
+  };
   const [studio, setStudio] = useState<Character | null>(null);
   const [initialAsset, setInitialAsset] = useState<ImageAsset | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +75,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
   }, [chapterId]);
   useEffect(() => {void load();}, [load, revisionKey]);
   useEffect(() => {if (!data?.activeRequests.length) return; const timer = setInterval(() => void load(), 1500); return () => clearInterval(timer);}, [data?.activeRequests.length, load]);
-  useEffect(() => {const handler = () => setOpen(true); window.addEventListener('open-chapter-images', handler); return () => window.removeEventListener('open-chapter-images', handler);}, []);
+  useEffect(() => {const handler = () => openImages(); window.addEventListener('open-chapter-images', handler); return () => window.removeEventListener('open-chapter-images', handler);}, []);
 
   const loadBatch = useCallback(async (characterId: string) => {
     if (!characterId) {setBatch(null); return;}
@@ -177,13 +185,21 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
   const batchRunning = batch?.status === 'running';
   return <section className="chapter-portraits compact-portraits">
     <div className="portrait-strip">{characters.slice(0, 4).map(character => {
-      const image = data?.assets.find(a => a.characterId === character.id && a.selectedForChapter);
-      return <button className="portrait-chip" key={character.id} onClick={() => setOpen(true)}>{image ? <img src={image.url} alt="" /> : <span className="portrait-avatar placeholder">{character.name[0]}</span>}<span>{character.name}<small>{image ? (image.sourceOutdated ? 'Earlier draft' : 'Chapter image') : 'No chapter image'}</small></span></button>;
-    })}{characters.length > 4 ? <button className="portrait-chip portrait-more" onClick={() => setOpen(true)} title="Open chapter images">+{characters.length - 4} more</button> : null}<button className="button button-small" onClick={() => setOpen(true)}>Chapter images · {data?.assets.length ?? 0} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
+      const image = data?.assets.find(a => a.characterId === character.id && a.selectedForChapter) ?? data?.assets.find(a => a.characterId === character.id);
+      return <button className="portrait-chip" key={character.id} onClick={() => openImages(image?.id ?? null)} aria-label={image ? `View image of ${character.name}` : `View chapter images for ${character.name}`}>{image ? <img src={image.url} alt="" /> : <span className="portrait-avatar placeholder">{character.name[0]}</span>}<span>{character.name}<small>{image ? (image.sourceOutdated ? 'Earlier draft' : 'Chapter image') : 'No chapter image'}</small></span></button>;
+    })}{characters.length > 4 ? <button className="portrait-chip portrait-more" onClick={() => openImages()} title="Open chapter images">+{characters.length - 4} more</button> : null}<button className="button button-small" onClick={() => openImages()}>Chapter images · {data?.assets.length ?? 0} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
     {error && !open ? <Banner tone="danger">{error}</Banner> : null}
-    <Modal open={open} onClose={() => setOpen(false)} title={`Chapter images — ${data?.chapterTitle ?? ''}`} subtitle="Select an image for each character in this chapter. Main character portraits stay separate." width="wide">
+    <Modal open={open} onClose={() => setOpen(false)} title={`Chapter images — ${data ? formatChapterLabel(data.chapterTitle, data.chapterNumber - 1) : ''}`} subtitle="Select an image for each character in this chapter. Main character portraits stay separate." width="wide">
       <div className="stack">{error ? <Banner tone="danger">{error}</Banner> : null}{notice ? <Banner>{notice}</Banner> : null}
       {!data ? <Spinner label="Loading chapter images…" /> : <>
+        <div className="row-actions">
+          <button className="button" aria-pressed={imageTab === 'gallery'} onClick={() => {setViewAssetId(null); setImageTab('gallery');}}>View images ({data.assets.length})</button>
+          <button className="button" aria-pressed={imageTab === 'generate'} onClick={() => setImageTab('generate')}>Generate images</button>
+        </div>
+        {imageTab === 'gallery' ? <>
+        <ImageGallery initialViewId={viewAssetId} chapters={[{id: data.chapterId, title: data.chapterTitle, orderIndex: data.chapterNumber - 1}]} assets={data.assets} characters={characters} onChanged={load} onRegenerate={asset => {const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} />
+          {!data.assets.length ? <p className="muted">No images have been created for this chapter yet. Choose Generate images to create one.</p> : null}
+        </> : <>
         {!data.hasText ? <Banner>Draft this chapter before generating its appearances.</Banner> : null}
         {!data.connections.length ? <Banner tone="warning" actions={<button className="button" onClick={() => navigate(setupUrl('image-connections'))}>Connect image service</button>}>An image service draws the portrait.</Banner> : null}
         {!data.imagePromptRole?.model ? <Banner tone="warning" actions={<button className="button" onClick={() => navigate(setupUrl('models'))}>Choose prompt model</button>}>A text model builds the image prompt. You can also write a prompt in Customize.</Banner> : null}
@@ -208,7 +224,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
             <div className="batch-progress-track"><span style={{width: `${batchProgress}%`}} /></div>
             <span className="muted small">{batch.status === 'running' ? 'Running' : batch.status} · {batchSettled} of {batch.items.length} settled · {batch.items.filter(i => i.status === 'completed').length} drawn{batch.items.some(i => i.status === 'failed') ? ` · ${batch.items.filter(i => i.status === 'failed').length} failed` : ''}</span>
             {batch.message ? <span className="muted small">{batch.message}</span> : null}
-            <ol className="batch-items">{batch.items.map(item => <li className={`batch-item ${item.status}`} key={item.chapterId}><span className="batch-item-index">{String(item.orderIndex + 1).padStart(2, '0')}</span><span className="batch-item-title">{item.title}</span><span className={`badge ${batchBadge(item.status)}`}>{batchLabel(item.status)}</span>{item.error ? <span className="batch-item-error">{item.error}</span> : null}</li>)}</ol>
+            <ol className="batch-items">{batch.items.map(item => <li className={`batch-item ${item.status}`} key={item.chapterId}><span className="batch-item-title">{formatChapterLabel(item.title, item.orderIndex)}</span><span className={`badge ${batchBadge(item.status)}`}>{batchLabel(item.status)}</span>{item.error ? <span className="batch-item-error">{item.error}</span> : null}</li>)}</ol>
           </div> : null}
         </section>
 
@@ -218,8 +234,9 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
           <div className="row-actions">{request ? <button className="button button-small" onClick={async () => {try {await api.cancelChapterPortrait(request.id); await load();} catch(err) {setError(errorText(err));}}}>Stop</button> : <button className="button button-small" disabled={busy || !data.hasText || !connectionId || !data.imagePromptRole?.model} onClick={() => void generate([character.id])}>Generate</button>}<button className="button button-small" onClick={() => customize(character)}>Customize</button></div></div>;})}</div>
         {!characters.length ? <p>Add characters in Cast to create chapter images.</p> : null}
         <div className="row-actions"><button className="button button-primary" disabled={busy || !selected.length || !connectionId || !data.hasText || !data.imagePromptRole?.model} onClick={() => void generate(selected)}>Generate selected ({selected.length})</button><span className="muted small">{data.activeRequests.length} active · Provider cost unavailable</span></div>
-        <h3>Images from this chapter</h3><ImageGallery assets={data.assets} characters={characters} onChanged={load} onRegenerate={asset => {const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} />
+
         <div className="row-actions" role="status" aria-live="polite">{['completed','failed','cancelled','interrupted'].map(status => {const count=data.requests.filter(r => r.status === status).length;return count ? <span key={status}>{status}: {count}</span> : null;})}</div>
+        </>}
       </>}
       </div>
     </Modal>

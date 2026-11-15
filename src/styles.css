@@ -4411,3 +4411,27 @@ button:focus-visible, a:focus-visible, summary:focus-visible, [role="separator"]
   .outline-chapter-actions { grid-column: 2; justify-self: end; }
   .workspace-tabs { gap: 14px; }
 }
+
+/* The outline grows with its full chapter list; the document handles scrolling. */
+.workspace-shell.outline-page { height: auto; min-height: 100vh; overflow: visible; }
+.outline-page .workspace-main { flex: 1 0 auto; }
+.outline-page .workspace-center { overflow: visible; }
+.outline-page .workspace-view { flex: none; overflow: visible; }
+.outline-page .workspace-scroll { flex: none; overflow: visible; }
+@media (min-width: 1181px) {
+  .outline-page .assistant-panel { position: sticky; top: 16px; align-self: flex-start; height: calc(100vh - 32px); }
+  .outline-page .panel-resize { align-self: flex-start; height: calc(100vh - 32px); position: sticky; top: 16px; }
+}
+
+/* Chapter numbers are part of the reference label rather than a separate column. */
+.outline-chapter-card { grid-template-columns: minmax(0, 1fr) minmax(140px, 240px) auto; }
+.outline-readonly-row { grid-template-columns: minmax(0, 1fr) minmax(140px, 240px); }
+.memory-row { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 900px) {
+  .outline-chapter-card, .outline-readonly-row { grid-template-columns: minmax(0, 1fr); }
+  .outline-chapter-images, .outline-chapter-actions { grid-column: 1; }
+}
+@media (max-width: 720px) {
+  .memory-row { grid-template-columns: minmax(0, 1fr); }
+  .memory-row-actions { grid-column: 1; }
+}

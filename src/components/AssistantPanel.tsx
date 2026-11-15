@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { confirmAction } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import type { ChapterDetail, ChatMessage, Conversation, GenerationJob, Project } from '@shared/types';
@@ -291,7 +292,7 @@ export function AssistantPanel({
         <div className="assistant-context">
           {chapter ? (
             <span>
-              Seeing Chapter {chapter.orderIndex + 1}: <strong>{chapter.title}</strong>
+              Seeing <strong>{formatChapterLabel(chapter.title, chapter.orderIndex)}</strong>
             </span>
           ) : (
             <span>No chapter selected. The approved outline is in context.</span>

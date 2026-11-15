@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   Chapter,
@@ -426,7 +427,7 @@ export function ImageStudio({
                     <option value="">No chapter</option>
                     {chapters.map((chapter, index) => (
                       <option key={chapter.id} value={chapter.id}>
-                        {index + 1}. {chapter.title}
+                        {formatChapterLabel(chapter.title, chapter.orderIndex)}
                       </option>
                     ))}
                   </select>

@@ -1,3 +1,4 @@
+import { formatChapterLabel } from '../utils';
 import { confirmAction } from './ui';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type {
@@ -381,10 +382,10 @@ export function MemoryPanel({
             <div className="memory-list">
               {data.chapters.map((memory) => (
                 <article className={`memory-row status-${memory.status}`} key={memory.chapterId}>
-                  <div className="memory-index">{String(memory.orderIndex + 1).padStart(2, '0')}</div>
+
                   <div className="memory-row-body">
                     <div className="memory-row-head">
-                      <h3>{memory.chapterTitle}</h3>
+                      <h3>{formatChapterLabel(memory.chapterTitle, memory.orderIndex)}</h3>
                       <MemoryBadge status={memory.status} />
                       <span className="muted small">
                         {formatWords(memory.wordCount)} words · source{' '}
