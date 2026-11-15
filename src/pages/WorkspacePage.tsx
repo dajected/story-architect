@@ -261,22 +261,15 @@ export function WorkspacePage({
     <div className={`workspace-shell ${tab === 'outline' && !focusMode ? 'outline-page' : ''} ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
       <header className="workspace-topbar">
         <div className="workspace-topbar-left">
-          <div className="workspace-title">
-            <h1>{project.title}</h1>
-            <div className="workspace-subtitle">
-              <span>{formatWords(totalWords)} words</span>
-              <span>{chapters.length} chapters</span>
-              {project.status === 'archived' ? <span className="badge">Archived</span> : null}
-            </div>
-          </div>
+          <Link className="button button-small" to="/">Library</Link>
         </div>
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
-          <button aria-pressed={tab === 'manuscript'} className={tab === 'manuscript' ? 'active' : ''} onClick={() => setTab('manuscript')}>
-            Read story
-          </button>
           <button aria-pressed={tab === 'outline'} className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
             Outline
+          </button>
+          <button aria-pressed={tab === 'manuscript'} className={tab === 'manuscript' ? 'active' : ''} onClick={() => setTab('manuscript')}>
+            Read story
           </button>
           <button aria-pressed={tab === 'cast'} className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>
             Characters
@@ -310,7 +303,14 @@ export function WorkspacePage({
             {assistantOpen ? 'Hide assistant' : 'Show assistant'}
           </button>
           {focusMode ? <button className="button button-small" onClick={() => setFocusMode(false)}>Exit focus</button> : null}
-          <Link className="button button-small" to="/">Library</Link>
+          <div className="workspace-title">
+            <h1>{project.title}</h1>
+            <div className="workspace-subtitle">
+              <span>{formatWords(totalWords)} words</span>
+              <span>{chapters.length} chapters</span>
+              {project.status === 'archived' ? <span className="badge">Archived</span> : null}
+            </div>
+          </div>
           <Link className="button button-small" to={`/settings?returnTo=${encodeURIComponent(`/projects/${projectId}?tab=${tab}`)}`}>App settings</Link>
           <details className="action-menu"><summary className="button button-small">Project ···</summary><div className="action-menu-content" onClick={event => {
             if ((event.target as HTMLElement).closest('button, a')) {

@@ -457,7 +457,7 @@ export function OutlinePanel({
             revision.
           </p>
         </div>
-        <div className="outline-header-actions">
+        <div className="outline-header-actions"><button className="button button-danger-ghost" disabled={busy || stream.running || !chapters.length} onClick={async () => { if (await confirmAction('Clear all outline entries? Save the draft to keep this change. Manuscript chapters are retained.')) { setChapters([]); setDirty(true); } }}>Clear all</button>
           {latest ? (
             <button className="button button-ghost" onClick={() => setShowGenerator((open) => !open)}>
               {showGenerator ? 'Hide generator' : latest.status === 'approved' ? 'Regenerate' : 'Generate again'}

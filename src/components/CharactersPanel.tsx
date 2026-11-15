@@ -524,9 +524,7 @@ function CharacterPortrait({ character }: { character: Character }) {
     );
   }
   return (
-    <span className="cast-portrait-placeholder" aria-hidden="true">
-      {character.name.slice(0, 1).toUpperCase()}
-    </span>
+    <img className="cast-portrait-thumb" alt={`${character.name} placeholder portrait`} src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Crect width='128' height='128' fill='%2339465c'/%3E%3Ccircle cx='64' cy='44' r='23' fill='%23afbdd2'/%3E%3Cellipse cx='64' cy='120' rx='46' ry='46' fill='%23afbdd2'/%3E%3C/svg%3E" />
   );
 }
 

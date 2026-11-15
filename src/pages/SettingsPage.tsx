@@ -307,13 +307,11 @@ export function SettingsPage({
               Image prompt templates
             </button>
           </nav>
-          <p className="settings-note">Chapter images use two tools: a text model builds the prompt, then an image service draws it. Image prompt templates define the shared art direction.</p>
-          <p className="settings-note">
-            Credentials are encrypted on the server and never returned to the browser.
-          </p>
+          
+          
         </aside>
 
-        <section className="settings-content"><section className="setup-checklist"><h2>Set up your writing model</h2><p className="muted">These defaults apply to every novel unless you choose an override.</p><ol className="setup-steps"><li><button className="button button-small" onClick={() => setTab('connections')}>1. Connect and test</button></li><li><button className="button button-small" onClick={() => setTab('models')}>2. Choose your default model</button></li><li><Link className="button button-small" to={returnTo}>3. {returnTo === '/' ? 'Return to library' : 'Return to novel'}</Link></li></ol></section>
+        <section className="settings-content">
           {error ? <Banner tone="danger">{error}</Banner> : null}
           {notice ? <Banner tone="success">{notice}</Banner> : null}
 

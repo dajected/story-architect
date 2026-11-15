@@ -138,7 +138,7 @@ export function LibraryPage({
 
         {restoreNotice ? <Banner tone="success">{restoreNotice}</Banner> : null}
 
-        {!ready.text ? <section className="setup-checklist"><h2>Your writing tools</h2><ol className="setup-steps"><li><Link className="button button-small" to="/settings?tab=connections">1. Connect a text model</Link></li><li className="muted">2. Create a novel → approve its outline → draft a chapter</li><li><Link className="button button-small" to="/settings?tab=image-connections">3. Set up chapter images (optional)</Link></li></ol><p className="muted small">You can plan and write manually before connecting models.</p></section> : null}
+        
         <div className="library-toolbar">
           <input
             className="search-input"
@@ -220,18 +220,7 @@ export function LibraryPage({
           </section>
         ) : null}
 
-        <details className="library-footnote"><summary>Model connections and setup</summary>
-          <div>
-            <h3>Bring your own models</h3>
-            <p className="muted">
-              Connect OpenRouter or any OpenAI-compatible endpoint. Keys stay on the server, and
-              each task can use a different model.
-            </p>
-          </div>
-          <Link className="button" to="/settings">
-            Configure connections
-          </Link>
-        </details>
+        
       </main>
 
       <Modal

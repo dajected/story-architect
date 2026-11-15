@@ -1,3 +1,4 @@
+import { version } from '../../package.json';
 import { formatChapterLabel } from '../utils';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter } from '@shared/types';
@@ -100,9 +101,7 @@ export function ChapterSidebar({
 
         <div className="sidebar-foot">
           <span className="muted small">
-            {query.trim()
-              ? `${filtered.length} of ${chapters.length} chapters`
-              : `${formatWords(totalWords)} words in manuscript`}
+            Version {version}
           </span>
         </div>
       </aside>
