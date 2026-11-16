@@ -1,4 +1,5 @@
 import { confirmAction } from '../components/ui';
+import { ActionMenu } from '../components/ActionMenu';
 import { BackupButton } from '../components/BackupButton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -170,7 +171,7 @@ export function LibraryPage({
               }}
             />
             <button
-              className="button button-ghost button-small"
+              className="button button-small"
               onClick={() => backupInput.current?.click()}
               disabled={restoring}
             >
@@ -178,7 +179,8 @@ export function LibraryPage({
             </button>
             {archived.length > 0 ? (
               <button
-                className="button button-ghost button-small"
+                className="button button-small"
+                aria-expanded={showArchived}
                 onClick={() => setShowArchived((current) => !current)}
               >
                 {showArchived ? 'Hide archive' : `Archive (${archived.length})`}
@@ -278,6 +280,7 @@ function ProjectCard({
         <Link className="button button-ghost button-small" to={`/projects/${project.id}${project.currentWords > 0 ? '?tab=manuscript' : ''}`}>
           {project.currentWords > 0 ? lastChapter ? `Continue chapter ${lastChapter.orderIndex + 1}: ${lastChapter.title}` : 'Continue writing →' : project.outlineStatus === 'draft' ? 'Review outline →' : 'Open project →'}
         </Link>
+        <ActionMenu label="More" ariaLabel={`More actions for ${project.title}`}>
         <BackupButton projectId={project.id} label="Back up" />
         {onArchive ? (
           <button className="button button-ghost button-small" onClick={() => onArchive(project)}>
@@ -290,6 +293,7 @@ function ProjectCard({
           </button>
         ) : null}
         <button className="button button-ghost button-small library-delete" onClick={() => onDelete(project)}>Delete</button>
+        </ActionMenu>
       </div>
     </article>
   );

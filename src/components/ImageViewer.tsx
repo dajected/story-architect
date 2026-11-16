@@ -1,3 +1,4 @@
+import { ActionMenu } from './ActionMenu';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Modal } from './ui';
 
@@ -40,10 +41,10 @@ export function ImageViewer({open, title, url, alt, index, count, onNavigate, on
       <button className="button button-small" aria-label="Previous image" disabled={index <= 0} onClick={() => onNavigate(index - 1)}>← Previous</button>
       <span className="muted small" aria-live="polite">{index + 1} / {count}</span>
       <button className="button button-small" aria-label="Next image" disabled={index >= count - 1} onClick={() => onNavigate(index + 1)}>Next →</button>
-      <details className="action-menu image-viewer-menu"><summary className="button button-small">More</summary><div className="action-menu-content">
+      <ActionMenu className="image-viewer-menu" buttonClassName="button button-small" label="More">
         <label>Zoom<input aria-label="Image zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={event => setZoom(Number(event.target.value))} /></label>
         {actions}
-      </div></details>
+      </ActionMenu>
     </nav>
   </Modal>;
 }

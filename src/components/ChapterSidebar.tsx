@@ -3,7 +3,7 @@ import { formatChapterLabel } from '../utils';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter } from '@shared/types';
 import { formatWords } from '../utils';
-import { StatusDot } from './ui';
+import { StatusDot, useDialog, useMediaQuery } from './ui';
 
 export function ChapterSidebar({
   chapters,
@@ -20,6 +20,9 @@ export function ChapterSidebar({
 }) {
   const [query, setQuery] = useState('');
   const selectedRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const overlay = useMediaQuery('(max-width: 1020px)');
+  useDialog(open && overlay, onClose, panelRef);
   const totalWords = chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
 
   const filtered = useMemo(() => {
@@ -39,7 +42,7 @@ export function ChapterSidebar({
   return (
     <>
       {open ? <div className="sidebar-scrim" onClick={onClose} /> : null}
-      <aside className={`chapter-sidebar ${open ? 'open' : ''}`}>
+      <aside ref={panelRef} className={`chapter-sidebar ${open ? 'open' : ''}`} role={open && overlay ? 'dialog' : undefined} aria-modal={open && overlay ? true : undefined} aria-label="Chapters" tabIndex={-1} inert={overlay && !open}>
         <div className="sidebar-head">
           <div>
             <p className="eyebrow">Manuscript</p>

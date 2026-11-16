@@ -1,3 +1,4 @@
+import { ActionMenu } from '../components/ActionMenu';
 import { BackupButton } from '../components/BackupButton';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -94,7 +95,7 @@ export function WorkspacePage({
       if (y < 24) { setReaderHeadersHidden(false); travel = 0; }
       else if (Math.abs(travel) > 16) {
         // Keep open menus and keyboard-focused header controls available.
-        const headerInUse = (topbarRef.current?.contains(document.activeElement) && document.activeElement?.matches(':focus-visible')) || document.querySelector('.workspace-menu[open]');
+        const headerInUse = (topbarRef.current?.contains(document.activeElement) && document.activeElement?.matches(':focus-visible')) || document.querySelector('.action-panel');
         setReaderHeadersHidden(travel > 0 && !headerInUse);
         travel = 0;
       }
@@ -316,7 +317,6 @@ export function WorkspacePage({
       <header ref={topbarRef} className="workspace-topbar">
         <div className="workspace-topbar-left">
           <Link className="button button-small" to="/">Library</Link>
-          <WorkspaceQueue projectId={project.id} onOpenActivity={() => setTab('activity')} />
         </div>
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
@@ -342,18 +342,7 @@ export function WorkspacePage({
               {project.status === 'archived' ? <span className="badge">Archived</span> : null}
             </div>
           </div>
-          <details className="action-menu workspace-menu" onKeyDown={event => {
-            if (event.key === 'Escape') {
-              event.currentTarget.open = false;
-              event.currentTarget.querySelector('summary')?.focus();
-            }
-          }}><summary className="button button-small">Menu</summary><div className="action-menu-content" onClick={event => {
-            if ((event.target as HTMLElement).closest('button, a')) {
-              const menu = event.currentTarget.closest('.workspace-menu');
-              menu?.removeAttribute('open');
-              menu?.querySelector('summary')?.focus();
-            }
-          }}>
+          <ActionMenu className="workspace-menu" label="Menu" title="Workspace menu">
           <details className="workspace-submenu"><summary>Workspace</summary><div>
           {tab === 'manuscript' ? <button className="button button-ghost button-small" aria-pressed={window.innerWidth <= 1180 ? sidebarOpen : chaptersVisible} onClick={() => {if (window.innerWidth <= 1180) setSidebarOpen(v => !v); else setChaptersVisible(v => !v);}}>
             {sidebarOpen || (window.innerWidth > 1180 && chaptersVisible) ? 'Hide chapters' : 'Show chapters'}
@@ -361,7 +350,7 @@ export function WorkspacePage({
           <button
             className={`button button-ghost button-small ${assistantOpen ? 'active' : ''}`}
             aria-pressed={assistantOpen}
-            onClick={() => setAssistantOpen((open) => !open)}
+            onClick={() => {setFocusMode(false); setAssistantOpen((open) => !open);}}
           >
             {assistantOpen ? 'Hide assistant' : 'Show assistant'}
           </button>
@@ -378,8 +367,9 @@ export function WorkspacePage({
           </a>
           <BackupButton projectId={project.id} label="Back up" />
           </div></details>
-          </div></details>
+          </ActionMenu>
         </div>
+        <WorkspaceQueue projectId={project.id} hideWhenIdle={tab === 'manuscript'} onOpenActivity={() => setTab('activity')} />
       </header>
 
       {project.status === 'archived' ? (
@@ -412,7 +402,7 @@ export function WorkspacePage({
         </Banner>
       ) : null}
 
-      {project.outlineStatus !== 'approved' || totalWords === 0 ? <section className="next-step" aria-label="Next step"><div><strong>{project.outlineStatus === 'approved' ? 'Next: start chapter 1' : project.outlineStatus === 'draft' ? 'Next: review and approve your outline' : 'Next: create your outline'}</strong><p className="muted small">{project.outlineStatus === 'approved' ? 'Generate a draft, then read your chapter here.' : 'Approving creates your chapter list and unlocks AI drafting. Review the titles and briefs first.'}</p></div><button className="button button-primary button-small" onClick={() => {setTab(project.outlineStatus === 'approved' ? 'manuscript' : 'outline'); if (project.outlineStatus === 'approved' && chapters[0]) void selectChapter(chapters[0].id);}}>{project.outlineStatus === 'approved' ? 'Start chapter 1' : 'Open outline'}</button></section> : null}
+      {(tab === 'outline' || tab === 'manuscript') && (project.outlineStatus !== 'approved' || totalWords === 0) ? <section className="next-step" aria-label="Next step"><div><strong>{project.outlineStatus === 'approved' ? 'Next: start chapter 1' : project.outlineStatus === 'draft' ? 'Next: review and approve your outline' : 'Next: create your outline'}</strong><p className="muted small">{project.outlineStatus === 'approved' ? 'Generate a draft, then read your chapter here.' : 'Approving creates your chapter list and unlocks AI drafting. Review the titles and briefs first.'}</p></div><button className="button button-primary button-small" onClick={() => {setTab(project.outlineStatus === 'approved' ? 'manuscript' : 'outline'); if (project.outlineStatus === 'approved' && chapters[0]) void selectChapter(chapters[0].id);}}>{project.outlineStatus === 'approved' ? 'Start chapter 1' : 'Open outline'}</button></section> : null}
       <div className="workspace-main">
         <ChapterSidebar
           chapters={chapters}
@@ -477,6 +467,9 @@ export function WorkspacePage({
                 onNavigate={navigateChapter}
                 canNavigatePrevious={selectedIndex > 0}
                 canNavigateNext={selectedIndex >= 0 && selectedIndex < chapters.length - 1}
+                onOpenChapters={() => {setFocusMode(false); setSidebarOpen(true);}}
+                chapterPosition={selectedIndex + 1}
+                chapterCount={chapters.length}
                 focusMode={focusMode}
               />
             ) : (

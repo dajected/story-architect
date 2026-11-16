@@ -6,7 +6,7 @@ import { api } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate } from '../utils';
 import { Markdown } from './Markdown';
-import { Banner, Spinner } from './ui';
+import { Banner, Spinner, useDialog, useMediaQuery } from './ui';
 
 const PROMPTS = [
   'Brainstorm the next story beat',
@@ -39,6 +39,10 @@ export function AssistantPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [insertingId, setInsertingId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const overlay = useMediaQuery('(max-width: 1180px)');
+  const touch = useMediaQuery('(pointer: coarse)');
+  useDialog(open && overlay, onClose, panelRef);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const currentConversationRef = useRef<string | null>(null);
   const finishedRef = useRef<(job: GenerationJob) => void>(() => {});
@@ -247,7 +251,7 @@ export function AssistantPanel({
   return (
     <>
       {open ? <div className="assistant-scrim" onClick={onClose} /> : null}
-      <aside className={`assistant-panel ${open ? 'open' : ''}`}>
+      <aside ref={panelRef} className={`assistant-panel ${open ? 'open' : ''}`} role={open && overlay ? 'dialog' : undefined} aria-modal={open && overlay ? true : undefined} aria-label="Assistant" tabIndex={-1} inert={overlay && !open}>
         <header className="assistant-head">
           <div>
             <p className="eyebrow">Writing assistant</p>
@@ -401,7 +405,7 @@ export function AssistantPanel({
             placeholder="Ask about the story, the outline, or this chapter…"
           />
           <div className="composer-actions">
-            <span className="muted small">Ctrl+Enter to send</span>
+            <span className="muted small">{touch ? 'Tap Send when ready' : 'Ctrl+Enter to send'}</span>
             <button
               className="button button-primary button-small"
               onClick={() => void send()}

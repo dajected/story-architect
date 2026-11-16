@@ -323,9 +323,7 @@ export function LorePanel({ project }: { project: Project }) {
           <p className="eyebrow">Lore</p>
           <h1>World notes</h1>
           <p className="lede">
-            Places, rules and background you provide. Entries are used when their keywords match the chapter brief, your generation instructions,
-            and recent prose. Pinned and always-include entries are used every time, within the
-            lore budget.
+            Save places, rules, and background for your story. Matching entries guide generation; pin an entry to use it in the next draft.
           </p>
         </div>
         <div className="lore-header-actions">
@@ -335,13 +333,13 @@ export function LorePanel({ project }: { project: Project }) {
           >
             New lorebook
           </button>
-          <button
+          {overview.unlinkedBooks.length > 0 ? <button
             className="button"
             onClick={() => setLinkOpen(true)}
             disabled={overview.unlinkedBooks.length === 0}
           >
             Link a book
-          </button>
+          </button> : null}
           <button
             className="button button-ghost button-small"
             onClick={() => setInstructionDraft({ name: '', text: '' })}
@@ -383,11 +381,6 @@ export function LorePanel({ project }: { project: Project }) {
       {overview.books.length === 0 ? (
         <EmptyState
           title="No lorebooks yet"
-          actions={
-            <button className="button button-primary" onClick={() => setBookDraft({ name: '', description: '' })}>
-              Create a lorebook
-            </button>
-          }
         >
           Group world details, factions, places, and vocabulary into keyword-triggered entries.
           A book can also be shared with other novels.

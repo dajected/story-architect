@@ -1,6 +1,7 @@
+import { ActionMenu } from './ActionMenu';
 import { formatChapterLabel } from '../utils';
 import { confirmAction } from './ui';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   ChapterBatch,
@@ -15,7 +16,7 @@ import { countWords } from '@shared/utils';
 import { api, type OutlineResponse } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate, formatWords, newId } from '../utils';
-import { Banner, EmptyState, Spinner } from './ui';
+import { Banner, EmptyState, Spinner, useMediaQuery } from './ui';
 import { ImageViewer } from './ImageViewer';
 
 export function OutlinePanel({
@@ -75,6 +76,7 @@ export function OutlinePanel({
   const chapterImages = (chapterId: string, title: string) => {
     const assets = images.filter(image => image.chapterId === chapterId)
       .sort((a, b) => Number(b.selectedForChapter) - Number(a.selectedForChapter) || b.createdAt.localeCompare(a.createdAt));
+    if (!assets.length) return null;
     return <aside className="outline-chapter-images" aria-label={`Images for ${title}`}>
       {assets.length ? assets.map(asset => <button key={asset.id} className="chapter-image-thumb" onClick={() => setViewImage(asset)} aria-label={`View ${title} image${asset.selectedForChapter ? ', selected for chapter' : ''}`}>
         <img src={asset.url} alt={`Generated image for ${title}`} loading="lazy" />
@@ -643,7 +645,7 @@ export function OutlinePanel({
             {canEdit ? (
               <div className="outline-chapter-list">
                 {chapters.map((chapter, index) => (
-                  <div className="outline-chapter-card" key={chapter.id}>
+                  <OutlineChapterCard key={chapter.id} title={formatChapterLabel(chapter.title, index)} brief={chapter.brief}>
 
                     <div className="outline-chapter-fields">
                       <span className="eyebrow">Chapter {index + 1}</span>
@@ -664,7 +666,7 @@ export function OutlinePanel({
                       />
                     </div>
                     {chapterImages(chapter.id, formatChapterLabel(chapter.title, index))}
-                    <details className="outline-chapter-actions action-menu"><summary className="button button-small" aria-label={`Actions for chapter ${index + 1}`}>Edit order</summary><div className="action-menu-content">
+                    <ActionMenu className="outline-chapter-actions" buttonClassName="button button-small" label="Edit order" ariaLabel={`Actions for chapter ${index + 1}`}>
                       <button
                         className="icon-button"
                         onClick={() => move(index, -1)}
@@ -691,8 +693,8 @@ export function OutlinePanel({
                       >
                         ×
                       </button>
-                    </div></details>
-                  </div>
+                    </ActionMenu>
+                  </OutlineChapterCard>
                 ))}
                 <button className="button button-ghost add-chapter" onClick={addChapter}>
                   Add chapter
@@ -701,14 +703,14 @@ export function OutlinePanel({
             ) : (
               <div className="outline-readonly">
                 {viewed?.chapters.map((chapter, index) => (
-                  <article key={chapter.id} className="outline-readonly-row">
+                  <OutlineChapterCard key={chapter.id} title={formatChapterLabel(chapter.title, index)} brief={chapter.brief} readOnly>
 
                     <div>
                       <h3>{formatChapterLabel(chapter.title, index)}</h3>
                       <p>{chapter.brief || 'No brief.'}</p>
                     </div>
                     {chapterImages(chapter.id, formatChapterLabel(chapter.title, index))}
-                  </article>
+                  </OutlineChapterCard>
                 ))}
                 {viewed?.chapters.length === 0 ? <p className="muted">This revision has no chapters.</p> : null}
               </div>
@@ -801,6 +803,7 @@ function BatchPanel({
   onRefresh: () => void;
   onOpenChapter?: (chapterId: string) => void;
 }) {
+  const mobile = useMediaQuery('(max-width: 720px)');
   const items = batch?.items ?? [];
   const total = items.length;
   const completed = items.filter((item) => item.status === 'completed').length;
@@ -813,6 +816,7 @@ function BatchPanel({
   const running = items.find((item) => item.status === 'running') ?? null;
 
   return (
+    <details className="batch-disclosure" open={!mobile || active || Boolean(error)}><summary>Whole-novel generation{active ? " (running)" : ""}</summary>
     <section className="batch-panel">
       <div className="batch-head">
         <div>
@@ -919,6 +923,17 @@ function BatchPanel({
           No batch has run yet. Draft the empty chapters, or regenerate the whole story.
         </p>
       )}
-    </section>
+    </section></details>
   );
+}
+
+function OutlineChapterCard({title, brief, readOnly = false, children}: {title: string; brief: string; readOnly?: boolean; children: ReactNode}) {
+  const mobile = useMediaQuery('(max-width: 720px)');
+  const [expanded, setExpanded] = useState(false);
+  return <article className={readOnly ? 'outline-readonly-row' : 'outline-chapter-card'}>
+    {mobile ? <button type="button" className="outline-chapter-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+      <strong>{title}</strong><span className="outline-brief-preview">{brief || 'No brief yet.'}</span><span className="small">{expanded ? 'Collapse' : readOnly ? 'View chapter' : 'Edit chapter'}</span>
+    </button> : null}
+    {!mobile || expanded ? children : null}
+  </article>;
 }

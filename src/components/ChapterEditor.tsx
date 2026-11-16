@@ -1,3 +1,4 @@
+import { ActionMenu } from './ActionMenu';
 import { formatChapterLabel } from '../utils';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -36,6 +37,9 @@ export function ChapterEditor({
   canNavigatePrevious,
   canNavigateNext,
   focusMode = false,
+  onOpenChapters,
+  chapterPosition,
+  chapterCount,
 }: {
   project: Project;
   chapter: ChapterDetail;
@@ -48,6 +52,9 @@ export function ChapterEditor({
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
   focusMode?: boolean;
+  onOpenChapters?: () => void;
+  chapterPosition?: number;
+  chapterCount?: number;
 }) {
   const [content, setContent] = useState(chapter.content);
   const [savedContent, setSavedContent] = useState(chapter.content);
@@ -457,7 +464,7 @@ export function ChapterEditor({
         </div>
         <div className="editor-actions">
           <button className="button button-small" aria-label="Chapter images" onClick={() => window.dispatchEvent(new Event('open-chapter-images'))}>Chapter images · {imageCount}</button>
-          <details className="action-menu"><summary className="button button-small">Chapter tools</summary><div className="action-menu-content">
+          <ActionMenu className="" buttonClassName="button button-small" label="Chapter tools">
           <button className="button button-ghost button-small" onClick={onOpenOutline}>
             Edit outline
           </button>
@@ -470,7 +477,7 @@ export function ChapterEditor({
           <button className="button button-ghost button-small" onClick={() => setHistoryOpen(true)}>
             History
           </button>
-          </div></details>
+          </ActionMenu>
           <button className="button button-primary button-small" onClick={() => setShowGenerate((open) => !open)}>
             {showGenerate ? 'Hide generation' : 'Generate draft'}
           </button>
@@ -802,9 +809,10 @@ export function ChapterEditor({
       ) : null}
 
       <nav className="editor-toolbar reader-toolbar" aria-label="Chapter navigation">
-        <button className="button button-small" aria-label="Previous chapter" disabled={!onNavigate || !canNavigatePrevious} onClick={() => onNavigate?.('previous')}>← Previous</button>
-        <button className="button button-small" aria-pressed={focusMode} onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}>{focusMode ? 'Exit focus' : 'Focus on story'}</button>
-        <button className="button button-small" aria-label="Next chapter" disabled={!onNavigate || !canNavigateNext} onClick={() => onNavigate?.('next')}>Next →</button>
+        <button className="button button-small" aria-label="Previous chapter" disabled={!onNavigate || !canNavigatePrevious} onClick={() => onNavigate?.('previous')}><span aria-hidden="true">←</span><span className="reader-direction-label">Previous</span></button>
+        <button className="button button-small reader-chapters" onClick={onOpenChapters} aria-label={`Chapters, ${chapterPosition} of ${chapterCount}`}>Chapters <span className="small">{chapterPosition}/{chapterCount}</span></button>
+        <button className="button button-small reader-focus" aria-label={focusMode ? 'Exit focus' : 'Focus on story'} title={focusMode ? 'Exit focus' : 'Hide reading controls'} aria-pressed={focusMode} onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={focusMode ? 'M9 3v6H3m18 0h-6V3M3 15h6v6m6 0v-6h6' : 'M9 3H3v6m12-6h6v6M3 15v6h6m6 0h6v-6'} /></svg><span className="reader-focus-label">{focusMode ? 'Exit focus' : 'Focus on story'}</span></button>
+        <button className="button button-small" aria-label="Next chapter" disabled={!onNavigate || !canNavigateNext} onClick={() => onNavigate?.('next')}><span className="reader-direction-label">Next</span><span aria-hidden="true">→</span></button>
       </nav>
       <article className="editor-surface" aria-label="Story reader">
         <div className="manuscript-preview">

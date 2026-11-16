@@ -18,7 +18,7 @@ export function VersionBadge() {
 
 export function Brand({ to = '/', small = false }: { to?: string; small?: boolean }) {
   return (
-    <Link className={`brand ${small ? 'brand-small' : ''}`} to={to}>
+    <Link className={`brand ${small ? 'brand-small' : ''}`} to={to} aria-label="Story Architect home">
       <img src="/icon.svg" alt="" width={small ? 26 : 32} height={small ? 26 : 32} />
       <span>Story Architect</span>
     </Link>

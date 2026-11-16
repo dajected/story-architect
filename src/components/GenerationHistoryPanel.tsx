@@ -92,11 +92,6 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
         <div>
           <p className="eyebrow">Project activity</p>
           <h2>Generation log</h2>
-          <p className="muted">
-            Model, sampling settings, cache usage, and cost. Provider-reported costs include cache
-            pricing; otherwise an estimate uses prices saved when the job started. Image runs are
-            billed per image by the image service and are listed without token usage.
-          </p>
         </div>
         <button className="button button-ghost button-small" onClick={() => void load()}>
           Refresh
@@ -105,50 +100,13 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
 
       {error ? <Banner tone="danger">{error}</Banner> : null}
 
-      <div className="history-summary">
+      <div className="history-summary history-overview">
         <SummaryCard label="Jobs" value={String(history.summary.total)} note={`${history.summary.completed} completed`} />
-        <SummaryCard
-          label="Prompt tokens"
-          value={history.summary.promptTokens.toLocaleString()}
-          note="reported by the provider"
-        />
-        <SummaryCard
-          label="Cached input"
-          value={history.summary.cacheReportedPromptTokens > 0 ? history.summary.cachedPromptTokens.toLocaleString() : 'Not reported'}
-          note={history.summary.cacheReportedPromptTokens > 0
-            ? `${((history.summary.cachedPromptTokens / history.summary.cacheReportedPromptTokens) * 100).toFixed(1)}% of input with cache reporting`
-            : 'cache usage not reported'}
-        />
-        <SummaryCard
-          label="Completion tokens"
-          value={history.summary.completionTokens.toLocaleString()}
-          note="reported by the provider"
-        />
-        <SummaryCard
-          label="Cost"
-          value={formatCost(history.summary.estimatedCost)}
-          note={
-            history.summary.pricedJobs > 0
-              ? `${history.summary.reportedCostJobs} reported · ${history.summary.pricedJobs - history.summary.reportedCostJobs} estimated`
-              : 'no cached pricing'
-          }
-        />
-        <SummaryCard
-          label="Needs attention"
-          value={String(
-            history.summary.failed + history.summary.cancelled + history.summary.interrupted,
-          )}
-          note={`${history.summary.active} running or queued`}
-        />
+        <SummaryCard label="Tokens" value={(history.summary.promptTokens + history.summary.completionTokens).toLocaleString()} note="reported by the provider" />
+        <SummaryCard label="Cost" value={formatCost(history.summary.estimatedCost)} note={`${history.summary.reportedCostJobs} reported costs`} />
+        <SummaryCard label="Needs attention" value={String(history.summary.failed + history.summary.cancelled + history.summary.interrupted)} note={`${history.summary.active} running or queued`} />
       </div>
 
-      {history.summary.unpricedJobs > 0 ? (
-        <p className="field-hint">
-          {history.summary.unpricedJobs} job
-          {history.summary.unpricedJobs === 1 ? '' : 's'} reported usage without a cost or saved model
-          pricing. Refresh the connection's model list to collect prices for estimates.
-        </p>
-      ) : null}
 
       <div className="history-toolbar">
         <select
@@ -178,6 +136,17 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
           {entries.length} of {history.entries.length} shown, newest first
         </span>
       </div>
+
+      <details className="history-details"><summary>Usage and cost details</summary>
+        <p className="muted small">Provider-reported costs include cache pricing; estimates use prices saved when the job started. Image runs are billed per image and have no token usage.</p>
+        <div className="history-summary">
+          <SummaryCard label="Prompt tokens" value={history.summary.promptTokens.toLocaleString()} note="reported by the provider" />
+          <SummaryCard label="Completion tokens" value={history.summary.completionTokens.toLocaleString()} note="reported by the provider" />
+          <SummaryCard label="Cached input" value={history.summary.cacheReportedPromptTokens > 0 ? history.summary.cachedPromptTokens.toLocaleString() : 'Not reported'} note={history.summary.cacheReportedPromptTokens > 0 ? `${((history.summary.cachedPromptTokens / history.summary.cacheReportedPromptTokens) * 100).toFixed(1)}% of input with cache reporting` : 'cache usage not reported'} />
+          <SummaryCard label="Cost sources" value={String(history.summary.pricedJobs)} note={`${history.summary.reportedCostJobs} reported, ${history.summary.pricedJobs - history.summary.reportedCostJobs} estimated`} />
+        </div>
+        {history.summary.unpricedJobs > 0 ? <p className="field-hint">{history.summary.unpricedJobs} jobs reported usage without a cost or saved model pricing. Refresh the connection's model list to collect prices for estimates.</p> : null}
+      </details>
 
       {history.entries.length === 0 ? (
           <EmptyState title="No generations yet">

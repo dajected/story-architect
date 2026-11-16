@@ -281,7 +281,10 @@ export function SettingsPage({
       <main className="settings-layout">
         <aside className="settings-nav">
           <p className="eyebrow">App settings</p>
-          <nav>
+          <select className="mobile-settings-select" aria-label="Settings section" value={tab} onChange={event => setTab(event.target.value as Tab)}>
+            <option value="connections">Connections</option><option value="models">Models &amp; roles</option><option value="generation">Advanced generation</option><option value="prompts">Prompt templates</option><option value="image-connections">Image services</option><option value="image-prompts">Image prompt templates</option>
+          </select>
+          <nav aria-label="Settings sections">
             <button aria-pressed={tab === 'connections'} className={tab === 'connections' ? 'active' : ''} onClick={() => setTab('connections')}>
               Connections
             </button>

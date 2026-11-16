@@ -13,7 +13,7 @@ import type {
 import { FACT_CLASS_LABELS, FACT_KIND_LABELS } from '@shared/types';
 import { api } from '../api';
 import { errorText, formatDate, formatWords } from '../utils';
-import { Banner, EmptyState, Modal, Spinner } from './ui';
+import { Banner, EmptyState, Modal, Spinner, useMediaQuery } from './ui';
 
 type MemoryTab = 'chapters' | 'facts';
 
@@ -40,6 +40,7 @@ export function MemoryPanel({
   onOpenSettings: () => void;
   onOpenChapter?: (id: string) => void;
 }) {
+  const mobile = useMediaQuery('(max-width: 720px)');
   const [data, setData] = useState<MemoryOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -252,12 +253,11 @@ export function MemoryPanel({
           <p className="eyebrow">Story memory</p>
           <h1>Story memory</h1>
           <p className="lede">
-            Facts, summaries, and key-character appearance records collected from your chapters. Accepting a fact guides future AI drafts; it does not edit your manuscript. Proposed canon
-            only enters later prompts after you accept it.
+            Review chapter summaries, character appearances, and world facts. Accept facts to guide future drafts.
           </p>
         </div>
         <div className="memory-header-actions">
-          <button
+          {data.chapters.some(chapter => chapter.wordCount > 0) ? <button
             className="button button-primary"
             onClick={rebuildAll}
             disabled={busy || needsRebuild.length === 0 || running.length > 0}
@@ -266,13 +266,13 @@ export function MemoryPanel({
             {needsRebuild.length > 0
               ? `Rebuild ${needsRebuild.length} ${needsRebuild.length === 1 ? 'chapter' : 'chapters'}`
               : 'Memory up to date'}
-          </button>
+          </button> : null}
           <button className="button" onClick={() => setFactDraft(defaultFactDraft())}>
             Add world fact
           </button>
-          <button className="button button-ghost button-small" onClick={onOpenSettings}>
+          {data.chapters.some(chapter => chapter.wordCount > 0) ? <button className="button button-ghost button-small" onClick={onOpenSettings}>
             Model settings
-          </button>
+          </button> : null}
         </div>
       </header>
 
@@ -290,7 +290,7 @@ export function MemoryPanel({
       ) : null}
       {notice ? <Banner tone="success">{notice}</Banner> : null}
 
-      {!data.memoryRole ? (
+      {!data.memoryRole && data.chapters.some(chapter => chapter.wordCount > 0) ? (
         <Banner
           tone="warning"
           title="No memory model assigned"
@@ -353,6 +353,7 @@ export function MemoryPanel({
         </Banner>
       ) : null}
 
+      {data.chapters.some(chapter => chapter.wordCount > 0) || data.facts.length > 0 ? <details className="memory-overview" open={!mobile}><summary>Memory overview</summary>
       <div className="memory-stats">
         <Stat label="Current summaries" value={`${counts.current}/${counts.chapters}`} />
         <Stat label="Stale" value={String(counts.stale)} tone={counts.stale > 0 ? 'warning' : undefined} />
@@ -364,7 +365,7 @@ export function MemoryPanel({
         />
         <Stat label="Established facts" value={String(counts.establishedFacts)} />
         <Stat label="Active cast" value={String(counts.activeCharacters)} />
-      </div>
+      </div></details> : null}
 
       <div className="segmented memory-tabs">
         <button className={tab === 'chapters' ? 'active' : ''} onClick={() => setTab('chapters')}>

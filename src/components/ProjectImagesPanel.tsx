@@ -1,3 +1,4 @@
+import { ActionMenu } from './ActionMenu';
 import { formatChapterLabel } from '../utils';
 import { useCallback, useEffect, useState } from 'react';
 import type { Chapter, Character, ImageAsset, PortraitBatch, Project } from '@shared/types';
@@ -91,7 +92,7 @@ export function ProjectImagesPanel({
   return <div className="stack images-page">
     <header className="images-header">
       <div><p className="eyebrow">Visual library</p><h1>Images</h1>{view === 'gallery' ? <p className="muted">Create and browse character images throughout your story.</p> : null}</div>
-      <details className="action-menu"><summary className="button">Manage images</summary><div className="action-menu-content">{onOpenCast ? <button className="button" onClick={onOpenCast}>Characters</button> : null}<button className="button" onClick={onOpenSettings}>Image settings</button></div></details>
+      <ActionMenu label="Manage images" buttonClassName="button">{onOpenCast ? <button className="button" onClick={onOpenCast}>Characters</button> : null}<button className="button" onClick={onOpenSettings}>Image settings</button></ActionMenu>
     </header>
     <div className="image-view-toolbar"><div className="row-actions" role="group" aria-label="Image view">
       <button className={`button${view === 'gallery' ? ' button-primary' : ''}`} aria-pressed={view === 'gallery'} onClick={() => setView('gallery')}>Gallery</button>

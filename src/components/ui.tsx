@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
@@ -15,6 +15,53 @@ function lockBodyScroll() {
     bodyScrollLocks.delete(token);
     if (!bodyScrollLocks.size) document.body.style.overflow = unlockedBodyOverflow;
   };
+}
+
+export function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [query]);
+  return matches;
+}
+
+/** Shared focus and scroll behaviour for modal surfaces and responsive drawers. */
+export function useDialog(open: boolean, onClose: () => void, dialogRef: RefObject<HTMLElement | null>, modal = true, restoreFocus?: RefObject<boolean>) {
+  const closeRef = useRef(onClose);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  if (open && !wasOpen.current) previousFocusRef.current = document.activeElement as HTMLElement | null;
+  wasOpen.current = open;
+  closeRef.current = onClose;
+  useLayoutEffect(() => {
+    if (!open) return;
+    const previousFocus = previousFocusRef.current;
+    const dialog = dialogRef.current;
+    if (restoreFocus) restoreFocus.current = true;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]') ?? []).filter(el => el.getClientRects().length > 0 && !el.closest('[inert]'));
+    if (!dialog?.contains(document.activeElement)) (dialog?.querySelector<HTMLElement>('[autofocus]') ?? focusable()[0] ?? dialog)?.focus();
+    const handler = (event: KeyboardEvent) => {
+      if (Array.from(document.querySelectorAll('[role="dialog"]')).at(-1) !== dialog) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeRef.current(); }
+      if (modal && event.key === 'Tab') {
+        const items = focusable();
+        if (!items.length) { event.preventDefault(); dialog?.focus(); return; }
+        if (event.shiftKey && (document.activeElement === items[0] || !dialog?.contains(document.activeElement))) { event.preventDefault(); items.at(-1)?.focus(); }
+        else if (!event.shiftKey && (document.activeElement === items.at(-1) || !dialog?.contains(document.activeElement))) { event.preventDefault(); items[0]?.focus(); }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    const unlock = modal ? lockBodyScroll() : () => {};
+    return () => {
+      document.removeEventListener('keydown', handler);
+      unlock();
+      if (restoreFocus?.current !== false && previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open, modal, dialogRef, restoreFocus]);
 }
 
 export function Spinner({ label }: { label?: string }) {
@@ -86,37 +133,7 @@ export function Modal({
   className?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const beforeOpenRef = useRef<HTMLElement | null>(null);
-  const wasOpenRef = useRef(false);
-  if (open && !wasOpenRef.current) beforeOpenRef.current = document.activeElement as HTMLElement | null;
-  wasOpenRef.current = open;
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    if (!open) return;
-    const previousFocus = beforeOpenRef.current;
-    const dialog = dialogRef.current;
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []).filter(el => el.getClientRects().length > 0);
-    if (!dialog?.contains(document.activeElement)) (dialog?.querySelector<HTMLElement>('[autofocus]') ?? focusable()[0] ?? dialog)?.focus();
-    const handler = (event: KeyboardEvent) => {
-      const top = Array.from(document.querySelectorAll('[role="dialog"]')).at(-1);
-      if (top !== dialog) return;
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeRef.current(); }
-      if (event.key === 'Tab') {
-        const items = focusable();
-        if (!items.length) { event.preventDefault(); dialog?.focus(); return; }
-        if (event.shiftKey && (document.activeElement === items[0] || !dialog?.contains(document.activeElement))) {event.preventDefault(); items.at(-1)?.focus();}
-        else if (!event.shiftKey && document.activeElement === items.at(-1)) {event.preventDefault(); items[0]?.focus();}
-      }
-    };
-    document.addEventListener('keydown', handler);
-    const unlockBodyScroll = lockBodyScroll();
-    return () => {
-      document.removeEventListener('keydown', handler);
-      unlockBodyScroll();
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, [open]);
+  useDialog(open, onClose, dialogRef);
 
   if (!open) return null;
 

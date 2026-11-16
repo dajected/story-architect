@@ -93,8 +93,8 @@ test('compact cast filters, star toggles and stored appearance notes lead into a
   expect((await mara.boundingBox())!.height).toBeLessThan(320);
   await page.screenshot({path:'work/test-results/cast-compact.png',fullPage:true});
   await mara.getByLabel('More actions for Mara Voss', {exact:true}).click();
-  await expect(mara.getByRole('button', {name:'Manage portraits',exact:true})).toBeVisible();
-  await mara.getByRole('button', {name:'Edit profile',exact:true}).click();
+  await expect(page.getByRole('dialog', {name:'More actions for Mara Voss'}).getByRole('button', {name:'Manage portraits',exact:true})).toBeVisible();
+  await page.getByRole('dialog', {name:'More actions for Mara Voss'}).getByRole('button', {name:'Edit profile',exact:true}).click();
   await expect(page.getByRole('dialog', {name:'Edit character',exact:true}).getByRole('button', {name:'Key character',exact:true})).toHaveAttribute('aria-pressed','true');
 });
 
@@ -199,7 +199,7 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
     const dialog=page.getByRole('dialog',{name:/Chapter images .*Chapter 1: After the storm/});await expect(dialog).toBeVisible();
     expect(await dialog.evaluate(el=>el.getBoundingClientRect().width<=innerWidth),`image dialog at ${width}px`).toBe(true);
     await page.keyboard.press('Escape');
-    const titleBox=await page.locator('.workspace-topbar-left').boundingBox();const actionsBox=await page.locator('.workspace-actions').boundingBox();
+    const titleBox=await page.locator('.workspace-topbar-left').boundingBox();const actionsBox=await page.locator('.workspace-title').boundingBox();
     if(width<=720) {
       await expect(page.getByRole('navigation', {name:'Workspace sections',exact:true})).toBeHidden();
       await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toBeVisible();
@@ -230,14 +230,15 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
 test('workspace navigation returns to the same chapter and separates app settings', async ({page}) => {
   await page.goto(`/projects/${projectId}?tab=manuscript`);
   await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
-  await page.locator('.workspace-menu > summary').click();
+  await page.locator('.workspace-menu > button').click();
   await page.locator('.workspace-submenu > summary').filter({hasText:'Settings'}).click();
   await page.getByRole('button', {name:'Novel settings',exact:true}).click();
   const settings = page.getByRole('dialog', {name:/Novel settings/});
   await expect(settings).toBeVisible();
   await expect(settings.getByRole('button', {name:'App defaults & connections'})).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await page.locator('.workspace-menu > summary').click();
+  await page.locator('.workspace-menu > button').click();
+  await page.locator('.workspace-submenu > summary').filter({hasText:'Settings'}).click();
   await page.getByRole('link', {name:'App settings',exact:true}).click();
   await page.getByRole('link', {name:'← Return to project',exact:true}).click();
   await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
@@ -255,11 +256,12 @@ test('generated story opens in a wide reader with the assistant hidden', async (
   await expect(page.locator('.assistant-panel')).toHaveCount(0);
   await expect(page.locator('html')).toHaveAttribute('data-theme','light');
   expect((await page.locator('.manuscript-preview').boundingBox())!.width).toBeGreaterThan(800);
-  await page.locator('.workspace-menu > summary').click();
+  await page.locator('.workspace-menu > button').click();
   await page.locator('.workspace-submenu > summary').filter({hasText:'Workspace'}).click();
   await page.getByRole('button',{name:'Show assistant',exact:true}).click();
   await expect(page.locator('.assistant-panel')).toBeVisible();
-  await page.locator('.workspace-menu > summary').click();
+  await page.locator('.workspace-menu > button').click();
+  await page.locator('.workspace-submenu > summary').filter({hasText:'Workspace'}).click();
   await page.getByRole('button',{name:'Hide assistant',exact:true}).click();
   await expect(page.locator('.assistant-panel')).toHaveCount(0);
 });
@@ -340,7 +342,9 @@ test('mobile images open directly, fit the screen and swipe between images', asy
   await expect(viewer.getByRole('button', {name:'Delete image',exact:true})).toBeHidden();
   await expect(viewer.getByRole('slider', {name:'Image zoom'})).toBeHidden();
   await viewer.getByText('More', {exact:true}).click();
-  await expect(viewer.getByRole('button', {name:'Delete image',exact:true})).toBeVisible();
+  await expect(page.getByRole('dialog', {name:'More',exact:true}).getByRole('button', {name:'Delete image',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(viewer).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveCSS('overflow','hidden');
@@ -354,6 +358,13 @@ test('mobile images open directly, fit the screen and swipe between images', asy
   await page.route(`**/api/projects/${projectId}/images`, route => route.fulfill({json:{assets:[assets[0], {...assets[0],id:'swipe-second',url:`${assets[0].url}?second=1`}]}}));
   await page.reload();
   await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toHaveValue('images');
+  const thumbnails = page.locator('.image-gallery .image-card-image');
+  await expect(thumbnails).toHaveCount(2);
+  const firstThumbnail = await thumbnails.nth(0).boundingBox();
+  const secondThumbnail = await thumbnails.nth(1).boundingBox();
+  expect(secondThumbnail!.y).toBe(firstThumbnail!.y);
+  expect(secondThumbnail!.x).toBeGreaterThan(firstThumbnail!.x);
+  await page.screenshot({path:'work/test-results/mobile-gallery-two-columns.png'});
   await page.locator('.image-open').first().click();
   await expect(viewer.getByText('1 / 2', {exact:true})).toBeVisible();
   await viewer.locator('.image-viewer-stage').evaluate(element => {
@@ -386,6 +397,7 @@ test('outline keeps scrolling after nested image dialogs unmount and repeated ta
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveCSS('overflow','hidden');
   await page.locator('.project-card-main').filter({has:page.getByRole('heading', {name:'Long mobile outline',exact:true})}).click();
+  await page.locator('.outline-chapter-toggle').last().click();
   const lastBrief = page.getByRole('textbox', {name:'Chapter 25 brief',exact:true});
   for (let i = 0; i < 3; i++) {
     await expect(lastBrief).toBeVisible();

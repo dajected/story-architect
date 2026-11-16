@@ -1,3 +1,4 @@
+import { ActionMenu } from './ActionMenu';
 import { useEffect, useRef, useState } from 'react';
 import type { Chapter, ImageAsset, Character, CharacterInput, GenerationJob, Project } from '@shared/types';
 import { api } from '../api';
@@ -231,21 +232,12 @@ export function CharactersPanel({
         <button className="button button-small" onClick={() => onOpenTimeline(character.id)}>Appearance timeline</button>
         <button className="button button-small" onClick={() => setNotesCharacter(character)}>Appearance notes</button>
         <button className="button button-ghost button-small" onClick={() => setProfile(character)}>Full profile</button>
-        <details className="action-menu cast-card-menu">
-          <summary className="button button-ghost button-small" aria-label={`More actions for ${character.name}`}>More…</summary>
-          <div className="action-menu-content" onClick={event => {
-            if ((event.target as HTMLElement).closest('button')) {
-              const menu = event.currentTarget.closest('details');
-              menu?.removeAttribute('open');
-              menu?.querySelector('summary')?.focus();
-            }
-          }}>
+        <ActionMenu className="cast-card-menu" buttonClassName="button button-ghost button-small" ariaLabel={`More actions for ${character.name}`} label="More…">
             <button className="button button-small" onClick={() => setEditing({ id: character.id, form: toForm(character) })}>Edit profile</button>
             <button className="button button-small" disabled={busyId !== null} onClick={() => void createPortraits([character])}>Create image</button>
             <button className="button button-small" onClick={() => setManaging(character)}>Manage portraits</button>
             <button className="button button-danger-ghost button-small" disabled={busyId !== null} onClick={() => void updateStatus(character.id, 'archive')}>{isProposed ? 'Discard' : 'Archive'}</button>
-          </div>
-        </details>
+        </ActionMenu>
       </div>
       {isProposed ? <button className="button button-primary button-small" disabled={busyId !== null} onClick={() => void updateStatus(character.id, 'accept')}>Accept into cast</button> : null}
     </article>;
@@ -272,7 +264,7 @@ export function CharactersPanel({
           </p>
         </div>
         <div className="cast-header-actions">
-          <button
+          {characters.length > 0 || project.outlineStatus !== 'none' ? <button
             className="button button-primary"
             onClick={propose}
             disabled={stream.running || project.outlineStatus === 'none'}
@@ -282,16 +274,16 @@ export function CharactersPanel({
           >
             {stream.running ? <Spinner /> : null}
             {stream.running ? 'Casting…' : 'Generate from outline'}
-          </button>
+          </button> : null}
           <button
-            className="button"
+            className={characters.length ? "button" : "button button-primary"}
             onClick={() => setEditing({ id: null, form: { ...EMPTY_FORM } })}
           >
             Add character
           </button>
-          <button className="button button-ghost button-small" onClick={onOpenSettings}>
+          {characters.length > 0 ? <button className="button button-ghost button-small" onClick={onOpenSettings}>
             Model settings
-          </button>
+          </button> : null}
         </div>
       </header>
 
@@ -333,13 +325,13 @@ export function CharactersPanel({
         </div>
       ) : null}
 
-      <div className="cast-filter-bar">
+      {characters.length > 0 ? <div className="cast-filter-bar">
         <div className="row-actions" role="group" aria-label="Character filter">
           <button className={`button button-small${!keyOnly ? ' button-primary' : ''}`} aria-pressed={!keyOnly} onClick={() => setKeyOnly(false)}>All characters</button>
           <button className={`button button-small${keyOnly ? ' button-primary' : ''}`} aria-pressed={keyOnly} onClick={() => setKeyOnly(true)}>★ Key characters</button>
         </div>
         <span className="muted small">{visible.length} of {characters.length} characters</span>
-      </div>
+      </div> : null}
 
       {proposed.length > 0 ? (
       <section className="cast-section">
@@ -354,35 +346,18 @@ export function CharactersPanel({
       ) : null}
 
       <section className="cast-section">
-        <div className="cast-section-head">
-          <h2>Characters</h2>
+        {active.length > 0 ? <div className="cast-section-head">
+          <h2 className="cast-active-heading">Characters</h2>
           <button className="button button-small" disabled={!active.length || busyId !== null} onClick={() => void createPortraits(active)}>{keyOnly ? 'Create images for key characters' : 'Create images for all'}</button>
           <span className="muted small">
             {active.length} active {active.length === 1 ? 'character' : 'characters'}
           </span>
-        </div>
+        </div> : null}
         {active.length === 0 ? (
           <EmptyState
             title={keyOnly ? 'No active key characters' : 'No active characters yet'}
-            actions={
-              <>
-                <button
-                  className="button button-primary"
-                  onClick={propose}
-                  disabled={stream.running || project.outlineStatus === 'none'}
-                >
-                  Generate from outline
-                </button>
-                <button
-                  className="button"
-                  onClick={() => setEditing({ id: null, form: { ...EMPTY_FORM } })}
-                >
-                  Add manually
-                </button>
-              </>
-            }
           >
-            {keyOnly ? 'Star a character in All characters to include them here.' : 'Add the people the story needs. Relevant profiles are selected for chapter context and their facts appear in continuity review.'}
+            {keyOnly ? 'Star a character in All characters to include them here.' : 'Add the people in your story. Their profiles guide future drafts.'}
           </EmptyState>
         ) : (
           <div className="cast-grid">

@@ -79,6 +79,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(response.status, message);
   }
 
+  if (method !== 'GET') window.dispatchEvent(new Event('refresh-work-queue'));
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }

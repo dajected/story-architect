@@ -21,6 +21,7 @@ import { Banner, Modal, Spinner } from './ui';
 import { errorText } from '../utils';
 
 type Section = 'story' | 'generation' | 'models' | 'prompts' | 'images' | 'danger' | 'display';
+const PROJECT_SECTIONS: Array<[Section, string]> = [['story', 'Story setup'], ['display', 'Writing & appearance'], ['generation', 'Generation'], ['models', 'Model overrides'], ['prompts', 'Prompt templates'], ['images', 'Image prompts'], ['danger', 'Archive']];
 
 export function ProjectSettingsModal({
   open,
@@ -117,26 +118,11 @@ export function ProjectSettingsModal({
       width="wide"
     >
       <div className="project-settings">
+        <select className="mobile-settings-select" aria-label="Novel settings section" value={section} onChange={event => setSection(event.target.value as Section)}>
+          {PROJECT_SECTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
         <nav className="subnav" aria-label="Novel settings">
-          {(
-            [
-              ['story', 'Story setup'],
-              ['display', 'Writing & appearance'],
-              ['generation', 'Generation'],
-              ['models', 'Model overrides'],
-              ['prompts', 'Prompt templates'],
-              ['images', 'Image prompts'],
-              ['danger', 'Archive'],
-            ] as Array<[Section, string]>
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              aria-pressed={section === id} className={section === id ? 'active' : ''}
-              onClick={() => setSection(id)}
-            >
-              {label}
-            </button>
-          ))}
+          {PROJECT_SECTIONS.map(([id, label]) => <button key={id} aria-pressed={section === id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>{label}</button>)}
         </nav>
 
         <div className="project-settings-body">

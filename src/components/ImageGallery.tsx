@@ -1,3 +1,4 @@
+import { ActionMenu } from './ActionMenu';
 import { formatChapterLabel } from '../utils';
 import { useEffect, useState } from 'react';
 import type { Character, Chapter, ImageAsset } from '@shared/types';
@@ -41,17 +42,18 @@ export function ImageGallery({assets, characters, chapters = [], onChanged, onRe
     </>;
     if (!compact) return <div className="row-actions">{primary}{overflow}</div>;
     return <div className="row-actions">
-      <details className="action-menu image-card-menu"><summary className="button button-ghost button-small">Image options</summary><div className="action-menu-content">{primary}{overflow}</div></details>
+      <ActionMenu className="image-card-menu" buttonClassName="button button-ghost button-small" label="Image options">{primary}{overflow}</ActionMenu>
     </div>;
   };
+  const sourceDetails = (asset: ImageAsset, compact = false) => <details className={compact ? "small gallery-source" : "small"}><summary>Prompt and source</summary><p>{asset.prompt}</p><p>{formatDate(asset.createdAt)} · {asset.settings.moment ?? 'end'} · {asset.settings.sourceRevisionId ? `Source revision ${asset.settings.sourceRevisionId.slice(0, 8)}` : 'Source revision unknown'}</p></details>;
   return <>
     {error ? <Banner tone="danger">{error}</Banner> : null}
     {!viewerOnly ? <div className="image-gallery">{assets.map(asset => <figure className="image-card" key={asset.id}>
       <button className="image-card-image image-open" onClick={() => setViewId(asset.id)} aria-label={`View image of ${name(asset)}`}><img src={asset.url} alt={`${name(asset)}${chapter(asset) ? ` — ${chapterLabel(asset)}` : ''}`} loading="lazy" /></button>
       <figcaption><strong>{name(asset)}</strong><span className="muted small">{chapterLabel(asset)}</span>
       <div className="row-actions">{asset.selectedForChapter ? <span className="badge badge-accent">Selected chapter image</span> : null}{asset.sourceOutdated ? <span className="badge badge-warning">Earlier draft · Review</span> : null}</div>
-      <details className="small"><summary>Prompt and source</summary><p>{asset.prompt}</p><p>{formatDate(asset.createdAt)} · {asset.settings.moment ?? 'end'} · {asset.settings.sourceRevisionId ? `Source revision ${asset.settings.sourceRevisionId.slice(0, 8)}` : 'Source revision unknown'}</p></details>{actions(asset, true)}</figcaption>
+      {sourceDetails(asset, true)}{actions(asset, true)}</figcaption>
     </figure>)}</div> : null}
-    {viewed ? <ImageViewer open title={`${name(viewed)} — ${chapterLabel(viewed)}`} url={viewed.url} alt={`Full image of ${name(viewed)}`} index={index} count={assets.length} onNavigate={next => setViewId(assets[next]!.id)} onClose={() => {setViewId(null); onCloseView?.();}} actions={<>{error ? <Banner tone="danger">{error}</Banner> : null}{actions(viewed)}</>} /> : null}
+    {viewed ? <ImageViewer open title={`${name(viewed)} — ${chapterLabel(viewed)}`} url={viewed.url} alt={`Full image of ${name(viewed)}`} index={index} count={assets.length} onNavigate={next => setViewId(assets[next]!.id)} onClose={() => {setViewId(null); onCloseView?.();}} actions={<>{error ? <Banner tone="danger">{error}</Banner> : null}{actions(viewed)}{sourceDetails(viewed)}</>} /> : null}
   </>;
 }
