@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Chapter, Character, Fact } from '../shared/types.js';
 import { estimateTokens } from '../shared/utils.js';
-import { referenceCharacterText, referenceFactText, selectStoryReferences } from './story-references.js';
+import { referenceCharacterText, referenceFactText, selectStandingReferences, selectStoryReferences } from './story-references.js';
 
 const chapter: Chapter = { id: 'next', projectId: 'novel', orderIndex: 30, title: 'The North Door',
   brief: 'Mara uses the brass key to open the north door.', briefApproved: true, status: 'planned',
@@ -19,6 +19,19 @@ const character = (name: string, extra: Partial<Character> = {}): Character => (
 });
 
 describe('chapter-specific reference retrieval', () => {
+  it('builds bounded standing references independent of retrieval order and excludes chapter events and plans', () => {
+    const characters = [character('Mara', { keyCharacter: true }), character('Iven', { keyCharacter: true }), character('Unrelated')];
+    const facts = [fact('authored', 'Mara has green eyes.', { factClass: 'authored', characterId: 'Mara', chapterId: null, chapterOrder: null }),
+      fact('unrelated', 'The world has two moons.', { factClass: 'authored', chapterId: null, chapterOrder: null }),
+      fact('event', 'Mara crosses the river.'), fact('plan', 'Mara will leave.', { factClass: 'plan', chapterId: null }),
+      fact('scoped', 'A local rule.', { factClass: 'authored', chapterId: null, scopeChapterId: chapter.id })];
+    const first = selectStandingReferences(characters, facts);
+    expect(first).toEqual(selectStandingReferences([...characters].reverse(), [...facts].reverse()));
+    expect(first.characters.map((entry) => entry.name)).toEqual(['Iven', 'Mara']);
+    expect(first.facts.map((entry) => entry.id)).toEqual(['authored']);
+    expect(estimateTokens(first.characters.map(referenceCharacterText).join('\n\n'))).toBeLessThanOrEqual(350);
+  });
+
   it('selects a relevant old detail over unrelated recent history', () => {
     const result = selectStoryReferences({ chapter, state: 'Mara is at the north door.', characters: [], preset: 'balanced',
       facts: [fact('recent', 'The desert librarian drinks rose tea.', { chapterOrder: 29 }),

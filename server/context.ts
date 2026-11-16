@@ -18,12 +18,13 @@ import { conflict } from './errors.js';
 import { FALLBACK_CONTEXT_LENGTH } from './request-context.js';
 import { automaticChapterReplyTokens } from './chapter-stream.js';
 import { inspectStoryState } from './store/story-state.js';
-import { selectStoryReferences, referenceCharacterText, referenceFactText } from './story-references.js';
+import { selectStandingReferences, selectStoryReferences, referenceCharacterText, referenceFactText } from './story-references.js';
 
 export interface ProseContext {
   storyState: StoryStateInfo;
   recentProse: string;
   memoryText: string;
+  standingReferencesText: string;
   loreText: string;
   lore: ContextLore;
   includedChapters: number;
@@ -138,7 +139,7 @@ function buildLoreContext(
   chapters: Chapter[],
   preset: ContextPreset,
   availableInputTokens: number,
-): { text: string; lore: ContextLore } {
+): { text: string; standingText: string; dynamicText: string; lore: ContextLore } {
   const all = listLoreEntries(project.id);
   const enabled = all.filter((entry) => entry.enabled);
   const haystack = loreHaystack(chapter, additionalInstructions, chapters);
@@ -168,9 +169,9 @@ function buildLoreContext(
     .sort((a, b) => {
       const byReason = reasonRank[a.reason] - reasonRank[b.reason];
       if (byReason !== 0) return byReason;
-      if (b.matched.length !== a.matched.length) return b.matched.length - a.matched.length;
+      if (a.reason === 'keyword' && b.matched.length !== a.matched.length) return b.matched.length - a.matched.length;
       if (b.entry.priority !== a.entry.priority) return b.entry.priority - a.entry.priority;
-      return a.entry.title.localeCompare(b.entry.title);
+      return a.entry.title.localeCompare(b.entry.title) || a.entry.id.localeCompare(b.entry.id);
     });
 
   const budgetTokens = Math.min(
@@ -215,6 +216,10 @@ function buildLoreContext(
 
   return {
     text,
+    standingText: kept.filter((item) => item.entry.alwaysInclude)
+      .sort((a, b) => b.entry.priority - a.entry.priority || a.entry.title.localeCompare(b.entry.title) || a.entry.id.localeCompare(b.entry.id))
+      .map((item) => loreBlock(item.entry)).join('\n\n'),
+    dynamicText: kept.filter((item) => !item.entry.alwaysInclude).map((item) => loreBlock(item.entry)).join('\n\n'),
     lore: {
       entries,
       activated: kept.length,
@@ -304,14 +309,33 @@ export function buildProseContext(
     preset,
     remaining,
   );
-  const loreText = loreContext.text;
+  const useStanding = !options.templateContent || /\{\{\s*standing_references\s*\}\}/.test(options.templateContent);
+  const loreText = useStanding ? loreContext.dynamicText : loreContext.text;
   const lore = loreContext.lore;
-  const loreTokens = estimateTokens(loreText);
+  const loreTokens = estimateTokens(loreContext.text);
   const memory = memoryForPrompt(project.id, chapter.id, { includeSummaries: false });
   const memoryBudget = Math.min(1400, Math.floor(Math.max(0, remaining - loreTokens) * memoryShare(preset)));
+  const standing = useStanding ? selectStandingReferences(memory.characters, memory.facts) : { characters: [], facts: [] };
+  // Keep the baseline whole. Under tight budgets fall back to query-based retrieval.
+  const standingMemoryText = () => [
+    standing.characters.length ? `### Standing character profiles\n${standing.characters.map(referenceCharacterText).join('\n\n')}` : '',
+    standing.facts.length ? `### Standing world facts\n${standing.facts.map(referenceFactText).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+  while (estimateTokens(standingMemoryText()) > memoryBudget && (standing.characters.length || standing.facts.length)) {
+    if (standing.facts.length) standing.facts.pop();
+    else standing.characters.pop();
+  }
+  const standingCharacterIds = new Set(standing.characters.map((entry) => entry.id));
+  const standingFactIds = new Set(standing.facts.map((entry) => entry.id));
+  const standingTokens = estimateTokens(standingMemoryText());
+  const dynamicMemoryBudget = Math.max(0, memoryBudget - standingTokens);
+  const standingReferencesText = [standingMemoryText(), loreContext.standingText ? `### Standing lore\n${loreContext.standingText}` : '']
+    .filter(Boolean).join('\n\n');
   const selected = selectStoryReferences({ chapter, additionalInstructions: options.additionalInstructions,
-    state: storyState.text, characters: memory.characters, facts: memory.facts, preset,
-    characterBudget: Math.min(650, Math.floor(memoryBudget / 2)), factBudget: Math.min(650, Math.floor(memoryBudget / 2)),
+    state: storyState.text, characters: memory.characters.filter((entry) => !standingCharacterIds.has(entry.id)),
+    facts: memory.facts.filter((entry) => !standingFactIds.has(entry.id)), preset,
+    characterBudget: Math.max(0, Math.min(650 - estimateTokens(standing.characters.map(referenceCharacterText).join('\n\n')), Math.floor(dynamicMemoryBudget / 2))),
+    factBudget: Math.max(0, Math.min(650 - estimateTokens(standing.facts.map(referenceFactText).join('\n')), Math.floor(dynamicMemoryBudget / 2))),
   });
   let keptCharacters = selected.characters;
   let keptFacts = selected.facts;
@@ -320,14 +344,16 @@ export function buildProseContext(
     keptFacts.length ? `### Relevant continuity facts\n${keptFacts.map(referenceFactText).join('\n')}` : '',
   ].filter(Boolean).join('\n\n');
   let memoryText = renderMemory();
-  while (estimateTokens(memoryText) > memoryBudget && (keptFacts.length || keptCharacters.length)) {
+  while (estimateTokens(memoryText) > dynamicMemoryBudget && (keptFacts.length || keptCharacters.length)) {
     if (keptFacts.length) keptFacts = keptFacts.slice(0, -1);
     else keptCharacters = keptCharacters.slice(0, -1);
     memoryText = renderMemory();
   }
-  const memoryTokens = estimateTokens(memoryText);
-  const omittedCharacters = memory.characters.length - keptCharacters.length;
-  const omittedFacts = memory.facts.length - keptFacts.length;
+  const memoryTokens = estimateTokens(memoryText) + standingTokens;
+  const includedCharacters = keptCharacters.length + standing.characters.length;
+  const includedFacts = keptFacts.length + standing.facts.length;
+  const omittedCharacters = memory.characters.length - includedCharacters;
+  const omittedFacts = memory.facts.length - includedFacts;
   if (storyState.status === 'missing' || storyState.status === 'stale') {
     warnings.push('Story state is missing or outdated. It will be rebuilt in chapter order before drafting; earlier chapter summaries are never appended to the prose prompt.');
   }
@@ -421,18 +447,18 @@ export function buildProseContext(
     {
       id: 'characters',
       label: 'Characters',
-      tokens: estimateTokens(keptCharacters.map(referenceCharacterText).join('\n\n')),
-      included: keptCharacters.length > 0,
-      detail: `${keptCharacters.length} of ${memory.characters.length} active ${
+      tokens: estimateTokens([...standing.characters, ...keptCharacters].map(referenceCharacterText).join('\n\n')),
+      included: includedCharacters > 0,
+      detail: `${includedCharacters} of ${memory.characters.length} active ${
         memory.characters.length === 1 ? 'profile' : 'profiles'
       } included${omittedCharacters > 0 ? `, ${omittedCharacters} omitted` : ''}.`,
     },
     {
       id: 'facts',
       label: 'Continuity facts',
-      tokens: estimateTokens(keptFacts.map(referenceFactText).join('\n')),
-      included: keptFacts.length > 0,
-      detail: `${keptFacts.length} of ${memory.facts.length} established ${
+      tokens: estimateTokens([...standing.facts, ...keptFacts].map(referenceFactText).join('\n')),
+      included: includedFacts > 0,
+      detail: `${includedFacts} of ${memory.facts.length} established ${
         memory.facts.length === 1 ? 'fact' : 'facts'
       } included${omittedFacts > 0 ? `, ${omittedFacts} omitted` : ''}` +
         `${memory.pendingFacts > 0 ? `; ${memory.pendingFacts} proposed awaiting review` : ''}.`,
@@ -459,6 +485,7 @@ export function buildProseContext(
     storyState,
     recentProse,
     memoryText,
+    standingReferencesText: useStanding ? standingReferencesText : '',
     loreText,
     lore,
     includedChapters,
@@ -477,9 +504,9 @@ export function buildProseContext(
     pendingFacts: memory.pendingFacts,
     includedSummaries: 0,
     totalSummaries: 0,
-    includedCharacters: keptCharacters.length,
+    includedCharacters,
     totalCharacters: memory.characters.length,
-    includedFacts: keptFacts.length,
+    includedFacts,
     totalFacts: memory.facts.length,
   };
 }

@@ -21,7 +21,7 @@ import {
   parseCharacterProposals,
   parseMemoryExtraction,
 } from './prompts.js';
-import { ProviderError } from './providers.js';
+import { ProviderError, generationSessionId } from './providers.js';
 import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
 import type { ProviderMessage } from './providers.js';
 import { currentChapterText, getChapter, getChapterRow } from './store/chapters.js';
@@ -65,6 +65,7 @@ async function runJobStream(
   try {
     const result = await streamBackgroundTask(provider, {
       model: job.model,
+      sessionId: generationSessionId(job.projectId, 'memory'),
       messages: [
         { role: 'system', content: system },
         typeof user === 'string' ? { role: 'user', content: user } : user,

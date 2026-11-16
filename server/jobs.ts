@@ -78,18 +78,23 @@ function parsePricing(raw: string | null): JobPricing | null {
 }
 
 /**
- * Estimated provider cost in USD. It uses the pricing cached when the job was
- * created, so later model-list refreshes do not rewrite history.
+ * Prefer the provider-reported USD cost. Otherwise estimate using the pricing
+ * saved with this job, so later model-list refreshes do not rewrite history.
  */
 export function estimateJobCost(
   usage: TokenUsage | null,
   pricing: JobPricing | null,
 ): number | null {
+  if (usage?.cost !== undefined && Number.isFinite(usage.cost) && usage.cost >= 0) return usage.cost;
   if (!usage || !pricing) return null;
   const prompt = Number(usage.promptTokens ?? 0);
   const completion = Number(usage.completionTokens ?? 0);
   if (!usage.promptTokens && !usage.completionTokens) return null;
-  const cost = prompt * pricing.promptPerToken + completion * pricing.completionPerToken;
+  const cached = Math.min(prompt, Math.max(0, usage.cachedPromptTokens ?? 0));
+  const written = Math.min(prompt - cached, Math.max(0, usage.cacheWriteTokens ?? 0));
+  const cost = (prompt - cached - written) * pricing.promptPerToken +
+    cached * (pricing.cacheReadPerToken ?? pricing.promptPerToken) +
+    written * (pricing.cacheWritePerToken ?? pricing.promptPerToken) + completion * pricing.completionPerToken;
   if (!Number.isFinite(cost) || cost < 0) return null;
   return Math.round(cost * 1_000_000) / 1_000_000;
 }
@@ -413,6 +418,10 @@ export function projectGenerationHistory(projectId: string, limit = 200, activeO
     estimatedCost: null,
     pricedJobs: 0,
     unpricedJobs: 0,
+    reportedCostJobs: 0,
+    cachedPromptTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReportedPromptTokens: 0,
   };
 
   let cost = 0;
@@ -426,6 +435,11 @@ export function projectGenerationHistory(projectId: string, limit = 200, activeO
     const prompt = Number(entry.usage?.promptTokens ?? 0);
     const completion = Number(entry.usage?.completionTokens ?? 0);
     summary.promptTokens += prompt;
+    if (entry.usage?.cachedPromptTokens !== undefined) {
+      summary.cachedPromptTokens += entry.usage.cachedPromptTokens;
+      summary.cacheReportedPromptTokens += prompt;
+    }
+    summary.cacheWriteTokens += entry.usage?.cacheWriteTokens ?? 0;
     summary.completionTokens += completion;
     summary.totalTokens += Number(
       entry.usage?.totalTokens ?? (entry.usage ? prompt + completion : 0),
@@ -434,6 +448,7 @@ export function projectGenerationHistory(projectId: string, limit = 200, activeO
     if (entry.estimatedCost !== null) {
       cost += entry.estimatedCost;
       summary.pricedJobs += 1;
+      if (entry.usage?.cost !== undefined) summary.reportedCostJobs += 1;
     } else if (entry.usage) {
       summary.unpricedJobs += 1;
     }

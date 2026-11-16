@@ -4,7 +4,10 @@ import {
   parseMemoryExtraction,
   parseOutline,
   renderTemplate,
+  renderProseMessages,
+  PROSE_TEMPLATE_DEFAULT,
 } from './prompts.js';
+import { prepareRequest } from './request-context.js';
 
 describe('parseOutline', () => {
   it('reads a fenced JSON outline', () => {
@@ -50,6 +53,31 @@ describe('parseOutline', () => {
 });
 
 describe('renderTemplate', () => {
+  it('reuses the entire system message when chapter context changes', () => {
+    const values = { project_title: 'Novel', instructions: 'Keep the voice.', standing_references: 'The world has two moons.',
+      story_state: 'Mara is at home.', chapter_brief: 'Leave home.', chapter_number: 1, story_memory: 'An old key.' };
+    const render = (overrides = {}) => prepareRequest(renderProseMessages(PROSE_TEMPLATE_DEFAULT, { ...values, ...overrides }, {
+      standing_references: { label: 'Standing story references', priority: 110, maxTokens: 1400 },
+      story_memory: { label: 'Story memory', priority: 90 },
+    }), { maxTokens: 1000 }).messages;
+    const first = render();
+    const next = render({ story_state: 'Mara reaches the city.', chapter_brief: 'Enter the city.', chapter_number: 2, story_memory: 'A new fact.' });
+    expect(first[0]).toEqual(next[0]);
+    expect(first[0].content).toContain('## Requirements');
+    expect(first[0].content).toContain('two moons');
+    expect(first[0].content).not.toContain('Mara is at home');
+    expect(first[1].role).toBe('user');
+    expect(next[1].content).toContain('Mara reaches the city');
+    expect(JSON.stringify(first)).not.toContain('__SA_CONTEXT_');
+    expect(render()).toEqual(first);
+  });
+
+  it('preserves custom template layouts', () => {
+    const result = renderProseMessages('Custom {{chapter_brief}} before {{instructions}}.',
+      { chapter_brief: 'brief', instructions: 'rules' }, {});
+    expect(result).toEqual([{ role: 'system', content: 'Custom brief before rules.', contextParts: [] }]);
+  });
+
   it('substitutes placeholders and blanks missing values', () => {
     expect(renderTemplate('A {{one}} B {{two}}', { one: 'x' })).toBe('A x B ');
   });

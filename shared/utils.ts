@@ -1,5 +1,20 @@
-import type { GenerationSettings, JobSettingsSnapshot } from './types.js';
+import type { GenerationSettings, JobSettingsSnapshot, TokenUsage } from './types.js';
 import { DEFAULT_GENERATION } from './types.js';
+
+/** Never present partial usage or partial costs as a complete multi-request total. */
+export function sumTokenUsage(usages: Array<TokenUsage | null>): TokenUsage | null {
+  if (!usages.length || usages.some((usage) => !usage)) return null;
+  const total: TokenUsage = {};
+  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'reasoningTokens',
+    'cachedPromptTokens', 'cacheWriteTokens', 'cost'] as const) {
+    if (usages.every((usage) => usage?.[key] !== undefined)) {
+      total[key] = usages.reduce((sum, usage) => sum + usage![key]!, 0);
+    }
+  }
+  const providers = [...new Set(usages.flatMap((usage) => usage?.providers ?? []))];
+  if (providers.length) total.providers = providers;
+  return total;
+}
 
 /** Capture the sampling settings shown in the generation log. */
 export function jobSettingsSnapshot(

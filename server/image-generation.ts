@@ -30,7 +30,7 @@ import {
   sniffImageMime,
 } from './image-providers.js';
 import type { GeneratedImage } from './image-providers.js';
-import { ProviderError } from './providers.js';
+import { ProviderError, generationSessionId } from './providers.js';
 import { IMAGE_PROMPT_SYSTEM, imagePromptValues, renderContextTemplate } from './prompts.js';
 import { getCharacter, getCharacterRow, listCharacters } from './store/characters.js';
 import { currentChapterText, getChapter } from './store/chapters.js';
@@ -225,6 +225,7 @@ export function startImagePromptGeneration(
     const runtime = createRuntime(job.id);
     try {
       const result = await streamBackgroundTask(model.provider, {
+        sessionId: generationSessionId(job.projectId, 'image_prompt'),
         model: job.model,
         messages: [
           promptMessage,
@@ -623,6 +624,7 @@ async function runChapterPortrait(
   const runtime = createRuntime(job.id);
   try {
     const result = await streamBackgroundTask(options.provider, {
+      sessionId: generationSessionId(job.projectId, 'image_prompt'),
       model: job.model,
       messages: [
         options.promptMessage,

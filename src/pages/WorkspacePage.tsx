@@ -1,5 +1,5 @@
 import { BackupButton } from '../components/BackupButton';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type {
   Chapter,
@@ -57,6 +57,41 @@ export function WorkspacePage({
   const openSettings = (section: 'story' | 'app' | 'instructions' = 'story') => { if (section === 'app') { navigate(`/settings?tab=image-connections&returnTo=${encodeURIComponent(`/projects/${projectId}?tab=${tab}`)}`); return; } if (section === 'instructions') {setSettingsOpen(false); setTab('lore'); setTimeout(() => document.getElementById('saved-writing-instructions')?.scrollIntoView({block: 'start'}), 100); return;} setSettingsSection('story'); setSettingsOpen(true); };
   const initialised = useRef(false);
   const [focusMode, setFocusMode] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const topbarRef = useRef<HTMLElement>(null);
+  const [readerHeadersHidden, setReaderHeadersHidden] = useState(false);
+  useLayoutEffect(() => {
+    const topbar = topbarRef.current;
+    if (!topbar) return;
+    const measure = () => shellRef.current?.style.setProperty('--workspace-topbar-height', `${topbar.offsetHeight}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(topbar);
+    return () => observer.disconnect();
+  }, [loading, project?.id]);
+  useEffect(() => {
+    setReaderHeadersHidden(false);
+    window.scrollTo(0, 0);
+    if (tab !== 'manuscript') return;
+    let lastY = window.scrollY;
+    let travel = 0;
+    const onScroll = () => {
+      if (!window.matchMedia('(max-width: 720px)').matches || document.querySelector('[role="dialog"]')) return;
+      const y = Math.max(0, window.scrollY);
+      const delta = y - lastY;
+      lastY = y;
+      travel = Math.sign(delta) === Math.sign(travel) ? travel + delta : delta;
+      if (y < 24) { setReaderHeadersHidden(false); travel = 0; }
+      else if (Math.abs(travel) > 16) {
+        // Keep open menus and keyboard-focused header controls available.
+        const headerInUse = (topbarRef.current?.contains(document.activeElement) && document.activeElement?.matches(':focus-visible')) || document.querySelector('.workspace-menu[open]');
+        setReaderHeadersHidden(travel > 0 && !headerInUse);
+        travel = 0;
+      }
+    };
+    window.addEventListener('scroll', onScroll, {passive: true});
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [tab, selectedId]);
   const [chaptersVisible, setChaptersVisible] = useState(() => localStorage.getItem('chapters-visible') !== 'false');
   const {preferences, setPreferences, style} = useWritingPreferences();
   const setPreference = (key: string, value: number) => setPreferences(current => ({...current, [key]:value}));
@@ -267,8 +302,8 @@ export function WorkspacePage({
   };
 
   return (
-    <div className={`workspace-shell ${tab === 'outline' && !focusMode ? 'outline-page' : ''} ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
-      <header className="workspace-topbar">
+    <div ref={shellRef} className={`workspace-shell ${tab === 'manuscript' ? 'reader-page' : ''} ${readerHeadersHidden ? 'reader-headers-hidden' : ''} ${tab === 'outline' && !focusMode ? 'outline-page' : ''} ${focusMode ? 'focus-mode' : ''} ${chaptersVisible && tab === 'manuscript' ? '' : 'chapters-collapsed'}`} style={style}>
+      <header ref={topbarRef} className="workspace-topbar">
         <div className="workspace-topbar-left">
           <Link className="button button-small" to="/">Library</Link>
           <WorkspaceQueue projectId={project.id} onOpenActivity={() => setTab('activity')} />
@@ -444,6 +479,7 @@ export function WorkspacePage({
                 onNavigate={navigateChapter}
                 canNavigatePrevious={selectedIndex > 0}
                 canNavigateNext={selectedIndex >= 0 && selectedIndex < chapters.length - 1}
+                focusMode={focusMode}
               />
             ) : (
               <div className="workspace-scroll">

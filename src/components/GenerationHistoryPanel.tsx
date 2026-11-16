@@ -93,10 +93,9 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
           <p className="eyebrow">Project activity</p>
           <h2>Generation log</h2>
           <p className="muted">
-            Model, sampling settings, token usage, and an estimated cost where the provider
-            publishes pricing. Estimates use the price cached when each job started and are not a
-            bill. Image runs are billed per image by the image service, so they are listed without
-            token usage.
+            Model, sampling settings, cache usage, and cost. Provider-reported costs include cache
+            pricing; otherwise an estimate uses prices saved when the job started. Image runs are
+            billed per image by the image service and are listed without token usage.
           </p>
         </div>
         <button className="button button-ghost button-small" onClick={() => void load()}>
@@ -114,16 +113,23 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
           note="reported by the provider"
         />
         <SummaryCard
+          label="Cached input"
+          value={history.summary.cacheReportedPromptTokens > 0 ? history.summary.cachedPromptTokens.toLocaleString() : 'Not reported'}
+          note={history.summary.cacheReportedPromptTokens > 0
+            ? `${((history.summary.cachedPromptTokens / history.summary.cacheReportedPromptTokens) * 100).toFixed(1)}% of input with cache reporting`
+            : 'cache usage not reported'}
+        />
+        <SummaryCard
           label="Completion tokens"
           value={history.summary.completionTokens.toLocaleString()}
           note="reported by the provider"
         />
         <SummaryCard
-          label="Estimated cost"
+          label="Cost"
           value={formatCost(history.summary.estimatedCost)}
           note={
             history.summary.pricedJobs > 0
-              ? `${history.summary.pricedJobs} priced job${history.summary.pricedJobs === 1 ? '' : 's'}`
+              ? `${history.summary.reportedCostJobs} reported · ${history.summary.pricedJobs - history.summary.reportedCostJobs} estimated`
               : 'no cached pricing'
           }
         />
@@ -139,9 +145,8 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
       {history.summary.unpricedJobs > 0 ? (
         <p className="field-hint">
           {history.summary.unpricedJobs} job
-          {history.summary.unpricedJobs === 1 ? '' : 's'} reported usage without cached model
-          pricing, so no cost is shown. Refresh the connection's model list or use OpenRouter to
-          collect prices.
+          {history.summary.unpricedJobs === 1 ? '' : 's'} reported usage without a cost or saved model
+          pricing. Refresh the connection's model list to collect prices for estimates.
         </p>
       ) : null}
 
@@ -193,7 +198,7 @@ export function GenerationHistoryPanel({ project }: { project: Project }) {
                 <th>Model</th>
                 <th>Settings</th>
                 <th>Tokens</th>
-                <th>Est. cost</th>
+                <th>Cost</th>
                 <th>State</th>
               </tr>
             </thead>
@@ -235,12 +240,19 @@ function HistoryRow({ entry }: { entry: GenerationHistoryEntry }) {
       <td>
         <div className="history-model">{entry.model}</div>
         <div className="muted small">{entry.connectionName ?? 'removed connection'}</div>
+        {entry.usage?.providers?.length ? <div className="muted small">via {entry.usage.providers.join(', ')}</div> : null}
       </td>
       <td>
         <div className="history-settings">{settingsText(entry)}</div>
       </td>
       <td className="history-tokens">
         {tokens}
+        <div className="muted small">
+          {entry.usage?.cachedPromptTokens !== undefined
+            ? `${entry.usage.cachedPromptTokens.toLocaleString()} cached${entry.usage.promptTokens ? ` (${((entry.usage.cachedPromptTokens / entry.usage.promptTokens) * 100).toFixed(1)}%)` : ''}`
+            : 'Cache usage not reported'}
+        </div>
+        {entry.usage?.cacheWriteTokens !== undefined ? <div className="muted small">{entry.usage.cacheWriteTokens.toLocaleString()} cache write tokens</div> : null}
         {entry.requestBudget ? (
           <details className="small">
             <summary>Context details</summary>
@@ -255,7 +267,10 @@ function HistoryRow({ entry }: { entry: GenerationHistoryEntry }) {
           </details>
         ) : null}
       </td>
-      <td className="history-cost">{formatCost(entry.estimatedCost)}</td>
+      <td className="history-cost">
+        {formatCost(entry.estimatedCost)}
+        {entry.estimatedCost !== null ? <div className="muted small">{entry.usage?.cost !== undefined ? 'Reported' : 'Estimated'}</div> : null}
+      </td>
       <td>
         <span className={`badge ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
         {entry.error ? (

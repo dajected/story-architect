@@ -91,21 +91,20 @@ export function ProjectImagesPanel({
   return <div className="stack images-page">
     <header className="images-header">
       <div><p className="eyebrow">Visual library</p><h1>Images</h1>{view === 'gallery' ? <p className="muted">Create and browse character images throughout your story.</p> : null}</div>
-      <div className="row-actions">{onOpenCast ? <button className="button" onClick={onOpenCast}>Characters</button> : null}<button className="button" onClick={onOpenSettings}>Image settings</button></div>
+      <details className="action-menu"><summary className="button">Manage images</summary><div className="action-menu-content">{onOpenCast ? <button className="button" onClick={onOpenCast}>Characters</button> : null}<button className="button" onClick={onOpenSettings}>Image settings</button></div></details>
     </header>
     <div className="image-view-toolbar"><div className="row-actions" role="group" aria-label="Image view">
       <button className={`button${view === 'gallery' ? ' button-primary' : ''}`} aria-pressed={view === 'gallery'} onClick={() => setView('gallery')}>Gallery</button>
       <button className={`button${view === 'timeline' ? ' button-primary' : ''}`} aria-pressed={view === 'timeline'} onClick={() => setView('timeline')}>Appearance timeline</button>
-    </div>{view === 'timeline' ? characterField : null}</div>
-    {view === 'gallery' ? <section className="images-controls" aria-label="Create and filter images">
+    </div>{characterField}</div>
+    {view === 'gallery' ? <details className="images-controls images-create"><summary>Create images</summary>
       <div className="images-controls-heading"><div><h2>Character images</h2><p className="muted small">Choose a character to create images or explore their appearance. Chapter image sections show key characters only.</p></div></div>
-      {characterField}
       <div className="images-actions"><button className="button button-primary" disabled={!characterId || creating || running || !firstChapter} onClick={() => void createImage()}>{creating ? 'Starting…' : firstChapter ? `Create image for ${formatChapterLabel(firstChapter.title, firstChapter.orderIndex)}` : 'Create image'}</button>
         <button className="button" disabled={!characterId || batchBusy || running} onClick={() => void startBatch()}>Create images for all chapters</button>
       </div>
       <p className="muted small">All chapters uses the default settings, creates images one at a time for drafted chapters, and skips chapters that already have an image for this character.</p>
       {batch && selectedCharacter ? <div className="images-batch" role="status"><div><strong>{selectedCharacter.name}: {running ? 'Creating chapter images' : 'Chapter images'}</strong><p className="muted small">{batch.message ?? `${completed} of ${batch.items.length} complete`}{running ? ` ? ${completed} of ${batch.items.length} complete` : ''}</p></div>{running ? <button className="button button-small" disabled={batchBusy} onClick={() => void cancelBatch()}>Stop</button> : null}</div> : null}
-    </section> : null}
+    </details> : null}
     {notice ? <Banner tone="success">{notice}</Banner> : null}{error ? <Banner tone="danger">{error}</Banner> : null}
     {loading ? <Spinner label="Loading images…" /> : view === 'timeline' ? <AppearanceTimeline key={characterId} character={selectedCharacter} chapters={chapters} assets={assets} active={active} /> : <>
       <div className="images-gallery-heading"><div><h2>Gallery</h2><p className="muted small">{filtered.length} {filtered.length === 1 ? 'image' : 'images'}</p></div></div>

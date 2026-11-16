@@ -1,4 +1,4 @@
-import { countWords } from '../shared/utils.js';
+import { countWords, sumTokenUsage } from '../shared/utils.js';
 import { FALLBACK_CONTEXT_LENGTH } from './request-context.js';
 import { streamChat } from './providers.js';
 import type { ChatParams, ChatResult, ChatUsage, ProviderConnection, ProviderMessage } from './providers.js';
@@ -32,21 +32,14 @@ export function appendWithoutOverlap(previous: string, next: string): string {
 }
 
 function totalUsage(results: ChatResult[]): ChatUsage | null {
-  if (results.some((result) => !result.usage)) return null;
-  const usage: ChatUsage = {};
-  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'reasoningTokens'] as const) {
-    if (results.every((result) => result.usage?.[key] !== undefined)) {
-      usage[key] = results.reduce((sum, result) => sum + result.usage![key]!, 0);
-    }
-  }
-  return usage;
+  return sumTokenUsage(results.map((result) => result.usage));
 }
 
 function continuationMessages(original: ProviderMessage[], content: string, targetWords: number): ProviderMessage[] {
   const words = countWords(content);
   const remaining = Math.max(0, targetWords - words);
-  const systems = original.filter((message) => message.role === 'system');
-  return [...systems, {
+  // Retain the original chapter packet, including its user context.
+  return [...original, {
     role: 'user',
     content: `Continue the SAME chapter from the exact end of the current draft. Do not restart, recap, repeat the supplied excerpt, add a heading, or discuss the process.
 The draft already has about ${words} words toward a target of ${targetWords} words.
@@ -73,6 +66,7 @@ export async function streamChapter(
   const results: ChatResult[] = [];
   let content = '';
   let maxTokens = params.maxTokens;
+  let continuationOriginal = params.messages;
   for (let attempt = 0; attempt < MAX_CHAPTER_REQUESTS; attempt++) {
     params.signal.throwIfAborted();
     const previous = content;
@@ -94,7 +88,17 @@ export async function streamChapter(
       result = await streamChat(provider, {
         ...params,
         maxTokens,
-        messages: previous ? continuationMessages(params.messages, previous, options.targetWords) : params.messages,
+        messages: previous ? continuationMessages(continuationOriginal, previous, options.targetWords) : params.messages,
+        onPrepared: (request) => {
+          // The default has a separate user chapter packet. Freeze its rendered
+          // system prefix so continuation budgeting cannot resize that prefix.
+          if (attempt === 0 && params.messages.some((message) => message.role === 'user' && message.contextParts?.length)) {
+            const systems = request.messages.filter((message) => message.role === 'system');
+            let systemIndex = 0;
+            continuationOriginal = params.messages.map((message) => message.role === 'system' ? systems[systemIndex++] : message);
+          }
+          params.onPrepared?.(request);
+        },
         onDelta: (text) => {
           if (streaming) emit(text);
           else {

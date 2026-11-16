@@ -28,6 +28,33 @@ function reply(text: string, finishReason: string) {
 beforeEach(() => { vi.mocked(streamChat).mockReset(); });
 
 describe('chapter continuation', () => {
+  it('preserves the rendered system prefix, chapter context, session, and cache accounting when continuing', async () => {
+    const request = params();
+    request.sessionId = 'novel-prose';
+    request.messages = [
+      { role: 'system', content: 'Standing SLOT', contextParts: [{ label: 'Standing', text: 'Reference', slot: 'SLOT', priority: 110 }] },
+      { role: 'user', content: 'Chapter brief', contextParts: [{ label: 'State', text: 'Mara has the key.', priority: 100 }] },
+      { role: 'user', content: 'Draft now.' },
+    ];
+    vi.mocked(streamChat).mockImplementationOnce(async (_provider, sent) => {
+      sent.onPrepared?.({ messages: [{ role: 'system', content: 'Standing Reference' }, { role: 'user', content: 'Chapter brief' }],
+        maxTokens: 2000, report: {} as never });
+      sent.onDelta('An unfinished chapter.');
+      return { content: 'An unfinished chapter.', finishReason: 'length',
+        usage: { ...usage, cachedPromptTokens: 0, cacheWriteTokens: 80, cost: 0.001 } };
+    }).mockImplementationOnce(async (_provider, sent) => {
+      expect(sent.sessionId).toBe(request.sessionId);
+      expect(sent.messages[0]).toEqual({ role: 'system', content: 'Standing Reference' });
+      expect(sent.messages[1]).toEqual(request.messages[1]);
+      sent.onDelta(' It ended.');
+      return { content: ' It ended.', finishReason: 'stop',
+        usage: { ...usage, cachedPromptTokens: 80, cacheWriteTokens: 0, cost: 0.0002 } };
+    });
+    const result = await streamChapter(provider, request, { targetWords: 1000, automaticOutput: false });
+    expect(result.usage).toMatchObject({ promptTokens: 200, cachedPromptTokens: 80, cacheWriteTokens: 80 });
+    expect(result.usage?.cost).toBeCloseTo(0.0012);
+  });
+
   it('continues a cutoff and returns one draft with cumulative usage', async () => {
     const beginning = 'Mara opened the observatory door and stepped into the dark.';
     vi.mocked(streamChat).mockImplementationOnce(reply(beginning, 'length'))

@@ -17,6 +17,7 @@ import { resolvePromptTemplate } from './store/templates.js';
 import {
   renderTemplate,
   renderContextTemplate,
+  renderProseMessages,
   outlinePromptValues,
   parseOutline,
   buildChatSystemPrompt,
@@ -60,7 +61,7 @@ import {
   recordPreparedRequest,
   recordBackgroundAttempt,
 } from './jobs.js';
-import { streamChat, ProviderError } from './providers.js';
+import { streamChat, ProviderError, generationSessionId } from './providers.js';
 import { streamChapter } from './chapter-stream.js';
 import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
 import { ensureStoryStateBefore } from './story-state-generation.js';
@@ -95,6 +96,7 @@ async function runStream(
   try {
     const params = {
       model: job.model,
+      sessionId: generationSessionId(job.projectId, job.kind),
       messages,
       temperature: settings.temperature,
       topP: settings.topP,
@@ -290,7 +292,7 @@ export function startChapterGeneration(
       modelMaxOutputTokens: model.provider.models?.find((entry) => entry.id === model.model)?.maxOutputTokens,
     });
     const chapters = listChapters(project.id);
-    const promptMessage = renderContextTemplate(template.content, {
+    const promptMessages = renderProseMessages(template.content, {
       project_title: project.title,
       premise: project.premise,
       genre: project.genre,
@@ -306,16 +308,19 @@ export function startChapterGeneration(
       chapter_brief: chapter.brief,
       target_words: targetWords,
       story_state: context.storyState.text || '(Opening chapter; no earlier events.)',
+      standing_references: context.standingReferencesText || '(No standing references.)',
       story_memory: context.memoryText || '(No story memory yet.)',
       lore: context.loreText || '(No lore entries activated.)',
       recent_prose: context.recentProse,
       additional_instructions: instructions || 'None.',
       context_preset: preset,
     }, {
+      standing_references: { label: 'Standing story references', priority: 110, maxTokens: 1400, trim: 'omit' },
       story_memory: { label: 'Story memory', priority: 90, maxTokens: Math.floor(context.availableInputTokens * 0.55) },
       lore: { label: 'Lore', priority: 70, maxTokens: 600, trim: 'omit' },
       recent_prose: { label: 'Recent preceding prose', priority: 100, maxTokens: 650, trim: 'tail' },
     });
+    const promptMessage = promptMessages.at(-1)!;
     // Custom templates created before stage 2 have no story-memory placeholder;
     // append the memory block rather than silently dropping it. Stage 3 lore is
     // appended the same way when a template lacks {{lore}}.
@@ -339,9 +344,9 @@ export function startChapterGeneration(
       automaticOutput: settings.maxTokens === null,
     };
 
-    return { context, promptMessage, generationSettings };
+    return { context, promptMessages, generationSettings };
   };
-  let { context, promptMessage, generationSettings } = buildRequest();
+  let { context, promptMessages, generationSettings } = buildRequest();
   const jobContext = () => ({
       preset,
       budgetTokens: context.budgetTokens,
@@ -385,7 +390,7 @@ export function startChapterGeneration(
     try {
       await ensureStoryStateBefore(chapterId, runtime.controller.signal);
       runtime.controller.signal.throwIfAborted();
-      ({ context, promptMessage, generationSettings } = buildRequest());
+      ({ context, promptMessages, generationSettings } = buildRequest());
       updateJob(job.id, { context_json: JSON.stringify(jobContext()),
         settings: JSON.stringify(jobSettingsSnapshot(generationSettings, { contextPreset: preset, targetWords })) });
       clearLorePins(project.id);
@@ -393,7 +398,7 @@ export function startChapterGeneration(
         job,
         model.provider,
         [
-          promptMessage,
+          ...promptMessages,
           {
             role: 'user',
             content: `Write Chapter ${chapter.order_index + 1}, "${chapter.title}", now. Return prose only.`,
@@ -848,6 +853,7 @@ ${description || '(The author has not filled anything in yet.)'}`;
   try {
     const result = await streamBackgroundTask(model.provider, {
       model: model.model,
+      sessionId: generationSessionId('project-setup', 'outline'),
       messages: [
         { role: 'system', content: 'You give terse, concrete fiction-planning suggestions. Never add commentary.' },
         { role: 'user', content: prompt },

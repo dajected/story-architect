@@ -77,6 +77,8 @@ export interface ModelOption {
   maxOutputTokens?: number;
   promptPrice?: string;
   completionPrice?: string;
+  promptCacheReadPrice?: string;
+  promptCacheWritePrice?: string;
 }
 
 export interface ConnectionPublic {
@@ -232,6 +234,11 @@ export interface TokenUsage {
   completionTokens?: number;
   totalTokens?: number;
   reasoningTokens?: number;
+  cachedPromptTokens?: number;
+  cacheWriteTokens?: number;
+  /** Total request cost in USD reported by the provider, including cache pricing. */
+  cost?: number;
+  providers?: string[];
 }
 
 /** Sampling settings captured when a job is created, for the generation log. */
@@ -247,6 +254,8 @@ export interface JobSettingsSnapshot {
 export interface JobPricing {
   promptPerToken: number;
   completionPerToken: number;
+  cacheReadPerToken?: number;
+  cacheWritePerToken?: number;
   currency: 'USD';
 }
 
@@ -319,6 +328,11 @@ export interface GenerationHistorySummary {
   estimatedCost: number | null;
   pricedJobs: number;
   unpricedJobs: number;
+  reportedCostJobs: number;
+  cachedPromptTokens: number;
+  cacheWriteTokens: number;
+  /** Input tokens only from jobs that reported cache-read statistics. */
+  cacheReportedPromptTokens: number;
 }
 
 export interface GenerationHistory {

@@ -1,4 +1,4 @@
-import type { ConnectionKind, ModelOption, ModelProviderOption } from '../shared/types.js';
+import type { ConnectionKind, ModelOption, ModelProviderOption, TokenUsage } from '../shared/types.js';
 import { prepareRequest } from './request-context.js';
 import type { PreparedRequest, RequestMessage } from './request-context.js';
 
@@ -21,16 +21,18 @@ export interface ChatParams {
   topP: number | null;
   maxTokens: number | null;
   inputBudgetTokens?: number;
+  sessionId?: string;
   signal: AbortSignal;
   onDelta: (text: string) => void;
   onPrepared?: (request: PreparedRequest) => void;
 }
 
-export interface ChatUsage {
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-  reasoningTokens?: number;
+export interface ChatUsage extends TokenUsage {}
+
+/** Stable across chapter jobs and retries, with separate affinity for each role. */
+export function generationSessionId(projectId: string, role: string): string {
+  const taskRole = ({ chapter: 'prose', chat: 'prose', rewrite: 'prose', review: 'memory', characters: 'memory' } as Record<string, string>)[role] ?? role;
+  return `story-architect:${projectId}:${taskRole}`;
 }
 
 export interface ChatResult {
@@ -141,6 +143,7 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
   body.max_tokens = prepared.maxTokens;
   if (connection.kind === 'openrouter') {
     body.stream_options = { include_usage: true };
+    if (params.sessionId) body.session_id = params.sessionId;
     if (connection.providerSlug) {
       body.provider = { only: [connection.providerSlug], allow_fallbacks: false };
     }
@@ -164,6 +167,7 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
   let usage: ChatUsage | null = null;
   let finishReason: string | null = null;
   let done = false;
+  const providers = new Set<string>();
 
   const processLine = (line: string) => {
     if (!line.startsWith('data:')) return;
@@ -184,6 +188,7 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
       const message = typeof error === 'string' ? error : String(error.message ?? 'Provider error');
       throw new ProviderError(message);
     }
+    if (typeof chunk.provider === 'string') providers.add(chunk.provider);
     const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
     for (const choice of choices) {
       if (!choice || typeof choice !== 'object') continue;
@@ -198,13 +203,22 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
     }
     if (chunk.usage && typeof chunk.usage === 'object') {
       const raw = chunk.usage as Record<string, unknown>;
-      usage = {
-        promptTokens: numberOrUndefined(raw.prompt_tokens),
-        completionTokens: numberOrUndefined(raw.completion_tokens),
-        totalTokens: numberOrUndefined(raw.total_tokens),
-        ...((raw.completion_tokens_details as Record<string, unknown> | undefined)?.reasoning_tokens !== undefined
-          ? { reasoningTokens: numberOrUndefined((raw.completion_tokens_details as Record<string, unknown>).reasoning_tokens) } : {}),
+      const promptDetails = raw.prompt_tokens_details as Record<string, unknown> | undefined;
+      const completionDetails = raw.completion_tokens_details as Record<string, unknown> | undefined;
+      const values = {
+        promptTokens: raw.prompt_tokens,
+        completionTokens: raw.completion_tokens,
+        totalTokens: raw.total_tokens,
+        reasoningTokens: completionDetails?.reasoning_tokens,
+        cachedPromptTokens: promptDetails?.cached_tokens ?? raw.prompt_cache_hit_tokens,
+        cacheWriteTokens: promptDetails?.cache_write_tokens ?? raw.cache_creation_input_tokens,
+        cost: connection.kind === 'openrouter' ? raw.cost : undefined,
       };
+      usage = { ...(usage ?? {}) };
+      for (const [key, value] of Object.entries(values)) {
+        const number = numberOrUndefined(value);
+        if (number !== undefined && number >= 0) Object.assign(usage, { [key]: number });
+      }
     }
   };
 
@@ -227,9 +241,10 @@ export async function streamChat(connection: ProviderConnection, params: ChatPar
   }
 
   const resolvedUsage = usage as ChatUsage | null;
-  if (!resolvedUsage || resolvedUsage.promptTokens === undefined || resolvedUsage.completionTokens === undefined) {
+  if (!resolvedUsage || !Object.keys(resolvedUsage).length) {
     return { content, usage: null, finishReason };
   }
+  if (providers.size) resolvedUsage.providers = [...providers];
   return { content, usage: resolvedUsage, finishReason };
 }
 
@@ -284,6 +299,8 @@ export async function fetchModels(
             : undefined,
       promptPrice: typeof pricing?.prompt === 'string' ? pricing.prompt : undefined,
       completionPrice: typeof pricing?.completion === 'string' ? pricing.completion : undefined,
+      promptCacheReadPrice: typeof pricing?.input_cache_read === 'string' ? pricing.input_cache_read : undefined,
+      promptCacheWritePrice: typeof pricing?.input_cache_write === 'string' ? pricing.input_cache_write : undefined,
       maxOutputTokens: numberOrUndefined(topProvider?.max_completion_tokens ?? record.max_output_tokens),
     });
   }

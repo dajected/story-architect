@@ -2,7 +2,8 @@ import { useState } from 'react';
 import type { Chapter, Character, ImageAsset } from '@shared/types';
 import { formatChapterLabel } from '../utils';
 import { AppearanceNote, useCharacterAppearances } from './CharacterAppearanceNotes';
-import { Banner, EmptyState, Modal, Spinner } from './ui';
+import { Banner, EmptyState, Spinner } from './ui';
+import { ImageViewer } from './ImageViewer';
 
 export function AppearanceTimeline({ character, chapters, assets, active = true }: {
   character?: Character;
@@ -27,7 +28,6 @@ export function AppearanceTimeline({ character, chapters, assets, active = true 
   const chapterImages = ordered.flatMap(chapter => forChapter(chapter.id));
   const sequence = [...references, ...chapterImages];
   const viewedIndex = sequence.findIndex(asset => asset.id === viewed?.id);
-  const viewedChapter = chapters.find(chapter => chapter.id === viewed?.chapterId);
   const image = (asset: ImageAsset) => {
     const chapter = chapters.find(chapter => chapter.id === asset.chapterId);
     const label = chapter ? formatChapterLabel(chapter.title, chapter.orderIndex) : 'Reference portrait';
@@ -62,14 +62,6 @@ export function AppearanceTimeline({ character, chapters, assets, active = true 
           })}
         </ol>
       </div>}
-    <Modal open={Boolean(viewed)} title={`${character.name} — Timeline image`} onClose={() => setViewed(null)} width="wide"
-      subtitle={viewedChapter ? `${formatChapterLabel(viewedChapter.title, viewedChapter.orderIndex)} · ${viewed?.settings.moment ?? 'end'}` : 'Reference portrait'}>
-      {viewed ? <div className="stack"><div className="row-actions">
-        <button className="button" disabled={viewedIndex <= 0} onClick={() => setViewed(sequence[viewedIndex - 1]!)}>Previous</button>
-        <span>{viewedIndex + 1} / {sequence.length}</span>
-        <button className="button" disabled={viewedIndex >= sequence.length - 1} onClick={() => setViewed(sequence[viewedIndex + 1]!)}>Next</button>
-        <a className="button" href={`${viewed.url}?download=1`} download>Download</a>
-      </div><div className="image-viewer"><img src={viewed.url} alt={`Full image of ${character.name}`} /></div></div> : null}
-    </Modal>
+    {viewed ? <ImageViewer open title={`${character.name} — Timeline image`} url={viewed.url} alt={`Full image of ${character.name}`} index={viewedIndex} count={sequence.length} onNavigate={index => setViewed(sequence[index]!)} onClose={() => setViewed(null)} actions={<a className="button" href={`${viewed.url}?download=1`} download>Download</a>} /> : null}
   </section>;
 }

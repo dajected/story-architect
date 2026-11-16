@@ -2,6 +2,7 @@ import { countWords, jobSettingsSnapshot } from '../shared/utils.js';
 import { conflict, errorMessage } from './errors.js';
 import { activeJobForChapterKind, appendOutput, createJob, createRuntime, finalizeJob, getJob, isCancellation, isTerminal, recordPreparedRequest, recordBackgroundAttempt } from './jobs.js';
 import { backgroundReplyTokens, streamBackgroundTask } from './background-generation.js';
+import { generationSessionId } from './providers.js';
 import { getChapter, listChapters } from './store/chapters.js';
 import { getProject } from './store/projects.js';
 import { resolveTaskModel } from './store/settings.js';
@@ -50,6 +51,7 @@ async function buildState(chapterId: string, signal?: AbortSignal) {
   try {
     const result = await streamBackgroundTask(model.provider, {
       model: model.model, temperature: 0.2, topP: null, maxTokens: backgroundReplyTokens(model.provider, model.model),
+      sessionId: generationSessionId(project.id, 'memory'),
       signal: runtime.controller.signal, onDelta: (text) => appendOutput(job.id, text),
       onPrepared: (request) => recordPreparedRequest(job.id, request),
       messages: [{ role: 'system', content: STORY_STATE_PROMPT }, {

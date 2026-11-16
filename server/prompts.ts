@@ -35,7 +35,8 @@ Rules:
 - Follow the requested chapter count.
 - Do not include front matter, an epilogue, or notes outside the JSON.`;
 
-export const PROSE_TEMPLATE_DEFAULT = `You are Story Architect, drafting prose for a novel.
+/** Kept verbatim so upgrades only replace unmodified saved defaults. */
+export const PROSE_TEMPLATE_LEGACY = `You are Story Architect, drafting prose for a novel.
 
 ## Novel
 Title: {{project_title}}
@@ -75,6 +76,50 @@ Approximate target length: {{target_words}} words.
 - Follow the chapter brief and hold the established point of view and tense.
 - Write finished prose only: no chapter heading, notes, outlines, or commentary around the text.
 - End at a natural stopping point near the target length.`;
+
+export const PROSE_TEMPLATE_DEFAULT = `You are Story Architect, drafting prose for a novel.
+
+## Novel
+Title: {{project_title}}
+Premise: {{premise}}
+Genre: {{genre}}
+Tone: {{tone}}
+Point of view: {{pov}}
+Tense: {{tense}}
+Writing style: {{style_notes}}
+Content preferences: {{content_preferences}}
+
+## Project instructions
+{{instructions}}
+
+## Requirements
+- Continue naturally from the recent prose. Do not recap it.
+- Follow the chapter brief and hold the established point of view and tense.
+- Write finished prose only: no chapter heading, notes, outlines, or commentary around the text.
+- End at a natural stopping point near the target length.
+- Standing profiles describe the baseline. Current story state and established chapter facts take precedence over superseded details.
+
+{{standing_references}}
+
+## Current story state
+{{story_state}}
+
+## Relevant story references
+{{story_memory}}
+
+## Lore
+{{lore}}
+
+## Recent preceding prose
+{{recent_prose}}
+
+## Chapter to draft
+Chapter {{chapter_number}}: {{chapter_title}}
+Brief: {{chapter_brief}}
+Approximate target length: {{target_words}} words.
+
+## Additional instructions
+{{additional_instructions}}`;
 
 export const IMAGE_PROMPT_SYSTEM = `You are an art director for a novel's character portraits. Turn the supplied story details into one concrete image-generation prompt.
 
@@ -184,6 +229,21 @@ export function renderContextTemplate(
     return slot;
   });
   return { role: 'system', content, contextParts };
+}
+
+/** Split the default at its stable boundary; author-defined layouts remain intact. */
+export function renderProseMessages(
+  template: string,
+  values: PromptValues,
+  optional: Record<string, Omit<RequestContextPart, 'text' | 'slot'>>,
+): RequestMessage[] {
+  const normalised = template.replace(/\r\n/g, '\n');
+  if (normalised !== PROSE_TEMPLATE_DEFAULT) return [renderContextTemplate(template, values, optional)];
+  const boundary = normalised.indexOf('\n\n## Current story state\n');
+  return [
+    renderContextTemplate(normalised.slice(0, boundary), values, optional),
+    { ...renderContextTemplate(normalised.slice(boundary).trimStart(), values, optional), role: 'user' },
+  ];
 }
 
 export function outlinePromptValues(params: {

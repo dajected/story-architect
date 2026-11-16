@@ -91,7 +91,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
   const openImages = (assetId: string | null = null) => {
     setViewAssetId(assetId);
     setImageTab('gallery');
-    setOpen(true);
+    setOpen(!assetId);
   };
   const [studio, setStudio] = useState<Character | null>(null);
   const [initialAsset, setInitialAsset] = useState<ImageAsset | null>(null);
@@ -263,6 +263,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
       return <button className="portrait-chip" key={character.id} onClick={() => openImages(image?.id ?? null)} aria-label={image ? `View image of ${character.name}` : `View chapter images for ${character.name}`}>{image ? <img src={image.url} alt="" /> : <span className="portrait-avatar placeholder">{character.name[0]}</span>}<span>{character.name}<small>{image ? (image.sourceOutdated ? 'Earlier draft' : 'Chapter image') : 'No chapter image'}</small></span></button>;
     })}{!characters.length ? <span className="muted small">Mark characters as key in Cast to show them in every chapter.</span> : null}<button className="button button-small" onClick={() => openImages()}>Chapter images · {chapterAssets.length} →{data?.activeRequests.length ? ` (${data.activeRequests.length} running)` : ''}{batchRunning ? ' · timeline running' : ''}</button></div>
     {error && !open ? <Banner tone="danger">{error}</Banner> : null}
+    {viewAssetId && data ? <ImageGallery viewerOnly initialViewId={viewAssetId} onCloseView={() => setViewAssetId(null)} chapters={[{id: data.chapterId, title: data.chapterTitle, orderIndex: data.chapterNumber - 1}]} assets={chapterAssets} characters={characters} onChanged={load} onRegenerate={asset => {setViewAssetId(null); const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} /> : null}
     <Modal open={open} onClose={() => setOpen(false)} title={`Chapter images — ${data ? formatChapterLabel(data.chapterTitle, data.chapterNumber - 1) : ''}`} subtitle="Only key characters appear here. Main character portraits stay separate." width="wide">
       <div className="stack">{error ? <Banner tone="danger">{error}</Banner> : null}{notice ? <Banner>{notice}</Banner> : null}
       {!data ? <Spinner label="Loading chapter images…" /> : <>
@@ -271,7 +272,7 @@ export function ChapterPortraits({chapterId, revisionKey, project}: {chapterId: 
           <button className="button" aria-pressed={imageTab === 'generate'} onClick={() => setImageTab('generate')}>Generate images</button>
         </div>
         {imageTab === 'gallery' ? <>
-        <ImageGallery initialViewId={viewAssetId} chapters={[{id: data.chapterId, title: data.chapterTitle, orderIndex: data.chapterNumber - 1}]} assets={chapterAssets} characters={characters} onChanged={load} onRegenerate={asset => {const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} />
+        <ImageGallery chapters={[{id: data.chapterId, title: data.chapterTitle, orderIndex: data.chapterNumber - 1}]} assets={chapterAssets} characters={characters} onChanged={load} onRegenerate={asset => {const character = characters.find(c => c.id === asset.characterId); if (character) customize(character, asset);}} />
           {!chapterAssets.length ? <p className="muted">No images have been created for this chapter&rsquo;s key characters yet. Choose Generate images to create one.</p> : null}
         </> : <>
         {!data.hasText ? <Banner>Draft this chapter before generating its appearances.</Banner> : null}

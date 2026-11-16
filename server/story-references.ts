@@ -37,6 +37,20 @@ function selectWithin<T>(ranked: T[], cap: number, count: number, render: (item:
   return selected;
 }
 
+/** A small baseline independent of the chapter query; never promote extracted events or plans. */
+export function selectStandingReferences(characters: Character[], facts: Fact[]) {
+  const standingCharacters = selectWithin(characters.filter((character) => character.status === 'active' && character.keyCharacter)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)), 350, 4, referenceCharacterText);
+  const characterIds = new Set(standingCharacters.map((character) => character.id));
+  return {
+    characters: standingCharacters,
+    facts: selectWithin(facts.filter((fact) => fact.status === 'established' && fact.factClass === 'authored' &&
+      !fact.sourceOutdated && fact.chapterId === null && fact.scopeChapterId === null &&
+      fact.characterId !== null && characterIds.has(fact.characterId))
+      .sort((a, b) => a.id.localeCompare(b.id)), 250, 6, referenceFactText),
+  };
+}
+
 /** Retrieve chapter-specific references, with fixed count and token ceilings. */
 export function selectStoryReferences(options: {
   chapter: Chapter; additionalInstructions?: string; state: string; characters: Character[]; facts: Fact[];

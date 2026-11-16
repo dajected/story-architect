@@ -437,6 +437,20 @@ image with `STORY_ARCHITECT_IMAGE` pinned to the previous tag.
 
 ## How generation behaves
 
+- The default prose prompt puts project instructions, writing rules, key-character
+  baselines, and always-included lore in a reusable system prefix. Changing story
+  state, retrieved references, conditional lore, recent prose, and chapter tasks
+  follow in user messages. Existing unmodified default templates upgrade
+  automatically; custom templates keep their layout. `{{standing_references}}`
+  is available for custom prose templates. Standing references share the existing
+  context budget; the app does not pad prompts or include the entire manuscript.
+- OpenRouter requests use a stable session per project and task role, including
+  continuations and retries, to improve provider affinity. A specific upstream
+  provider can still be selected in model-role settings. The generation log shows
+  cached input, cache writes, and upstream providers when reported. Costs are
+  labelled **Reported** when OpenRouter supplies the charge, or **Estimated**
+  using saved model prices, including cache rates when available. Unknown cache
+  usage stays unknown, and usage and costs are combined across paid attempts.
 - Outline generation streams the raw model response and parses JSON, fenced
   JSON, a bare array/object, or a numbered list. Unreadable output is kept on
   the failed job so nothing is lost.

@@ -35,6 +35,7 @@ export function ChapterEditor({
   onNavigate,
   canNavigatePrevious,
   canNavigateNext,
+  focusMode = false,
 }: {
   project: Project;
   chapter: ChapterDetail;
@@ -46,6 +47,7 @@ export function ChapterEditor({
   onNavigate?: (direction: 'previous' | 'next') => void;
   canNavigatePrevious?: boolean;
   canNavigateNext?: boolean;
+  focusMode?: boolean;
 }) {
   const [content, setContent] = useState(chapter.content);
   const [savedContent, setSavedContent] = useState(chapter.content);
@@ -85,6 +87,10 @@ export function ChapterEditor({
   const [reviewError, setReviewError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (editorRef.current) editorRef.current.scrollTop = Number(sessionStorage.getItem(`editor-scroll-${chapter.id}`) ?? 0);
+  }, [chapter.id]);
   const initialRevisionRef = useRef(chapter.currentRevisionId);
   const contentRef = useRef(content);
   const savedRef = useRef(savedContent);
@@ -430,7 +436,7 @@ export function ChapterEditor({
   const finishedJob = !stream.running && stream.job ? stream.job : null;
 
   return (
-    <div className="chapter-editor" ref={node => {if (node) node.scrollTop = Number(sessionStorage.getItem(`editor-scroll-${chapter.id}`) ?? 0);}} onScroll={event => {if (event.target === event.currentTarget) sessionStorage.setItem(`editor-scroll-${chapter.id}`, String(event.currentTarget.scrollTop));}}>
+    <div className="chapter-editor" ref={editorRef} onScroll={event => {if (event.target === event.currentTarget) sessionStorage.setItem(`editor-scroll-${chapter.id}`, String(event.currentTarget.scrollTop));}}>
       <header className="editor-header">
         <div className="editor-title">
 
@@ -452,26 +458,6 @@ export function ChapterEditor({
         <div className="editor-actions">
           <button className="button button-small" aria-label="Chapter images" onClick={() => window.dispatchEvent(new Event('open-chapter-images'))}>Chapter images · {imageCount}</button>
           <details className="action-menu"><summary className="button button-small">Chapter tools</summary><div className="action-menu-content">
-          {onNavigate ? (
-            <>
-              <button
-                className="button button-ghost button-small chapter-step"
-                onClick={() => onNavigate('previous')}
-                disabled={!canNavigatePrevious}
-                title="Previous chapter"
-              >
-                ← Previous
-              </button>
-              <button
-                className="button button-ghost button-small chapter-step"
-                onClick={() => onNavigate('next')}
-                disabled={!canNavigateNext}
-                title="Next chapter"
-              >
-                Next →
-              </button>
-            </>
-          ) : null}
           <button className="button button-ghost button-small" onClick={onOpenOutline}>
             Edit outline
           </button>
@@ -815,7 +801,11 @@ export function ChapterEditor({
         </section>
       ) : null}
 
-      <div className="editor-toolbar"><button className="button button-small" onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}>Focus on story</button><span className="muted small">Read your generated story</span></div>
+      <nav className="editor-toolbar reader-toolbar" aria-label="Chapter navigation">
+        <button className="button button-small" aria-label="Previous chapter" disabled={!onNavigate || !canNavigatePrevious} onClick={() => onNavigate?.('previous')}>← Previous</button>
+        <button className="button button-small" aria-pressed={focusMode} onClick={() => window.dispatchEvent(new Event('toggle-writing-focus'))}>{focusMode ? 'Exit focus' : 'Focus on story'}</button>
+        <button className="button button-small" aria-label="Next chapter" disabled={!onNavigate || !canNavigateNext} onClick={() => onNavigate?.('next')}>Next →</button>
+      </nav>
       <article className="editor-surface" aria-label="Story reader">
         <div className="manuscript-preview">
           {content.trim() ? <Markdown text={content} /> : <div className="empty-state"><h2>Your story will appear here</h2><p>Generate a draft to start reading this chapter.</p><button className="button button-primary" onClick={() => setShowGenerate(true)}>Generate draft</button></div>}

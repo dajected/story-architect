@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { ConnectionKind, ConnectionPublic, ModelOption } from '../../shared/types.js';
+import type { ConnectionKind, ConnectionPublic, JobPricing, ModelOption } from '../../shared/types.js';
 import { dbAll, dbGet, dbRun, timestamp } from '../db.js';
 import { badRequest, notFound } from '../errors.js';
 import { decryptSecret, encryptSecret } from '../crypto.js';
@@ -189,16 +189,20 @@ function pricePerToken(value: string | undefined): number | null {
 export function modelPricing(
   connectionId: string,
   model: string,
-): { promptPerToken: number; completionPerToken: number; currency: 'USD' } | null {
+): JobPricing | null {
   try {
     const row = getConnectionRow(connectionId);
     const entry = parseModels(row.models).find((option) => option.id === model);
     const prompt = pricePerToken(entry?.promptPrice);
     const completion = pricePerToken(entry?.completionPrice);
+    const cacheRead = pricePerToken(entry?.promptCacheReadPrice);
+    const cacheWrite = pricePerToken(entry?.promptCacheWritePrice);
     if (prompt === null && completion === null) return null;
     return {
       promptPerToken: prompt ?? 0,
       completionPerToken: completion ?? 0,
+      ...(cacheRead !== null ? { cacheReadPerToken: cacheRead } : {}),
+      ...(cacheWrite !== null ? { cacheWritePerToken: cacheWrite } : {}),
       currency: 'USD',
     };
   } catch {

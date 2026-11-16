@@ -3,20 +3,22 @@ import { useEffect, useState } from 'react';
 import type { Character, Chapter, ImageAsset } from '@shared/types';
 import { api } from '../api';
 import { errorText, formatDate } from '../utils';
-import { Banner, confirmAction, Modal } from './ui';
+import { Banner, confirmAction } from './ui';
+import { ImageViewer } from './ImageViewer';
 
-export function ImageGallery({assets, characters, chapters = [], onChanged, onRegenerate, initialViewId = null}: {
+export function ImageGallery({assets, characters, chapters = [], onChanged, onRegenerate, initialViewId = null, viewerOnly = false, onCloseView}: {
   initialViewId?: string | null;
+  viewerOnly?: boolean;
+  onCloseView?: () => void;
   assets: ImageAsset[]; characters: Character[]; chapters?: Pick<Chapter, 'id' | 'title' | 'orderIndex'>[];
   onChanged: () => void | Promise<unknown>; onRegenerate?: (asset: ImageAsset) => void;
 }) {
   const [viewId, setViewId] = useState<string | null>(initialViewId);
-  const [zoom, setZoom] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const index = assets.findIndex(a => a.id === viewId);
   const viewed = assets[index];
-  useEffect(() => {setZoom(1);}, [viewId]);
+  useEffect(() => {setViewId(initialViewId);}, [initialViewId]);
   const name = (asset: ImageAsset) => characters.find(c => c.id === asset.characterId)?.name ?? 'Character';
   const chapter = (asset: ImageAsset) => chapters.find(c => c.id === asset.chapterId);
   const chapterLabel = (asset: ImageAsset) => {
@@ -38,20 +40,18 @@ export function ImageGallery({assets, characters, chapters = [], onChanged, onRe
       <button className="button button-danger-ghost button-small" disabled={busy} onClick={() => void run(async () => {if (await confirmAction(`Delete this image of ${name(asset)}? The saved file and any selection of it will be removed.`)) {await api.deleteImageAsset(asset.id); setViewId(null);}})}>Delete image</button>
     </>;
     if (!compact) return <div className="row-actions">{primary}{overflow}</div>;
-    return <div className="row-actions">{primary}
-      <details className="action-menu image-card-menu"><summary className="button button-ghost button-small">More…</summary><div className="action-menu-content">{overflow}</div></details>
+    return <div className="row-actions">
+      <details className="action-menu image-card-menu"><summary className="button button-ghost button-small">Image options</summary><div className="action-menu-content">{primary}{overflow}</div></details>
     </div>;
   };
   return <>
     {error ? <Banner tone="danger">{error}</Banner> : null}
-    <div className="image-gallery">{assets.map(asset => <figure className="image-card" key={asset.id}>
+    {!viewerOnly ? <div className="image-gallery">{assets.map(asset => <figure className="image-card" key={asset.id}>
       <button className="image-card-image image-open" onClick={() => setViewId(asset.id)} aria-label={`View image of ${name(asset)}`}><img src={asset.url} alt={`${name(asset)}${chapter(asset) ? ` — ${chapterLabel(asset)}` : ''}`} loading="lazy" /></button>
       <figcaption><strong>{name(asset)}</strong><span className="muted small">{chapterLabel(asset)}</span>
       <div className="row-actions">{asset.selectedForChapter ? <span className="badge badge-accent">Selected chapter image</span> : null}{asset.sourceOutdated ? <span className="badge badge-warning">Earlier draft · Review</span> : null}</div>
       <details className="small"><summary>Prompt and source</summary><p>{asset.prompt}</p><p>{formatDate(asset.createdAt)} · {asset.settings.moment ?? 'end'} · {asset.settings.sourceRevisionId ? `Source revision ${asset.settings.sourceRevisionId.slice(0, 8)}` : 'Source revision unknown'}</p></details>{actions(asset, true)}</figcaption>
-    </figure>)}</div>
-    <Modal open={Boolean(viewed)} title={viewed ? `${name(viewed)} — ${chapterLabel(viewed)}` : 'Image viewer'} onClose={() => setViewId(null)} width="wide">
-      {viewed ? <div className="stack"><div className="row-actions"><button className="button" disabled={index <= 0} onClick={() => setViewId(assets[index - 1]!.id)}>← Previous</button><span>{index + 1} / {assets.length}</span><button className="button" disabled={index >= assets.length - 1} onClick={() => setViewId(assets[index + 1]!.id)}>Next →</button><label>Zoom <input aria-label="Image zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={e => setZoom(Number(e.target.value))} /></label></div><div className="image-viewer"><img style={{width: `${zoom * 100}%`, maxWidth: 'none'}} src={viewed.url} alt={`Full image of ${name(viewed)}`} /></div>{actions(viewed)}</div> : null}
-    </Modal>
+    </figure>)}</div> : null}
+    {viewed ? <ImageViewer open title={`${name(viewed)} — ${chapterLabel(viewed)}`} url={viewed.url} alt={`Full image of ${name(viewed)}`} index={index} count={assets.length} onNavigate={next => setViewId(assets[next]!.id)} onClose={() => {setViewId(null); onCloseView?.();}} actions={<>{error ? <Banner tone="danger">{error}</Banner> : null}{actions(viewed)}</>} /> : null}
   </>;
 }

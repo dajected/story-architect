@@ -15,7 +15,8 @@ import { countWords } from '@shared/utils';
 import { api, type OutlineResponse } from '../api';
 import { useJobStream } from '../hooks';
 import { errorText, formatDate, formatWords, newId } from '../utils';
-import { Banner, EmptyState, Modal, Spinner } from './ui';
+import { Banner, EmptyState, Spinner } from './ui';
+import { ImageViewer } from './ImageViewer';
 
 export function OutlinePanel({
   project,
@@ -474,9 +475,7 @@ export function OutlinePanel({
       {error ? <Banner tone="danger">{error}</Banner> : null}
       {notice ? <Banner tone="success">{notice}</Banner> : null}
       {imageError ? <Banner tone="warning">Chapter images could not load: {imageError}</Banner> : null}
-      <Modal open={Boolean(viewImage)} title="Chapter image" onClose={() => setViewImage(null)} width="wide">
-        {viewImage ? <img className="chapter-image-full" src={viewImage.url} alt="Generated chapter image" /> : null}
-      </Modal>
+      {viewImage ? <ImageViewer open title="Chapter image" url={viewImage.url} alt="Generated chapter image" index={images.findIndex(image => image.id === viewImage.id)} count={images.length} onNavigate={index => setViewImage(images[index]!)} onClose={() => setViewImage(null)} actions={<a className="button" href={`${viewImage.url}?download=1`} download>Download</a>} /> : null}
 
       {!latest && !showGenerator ? (
         <EmptyState

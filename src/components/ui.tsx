@@ -2,6 +2,21 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
+// Dialogs can close in any order (including when their whole page unmounts).
+const bodyScrollLocks = new Set<symbol>();
+let unlockedBodyOverflow = '';
+
+function lockBodyScroll() {
+  const token = Symbol();
+  if (!bodyScrollLocks.size) unlockedBodyOverflow = document.body.style.overflow;
+  bodyScrollLocks.add(token);
+  document.body.style.overflow = 'hidden';
+  return () => {
+    bodyScrollLocks.delete(token);
+    if (!bodyScrollLocks.size) document.body.style.overflow = unlockedBodyOverflow;
+  };
+}
+
 export function Spinner({ label }: { label?: string }) {
   return (
     <span className="spinner-wrap" role="status" aria-live="polite">
@@ -59,6 +74,7 @@ export function Modal({
   children,
   footer,
   width = 'normal',
+  className = '',
 }: {
   open: boolean;
   title: string;
@@ -67,6 +83,7 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   width?: 'normal' | 'wide' | 'narrow';
+  className?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const beforeOpenRef = useRef<HTMLElement | null>(null);
@@ -93,11 +110,10 @@ export function Modal({
       }
     };
     document.addEventListener('keydown', handler);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const unlockBodyScroll = lockBodyScroll();
     return () => {
       document.removeEventListener('keydown', handler);
-      document.body.style.overflow = previous;
+      unlockBodyScroll();
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [open]);
@@ -108,7 +124,7 @@ export function Modal({
     <div className="modal-backdrop" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <div ref={dialogRef} tabIndex={-1} className={`modal modal-${width}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={dialogRef} tabIndex={-1} className={`modal modal-${width} ${className}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-header">
           <div>
             <h2>{title}</h2>

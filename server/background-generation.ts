@@ -1,6 +1,7 @@
 import { streamChat } from './providers.js';
 import type { ChatParams, ChatResult, ChatUsage, ProviderConnection } from './providers.js';
 import { FALLBACK_CONTEXT_LENGTH, prepareRequest } from './request-context.js';
+import { sumTokenUsage } from '../shared/utils.js';
 
 const MAX_REQUESTS = 3;
 const MAX_REPLY_TOKENS = 16384;
@@ -22,14 +23,7 @@ export function backgroundReplyTokens(provider: ProviderConnection, modelId: str
 }
 
 function sumUsage(results: ChatResult[]): ChatUsage | null {
-  if (results.some((result) => !result.usage)) return null;
-  const usage: ChatUsage = {};
-  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'reasoningTokens'] as const) {
-    if (results.every((result) => result.usage?.[key] !== undefined)) {
-      usage[key] = results.reduce((sum, result) => sum + result.usage![key]!, 0);
-    }
-  }
-  return usage;
+  return sumTokenUsage(results.map((result) => result.usage));
 }
 
 /** Retry complete background results; never concatenate truncated JSON/state. */

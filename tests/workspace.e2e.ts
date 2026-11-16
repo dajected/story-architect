@@ -200,7 +200,10 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
     expect(await dialog.evaluate(el=>el.getBoundingClientRect().width<=innerWidth),`image dialog at ${width}px`).toBe(true);
     await page.keyboard.press('Escape');
     const titleBox=await page.locator('.workspace-topbar-left').boundingBox();const actionsBox=await page.locator('.workspace-actions').boundingBox();
-    if(width<=720) expect(actionsBox!.y).toBeGreaterThanOrEqual(titleBox!.y+titleBox!.height);
+    if(width<=720) {
+      expect(actionsBox!.y).toBeGreaterThanOrEqual(titleBox!.y);
+      expect((await page.locator('.workspace-topbar').boundingBox())!.height).toBeLessThan(200);
+    }
     await expect.poll(async()=>page.locator('.portrait-chip img').evaluateAll(imgs=>imgs.every(img=>(img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth>0))).toBe(true);
     await page.screenshot({path:`work/test-results/workspace-${width}.png`,fullPage:true});
   }
@@ -209,10 +212,10 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
   await modal.getByRole('button',{name:'Save connection'}).focus();await page.keyboard.press('Tab');expect(await modal.evaluate(el=>el.contains(document.activeElement))).toBe(true);
   await page.keyboard.press('Escape');await expect(modal).not.toBeVisible();
   await expect(page.getByRole('button',{name:'Add connection',exact:true})).toBeFocused();
-  await page.goto('/');await expect(page.getByRole('heading',{name:'Your library',exact:true})).toBeVisible();await page.getByRole('button',{name:'Compact view'}).click();await expect(page.locator('.compact-library')).toBeVisible();
+  await page.goto('/');await expect(page.getByRole('heading',{name:'Your library',exact:true})).toBeVisible();await expect(page.locator('.library-list')).toBeVisible();
   await page.getByLabel('Search projects').fill('no matching novel');await expect(page.getByRole('heading',{name:'No novels match that search'})).toBeVisible();
   await page.getByLabel('Search projects').fill('');await page.getByRole('button',{name:'New novel',exact:true}).click();
-  await expect(page.getByRole('textbox',{name:'Title',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'Writing style',exact:true})).toBeHidden();await page.keyboard.press('Escape');
+  await expect(page.getByRole('textbox',{name:'Story premise',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'Writing style',exact:true})).toBeHidden();await page.keyboard.press('Escape');
   await page.goto(`/projects/${projectId}?tab=manuscript`);await page.evaluate(()=>{document.documentElement.style.zoom='2';});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'workspace fits at 200% CSS zoom').toBe(true);
 });
@@ -221,13 +224,16 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
 test('workspace navigation returns to the same chapter and separates app settings', async ({page}) => {
   await page.goto(`/projects/${projectId}?tab=manuscript`);
   await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
+  await page.locator('.workspace-menu > summary').click();
+  await page.locator('.workspace-submenu > summary').filter({hasText:'Settings'}).click();
   await page.getByRole('button', {name:'Novel settings',exact:true}).click();
   const settings = page.getByRole('dialog', {name:/Novel settings/});
   await expect(settings).toBeVisible();
   await expect(settings.getByRole('button', {name:'App defaults & connections'})).toHaveCount(0);
   await page.keyboard.press('Escape');
+  await page.locator('.workspace-menu > summary').click();
   await page.getByRole('link', {name:'App settings',exact:true}).click();
-  await page.getByRole('link', {name:'3. Return to novel'}).click();
+  await page.getByRole('link', {name:'← Return to project',exact:true}).click();
   await expect(page.getByRole('heading', {name:'Chapter 1: After the storm',exact:true})).toBeVisible();
   await page.getByRole('link', {name:'Library',exact:true}).click();
   await page.getByRole('link', {name:'Continue chapter 1: After the storm',exact:true}).click();
@@ -243,8 +249,11 @@ test('generated story opens in a wide reader with the assistant hidden', async (
   await expect(page.locator('.assistant-panel')).toHaveCount(0);
   await expect(page.locator('html')).toHaveAttribute('data-theme','light');
   expect((await page.locator('.manuscript-preview').boundingBox())!.width).toBeGreaterThan(800);
+  await page.locator('.workspace-menu > summary').click();
+  await page.locator('.workspace-submenu > summary').filter({hasText:'Workspace'}).click();
   await page.getByRole('button',{name:'Show assistant',exact:true}).click();
   await expect(page.locator('.assistant-panel')).toBeVisible();
+  await page.locator('.workspace-menu > summary').click();
   await page.getByRole('button',{name:'Hide assistant',exact:true}).click();
   await expect(page.locator('.assistant-panel')).toHaveCount(0);
 });
@@ -259,4 +268,123 @@ test('refresh preserves the chosen workspace tab', async ({page}) => {
   await expect(page.getByRole('heading', {name: 'Images', exact: true})).toBeVisible();
   await page.goto(`/projects/${projectId}`);
   await expect(page.getByRole('heading', {name: 'Images', exact: true})).toBeVisible();
+});
+
+test('mobile reader hides and restores headers and navigates chapters in both reading modes', async ({page, request}) => {
+  const post = async (url: string, data: unknown = {}) => {
+    const response = await request.post(`/api${url}`, {data});
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  };
+  const {project} = await post('/projects', {title:'Mobile reading'});
+  const {revision} = await post(`/projects/${project.id}/outline/manual`);
+  const firstId = revision.chapters[0].id;
+  const outline = await request.put(`/api/projects/${project.id}/outline`, {data:{revisionId:revision.id,chapters:[
+    {id:firstId,title:'A long walk',brief:'The traveller follows the coastline.'},
+    {id:`${project.id}-second`,title:'Coming home',brief:'The traveller returns.'},
+  ]}});
+  expect(outline.ok()).toBeTruthy();
+  await post(`/projects/${project.id}/outline/${revision.id}/approve`);
+  const content = Array.from({length:70}, (_, i) => `The traveller walked along the shore, watching the waves roll in. This was mile ${i + 1}.`).join('\n\n');
+  expect((await request.put(`/api/chapters/${firstId}/content`, {data:{content}})).ok()).toBeTruthy();
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(`/projects/${project.id}?tab=manuscript`);
+  const shell = page.locator('.workspace-shell');
+  const navigation = page.getByRole('navigation', {name:'Chapter navigation'});
+  await expect(page.getByRole('article', {name:'Story reader'})).toContainText('This was mile 70');
+  await expect(navigation.getByRole('button', {name:'Previous chapter',exact:true})).toBeDisabled();
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await expect(shell).toHaveClass(/reader-headers-hidden/);
+  await expect.poll(async () => (await page.locator('.workspace-topbar').boundingBox())!.y + (await page.locator('.workspace-topbar').boundingBox())!.height).toBeLessThanOrEqual(1);
+  await expect.poll(async () => (await page.locator('.editor-header').boundingBox())!.y + (await page.locator('.editor-header').boundingBox())!.height).toBeLessThanOrEqual(1);
+  await expect(navigation.getByRole('button', {name:'Next chapter',exact:true})).toBeInViewport();
+  await page.screenshot({path:'work/test-results/mobile-reading-scrolled.png'});
+  await page.evaluate(() => window.scrollBy(0, -100));
+  await expect(shell).not.toHaveClass(/reader-headers-hidden/);
+  await expect.poll(async () => Math.round((await page.locator('.workspace-topbar').boundingBox())!.y)).toBe(0);
+  await expect.poll(async () => (await page.locator('.editor-header').boundingBox())!.y).toBeGreaterThan(0);
+  await navigation.getByRole('button', {name:'Next chapter',exact:true}).click();
+  await expect(page.getByRole('heading', {name:'Chapter 2: Coming home',exact:true})).toBeVisible();
+  await expect(navigation.getByRole('button', {name:'Next chapter',exact:true})).toBeDisabled();
+  await navigation.getByRole('button', {name:'Focus on story',exact:true}).click();
+  await expect(shell).toHaveClass(/focus-mode/);
+  await navigation.getByRole('button', {name:'Previous chapter',exact:true}).click();
+  await expect(page.getByRole('article', {name:'Story reader'})).toContainText('This was mile 70');
+  await expect(shell).toHaveClass(/focus-mode/);
+  await expect(navigation.getByRole('button', {name:'Previous chapter',exact:true})).toBeDisabled();
+  await navigation.getByRole('button', {name:'Next chapter',exact:true}).click();
+  await expect(page.getByRole('article', {name:'Story reader'})).toContainText('Your story will appear here');
+  await navigation.getByRole('button', {name:'Exit focus',exact:true}).click();
+  await expect(page.getByRole('heading', {name:'Chapter 2: Coming home',exact:true})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true);
+});
+
+test('mobile images open directly, fit the screen and swipe between images', async ({page, request}) => {
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(`/projects/${projectId}?tab=manuscript`);
+  await page.locator('.portrait-chip').filter({hasText:'Mara Voss'}).click();
+  const viewer = page.locator('.modal-image-viewer');
+  await expect(viewer).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  const imageBox = await viewer.locator('.image-viewer-stage img').boundingBox();
+  expect(imageBox!.height).toBeGreaterThan(500);
+  await page.screenshot({path:'work/test-results/mobile-image-viewer.png'});
+  await expect(viewer.getByRole('button', {name:'Delete image',exact:true})).toBeHidden();
+  await expect(viewer.getByRole('slider', {name:'Image zoom'})).toBeHidden();
+  await viewer.getByText('More', {exact:true}).click();
+  await expect(viewer.getByRole('button', {name:'Delete image',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveCSS('overflow','hidden');
+  await page.getByRole('button', {name:'Images',exact:true}).click();
+  await expect(page.getByText('Create images', {exact:true})).toBeVisible();
+  await expect(page.getByRole('button', {name:'Create images for all chapters',exact:true})).toBeHidden();
+
+  // Supply a second image for a deterministic swipe check without generating it.
+  const response = await request.get(`/api/projects/${projectId}/images`);
+  const {assets} = await response.json();
+  await page.route(`**/api/projects/${projectId}/images`, route => route.fulfill({json:{assets:[assets[0], {...assets[0],id:'swipe-second',url:`${assets[0].url}?second=1`}]}}));
+  await page.reload();
+  await page.locator('.image-open').first().click();
+  await expect(viewer.getByText('1 / 2', {exact:true})).toBeVisible();
+  await viewer.locator('.image-viewer-stage').evaluate(element => {
+    element.dispatchEvent(new TouchEvent('touchstart', {bubbles:true,touches:[new Touch({identifier:1,target:element,clientX:300,clientY:300})]}));
+    element.dispatchEvent(new TouchEvent('touchend', {bubbles:true,changedTouches:[new Touch({identifier:1,target:element,clientX:100,clientY:310})]}));
+  });
+  await expect(viewer.getByText('2 / 2', {exact:true})).toBeVisible();
+  await page.keyboard.press('ArrowLeft');
+  await expect(viewer.getByText('1 / 2', {exact:true})).toBeVisible();
+});
+
+test('outline keeps scrolling after nested image dialogs unmount and repeated tab switches', async ({page, request}) => {
+  const response = await request.post('/api/projects', {data:{title:'Long mobile outline',chapterCount:25}});
+  const {project} = await response.json();
+  const manual = await request.post(`/api/projects/${project.id}/outline/manual`);
+  const {revision} = await manual.json();
+  const savedOutline = await request.put(`/api/projects/${project.id}/outline`, {data:{revisionId:revision.id,chapters:Array.from({length:25}, (_, i) => ({
+    id:i === 0 ? revision.chapters[0].id : `${project.id}-${i}`,
+    title:`Journey ${i + 1}`,brief:'The traveller follows the shore and meets someone new. '.repeat(5),
+  }))}});
+  expect(savedOutline.ok()).toBeTruthy();
+  await page.setViewportSize({width:390,height:844});
+  await page.goto(`/projects/${projectId}?tab=manuscript`);
+  await page.getByRole('button', {name:'Chapter images',exact:true}).click();
+  const gallery = page.getByRole('dialog', {name:/Chapter images .*Chapter 1: After the storm/});
+  await gallery.getByRole('button', {name:'View image of Mara Voss'}).first().click();
+  await expect(page.getByRole('dialog')).toHaveCount(2);
+  // A route change unmounts both dialog layers in the same React commit.
+  await page.getByRole('link', {name:'Library',exact:true}).evaluate((link: HTMLAnchorElement) => link.click());
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveCSS('overflow','hidden');
+  await page.locator('.project-card-main').filter({has:page.getByRole('heading', {name:'Long mobile outline',exact:true})}).click();
+  const lastBrief = page.getByRole('textbox', {name:'Chapter 25 brief',exact:true});
+  for (let i = 0; i < 3; i++) {
+    await expect(lastBrief).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect(lastBrief).toBeInViewport();
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(1000);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.getByRole('button', {name:'Read story',exact:true}).click();
+    await page.getByRole('button', {name:'Outline',exact:true}).click();
+  }
 });

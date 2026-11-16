@@ -7,6 +7,7 @@ import {
   IMAGE_PROMPT_TEMPLATE_DEFAULT,
   OUTLINE_TEMPLATE_DEFAULT,
   PROSE_TEMPLATE_DEFAULT,
+  PROSE_TEMPLATE_LEGACY,
 } from './prompts.js';
 
 ensureDataDirs();
@@ -458,6 +459,11 @@ const migrations: Array<() => void> = [
   },
   () => {
     db.exec('ALTER TABLE role_assignments ADD COLUMN provider_slug TEXT;');
+  },
+  () => {
+    // Include untouched copies of the default; preserve all author customisations.
+    db.prepare("UPDATE prompt_templates SET content = ?, updated_at = ? WHERE kind = 'prose' AND replace(content, char(13) || char(10), char(10)) = ?")
+      .run(PROSE_TEMPLATE_DEFAULT, now(), PROSE_TEMPLATE_LEGACY);
   },
 ];
 

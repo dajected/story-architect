@@ -6,7 +6,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
-import type { CharacterAppearance, RequestBudgetInfo } from '../shared/types.js';
+import type { CharacterAppearance, GenerationHistory, GenerationJob, RequestBudgetInfo } from '../shared/types.js';
 
 const OUTLINE = JSON.stringify({
   chapters: [
@@ -95,6 +95,7 @@ let comfySubmissions = 0;
 let lastImagePromptSystem = '';
 const submittedImagePrompts: string[] = [];
 const shortTaskReplyBudgets: number[] = [];
+const cacheSessions: Array<string | undefined> = [];
 
 function json(res: http.ServerResponse, status: number, value: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -203,16 +204,18 @@ function startMock(): Promise<void> {
       let body = '';
       req.on('data', (chunk) => (body += chunk));
       req.on('end', () => {
-        const parsed = JSON.parse(body) as { max_tokens?: number; messages: Array<{ role: string; content: string }> };
+        const parsed = JSON.parse(body) as { max_tokens?: number; session_id?: string; messages: Array<{ role: string; content: string }> };
         const system = parsed.messages.find((message) => message.role === 'system')?.content ?? '';
-        const user = [...parsed.messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+        const user = parsed.messages.filter((message) => message.role === 'user').map((message) => message.content).join('\n\n');
+        const cacheReporting = system.includes('CACHE_ACCOUNTING');
+        if (cacheReporting) cacheSessions.push(parsed.session_id);
         if ((system + user).includes('FAIL')) {
           json(res, 500, { error: { message: 'Mock refusal.' } });
           return;
         }
         if (system.includes('art director')) lastImagePromptSystem = system;
         const continuing = user.includes('Continue the SAME chapter');
-        const recoverCutoff = system.includes('RECOVER_CUTOFF') && system.includes('drafting prose for a novel');
+        const recoverCutoff = (system + user).includes('RECOVER_CUTOFF') && system.includes('drafting prose for a novel');
         const background = system.includes('continuity archivist') || system.includes('story-state editor');
         const retryMemory = background && (system + user).includes('MEMORY_REPLY_RETRY');
         const exhaustMemory = background && (system + user).includes('MEMORY_REPLY_EXHAUST');
@@ -266,7 +269,9 @@ function startMock(): Promise<void> {
           res.write(
             `data: ${JSON.stringify({
               choices: [],
+              ...(cacheReporting ? { provider: 'Mock cache provider' } : {}),
               usage: { prompt_tokens: 100, completion_tokens: completionTokens, total_tokens: 100 + completionTokens,
+                ...(cacheReporting ? { prompt_tokens_details: { cached_tokens: 80, cache_write_tokens: 10 }, cost: 0.00001234 } : {}),
                 ...(limited || retryMemory || retryImage ? { completion_tokens_details: { reasoning_tokens: limited ? completionTokens - 32 : 400 } } : {}) },
             })}\n\n`,
           );
@@ -1731,6 +1736,41 @@ describe('stage 4 character image generation', () => {
 });
 
 describe('stage 5 NAS operation and polish', () => {
+  it('persists OpenRouter cache metrics, actual cost, and stable sessions across chapter jobs', async () => {
+    const mockPort = (globalThis as { __mockPort?: number }).__mockPort;
+    const { connection } = await request<{ connection: { id: string } }>('POST', '/connections', {
+      name: 'Cache accounting provider', kind: 'openrouter', baseUrl: `http://127.0.0.1:${mockPort}/v1`,
+    });
+    const { project } = await request<{ project: { id: string } }>('POST', '/projects', {
+      title: 'Cache accounting', chapterCount: 1, instructions: 'CACHE_ACCOUNTING',
+    });
+    await request('PUT', '/model-roles', { scope: 'project', projectId: project.id,
+      assignments: [{ role: 'prose', connectionId: connection.id, model: 'mock-model' }] });
+    const { revision } = await request<{ revision: { id: string; chapters: Array<{ id: string }> } }>('POST', `/projects/${project.id}/outline/manual`, {});
+    await request('PUT', `/projects/${project.id}/outline`, { revisionId: revision.id,
+      chapters: [{ id: revision.chapters[0].id, title: 'The Key', brief: 'Mara finds the brass key.' }] });
+    await request('POST', `/projects/${project.id}/outline/${revision.id}/approve`);
+    const { chapters } = await request<{ chapters: Array<{ id: string }> }>('GET', `/projects/${project.id}/chapters`);
+    cacheSessions.length = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { job } = await request<{ job: { id: string } }>('POST', `/chapters/${chapters[0].id}/generate`, {});
+      const completed = await waitForJob(job.id) as GenerationJob;
+      expect(completed.status).toBe('completed');
+      expect(completed.usage).toMatchObject({ cachedPromptTokens: 80, cacheWriteTokens: 10,
+        cost: 0.00001234, providers: ['Mock cache provider'] });
+      expect(completed.pricing).toBeNull();
+      expect(completed.estimatedCost).toBe(0.00001234);
+      await waitForMemory(chapters[0].id);
+    }
+    expect(cacheSessions).toEqual([`story-architect:${project.id}:prose`, `story-architect:${project.id}:prose`]);
+    const history = await request<GenerationHistory>('GET', `/projects/${project.id}/generation-history`);
+    const drafts = history.entries.filter((entry) => entry.kind === 'chapter');
+    expect(drafts).toHaveLength(2);
+    expect(drafts.every((entry) => entry.estimatedCost === 0.00001234)).toBe(true);
+    expect(history.summary).toMatchObject({ cachedPromptTokens: 160, cacheWriteTokens: 20,
+      cacheReportedPromptTokens: 200, reportedCostJobs: 2 });
+  });
+
   it('reports schema and version on the health check', async () => {
     const health = await request<{
       ok: boolean;

@@ -1,9 +1,44 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { streamChat } from './providers.js';
+import { fetchModels, generationSessionId, streamChat } from './providers.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('stream finish reasons', () => {
+  it('keeps cache usage and reported cost across streamed usage updates, with stable OpenRouter affinity', async () => {
+    const events = [
+      { provider: 'DeepInfra', choices: [], usage: { prompt_tokens: 3000, completion_tokens: 100, total_tokens: 3100,
+        prompt_tokens_details: { cached_tokens: 2048, cache_write_tokens: 512 } } },
+      { choices: [], usage: { cost: 0 } },
+    ];
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+      events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n',
+    )));
+    vi.stubGlobal('fetch', fetchMock);
+    const params = { model: 'deepseek/flash', sessionId: generationSessionId('novel', 'chapter'),
+      messages: [{ role: 'user' as const, content: 'Chapter 1' }], maxTokens: 1000, temperature: null, topP: null,
+      signal: new AbortController().signal, onDelta: () => {} };
+    const connection = { id: 'or', name: 'OpenRouter', kind: 'openrouter' as const, baseUrl: 'https://example.invalid/v1', apiKey: null };
+    const result = await streamChat(connection, params);
+    await streamChat(connection, { ...params, messages: [{ role: 'user', content: 'Chapter 2' }] });
+    expect(result.usage).toEqual({ promptTokens: 3000, completionTokens: 100, totalTokens: 3100,
+      cachedPromptTokens: 2048, cacheWriteTokens: 512, cost: 0, providers: ['DeepInfra'] });
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
+    expect(bodies.map((body) => body.session_id)).toEqual([params.sessionId, params.sessionId]);
+    expect(generationSessionId('novel', 'rewrite')).toBe(params.sessionId);
+    expect(generationSessionId('other', 'chapter')).not.toBe(params.sessionId);
+    expect(generationSessionId('novel', 'memory')).not.toBe(params.sessionId);
+    await streamChat({ ...connection, kind: 'openai-compatible' }, params);
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).not.toHaveProperty('session_id');
+  });
+
+  it('preserves cache prices when discovering models', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'flash',
+      pricing: { prompt: '0.000001', completion: '0.000002', input_cache_read: '0.0000001', input_cache_write: '0.000001' },
+    }] }))));
+    const models = await fetchModels({ id: 'or', name: 'OR', kind: 'openrouter', baseUrl: 'https://example.invalid', apiKey: null });
+    expect(models[0]).toMatchObject({ promptCacheReadPrice: '0.0000001', promptCacheWritePrice: '0.000001' });
+  });
+
   it('retains reasoning-token usage within completion usage', async () => {
     const body = [
       { choices: [{ delta: { content: 'Summary.' }, finish_reason: 'stop' }] },
