@@ -85,7 +85,7 @@ test('compact cast filters, star toggles and stored appearance notes lead into a
     await page.setViewportSize({width,height:900});
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true);
   }
-  await page.getByRole('navigation', {name:'Workspace sections'}).getByRole('button', {name:'Characters',exact:true}).click();
+  await page.getByRole('combobox', {name:'Workspace section',exact:true}).selectOption('cast');
   await expect(mara.getByText('Full profile', {exact:true})).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true);
   await page.screenshot({path:'work/test-results/cast-mobile.png',fullPage:true});
@@ -201,8 +201,14 @@ test('populated layouts fit small screens and settings dialogs retain keyboard f
     await page.keyboard.press('Escape');
     const titleBox=await page.locator('.workspace-topbar-left').boundingBox();const actionsBox=await page.locator('.workspace-actions').boundingBox();
     if(width<=720) {
+      await expect(page.getByRole('navigation', {name:'Workspace sections',exact:true})).toBeHidden();
+      await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toBeVisible();
+      await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toHaveValue('manuscript');
       expect(actionsBox!.y).toBeGreaterThanOrEqual(titleBox!.y);
       expect((await page.locator('.workspace-topbar').boundingBox())!.height).toBeLessThan(200);
+    } else {
+      await expect(page.getByRole('navigation', {name:'Workspace sections',exact:true})).toBeVisible();
+      await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toBeHidden();
     }
     await expect.poll(async()=>page.locator('.portrait-chip img').evaluateAll(imgs=>imgs.every(img=>(img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth>0))).toBe(true);
     await page.screenshot({path:`work/test-results/workspace-${width}.png`,fullPage:true});
@@ -308,6 +314,7 @@ test('mobile reader hides and restores headers and navigates chapters in both re
   await expect(navigation.getByRole('button', {name:'Next chapter',exact:true})).toBeDisabled();
   await navigation.getByRole('button', {name:'Focus on story',exact:true}).click();
   await expect(shell).toHaveClass(/focus-mode/);
+  await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toBeHidden();
   await navigation.getByRole('button', {name:'Previous chapter',exact:true}).click();
   await expect(page.getByRole('article', {name:'Story reader'})).toContainText('This was mile 70');
   await expect(shell).toHaveClass(/focus-mode/);
@@ -316,6 +323,7 @@ test('mobile reader hides and restores headers and navigates chapters in both re
   await expect(page.getByRole('article', {name:'Story reader'})).toContainText('Your story will appear here');
   await navigation.getByRole('button', {name:'Exit focus',exact:true}).click();
   await expect(page.getByRole('heading', {name:'Chapter 2: Coming home',exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toHaveValue('manuscript');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true);
 });
 
@@ -336,7 +344,7 @@ test('mobile images open directly, fit the screen and swipe between images', asy
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('body')).not.toHaveCSS('overflow','hidden');
-  await page.getByRole('button', {name:'Images',exact:true}).click();
+  await page.getByRole('combobox', {name:'Workspace section',exact:true}).selectOption('images');
   await expect(page.getByText('Create images', {exact:true})).toBeVisible();
   await expect(page.getByRole('button', {name:'Create images for all chapters',exact:true})).toBeHidden();
 
@@ -345,6 +353,7 @@ test('mobile images open directly, fit the screen and swipe between images', asy
   const {assets} = await response.json();
   await page.route(`**/api/projects/${projectId}/images`, route => route.fulfill({json:{assets:[assets[0], {...assets[0],id:'swipe-second',url:`${assets[0].url}?second=1`}]}}));
   await page.reload();
+  await expect(page.getByRole('combobox', {name:'Workspace section',exact:true})).toHaveValue('images');
   await page.locator('.image-open').first().click();
   await expect(viewer.getByText('1 / 2', {exact:true})).toBeVisible();
   await viewer.locator('.image-viewer-stage').evaluate(element => {
@@ -384,7 +393,7 @@ test('outline keeps scrolling after nested image dialogs unmount and repeated ta
     await expect(lastBrief).toBeInViewport();
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(1000);
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.getByRole('button', {name:'Read story',exact:true}).click();
-    await page.getByRole('button', {name:'Outline',exact:true}).click();
+    await page.getByRole('combobox', {name:'Workspace section',exact:true}).selectOption('manuscript');
+    await page.getByRole('combobox', {name:'Workspace section',exact:true}).selectOption('outline');
   }
 });

@@ -27,6 +27,16 @@ import { useWritingPreferences, WritingPreferencesContent, PanelResize } from '.
 
 type Tab = 'manuscript' | 'outline' | 'cast' | 'memory' | 'lore' | 'activity' | 'images';
 
+const WORKSPACE_SECTIONS: {id: Tab; label: string}[] = [
+  {id: 'outline', label: 'Outline'},
+  {id: 'manuscript', label: 'Read story'},
+  {id: 'cast', label: 'Characters'},
+  {id: 'memory', label: 'Story memory'},
+  {id: 'lore', label: 'World notes'},
+  {id: 'activity', label: 'Activity'},
+  {id: 'images', label: 'Images'},
+];
+
 export function WorkspacePage({
   theme,
   onThemeChange,
@@ -310,28 +320,16 @@ export function WorkspacePage({
         </div>
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
-          <button aria-pressed={tab === 'outline'} className={tab === 'outline' ? 'active' : ''} onClick={() => setTab('outline')}>
-            Outline
-          </button>
-          <button aria-pressed={tab === 'manuscript'} className={tab === 'manuscript' ? 'active' : ''} onClick={() => setTab('manuscript')}>
-            Read story
-          </button>
-          <button aria-pressed={tab === 'cast'} className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>
-            Characters
-          </button>
-          <button aria-pressed={tab === 'memory'} className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
-            Story memory
-          </button>
-          <button aria-pressed={tab === 'lore'} className={tab === 'lore' ? 'active' : ''} onClick={() => setTab('lore')}>
-            World notes
-          </button>
-          <button
-            aria-pressed={tab === 'activity'} className={tab === 'activity' ? 'active' : ''}
-            onClick={() => setTab('activity')}
-          >
-            Activity
-          </button>
-          <button aria-pressed={tab === 'images'} className={tab === 'images' ? 'active' : ''} onClick={() => setTab('images')}>Images</button>
+          {WORKSPACE_SECTIONS.map(section => (
+            <button key={section.id} aria-pressed={tab === section.id} className={tab === section.id ? 'active' : ''} onClick={() => setTab(section.id)}>
+              {section.label}
+            </button>
+          ))}
+        </nav>
+        <nav className="workspace-section-picker" aria-label="Workspace section picker">
+          <select aria-label="Workspace section" value={tab} onChange={event => setTab(event.target.value as Tab)}>
+            {WORKSPACE_SECTIONS.map(section => <option key={section.id} value={section.id}>{section.label}</option>)}
+          </select>
         </nav>
 
         <div className="workspace-actions">
