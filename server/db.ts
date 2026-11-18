@@ -6,8 +6,10 @@ import { DEFAULT_GENERATION } from '../shared/types.js';
 import {
   IMAGE_PROMPT_TEMPLATE_DEFAULT,
   OUTLINE_TEMPLATE_DEFAULT,
+  OUTLINE_TEMPLATE_PREVIOUS,
   PROSE_TEMPLATE_DEFAULT,
   PROSE_TEMPLATE_LEGACY,
+  PROSE_TEMPLATE_PREVIOUS,
 } from './prompts.js';
 
 ensureDataDirs();
@@ -463,7 +465,14 @@ const migrations: Array<() => void> = [
   () => {
     // Include untouched copies of the default; preserve all author customisations.
     db.prepare("UPDATE prompt_templates SET content = ?, updated_at = ? WHERE kind = 'prose' AND replace(content, char(13) || char(10), char(10)) = ?")
-      .run(PROSE_TEMPLATE_DEFAULT, now(), PROSE_TEMPLATE_LEGACY);
+      .run(PROSE_TEMPLATE_PREVIOUS, now(), PROSE_TEMPLATE_LEGACY);
+  },
+  () => {
+    const update = db.prepare(`UPDATE prompt_templates SET content = ?, updated_at = ?
+      WHERE kind = ? AND replace(content, char(13) || char(10), char(10)) = ?`);
+    const at = now();
+    update.run(OUTLINE_TEMPLATE_DEFAULT, at, 'outline', OUTLINE_TEMPLATE_PREVIOUS);
+    update.run(PROSE_TEMPLATE_DEFAULT, at, 'prose', PROSE_TEMPLATE_PREVIOUS);
   },
 ];
 

@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import type { RequestContextPart, RequestMessage } from './request-context.js';
 import type { OutlineChapter, RewriteAction } from '../shared/types.js';
 
-export const OUTLINE_TEMPLATE_DEFAULT = `You are Story Architect, an experienced developmental editor and novelist.
+/** Exact previously shipped text used to upgrade untouched saved templates. */
+export const OUTLINE_TEMPLATE_PREVIOUS = `You are Story Architect, an experienced developmental editor and novelist.
 
 Create a chapter-by-chapter outline for the novel below.
 
@@ -34,6 +35,13 @@ Rules:
 - Each brief should describe concrete events and a causal chain, not vague themes.
 - Follow the requested chapter count.
 - Do not include front matter, an epilogue, or notes outside the JSON.`;
+
+export const OUTLINE_TEMPLATE_DEFAULT = OUTLINE_TEMPLATE_PREVIOUS.replace(
+  '- Follow the requested chapter count.',
+  `- For each chapter's key turn, name the action, exchange, discovery, or choice that lets the reader experience it on the page.
+- Pace developments across the outline. Give major changes room to build, and keep later payoffs in their planned chapters.
+- Follow the requested chapter count.`,
+);
 
 /** Kept verbatim so upgrades only replace unmodified saved defaults. */
 export const PROSE_TEMPLATE_LEGACY = `You are Story Architect, drafting prose for a novel.
@@ -77,7 +85,8 @@ Approximate target length: {{target_words}} words.
 - Write finished prose only: no chapter heading, notes, outlines, or commentary around the text.
 - End at a natural stopping point near the target length.`;
 
-export const PROSE_TEMPLATE_DEFAULT = `You are Story Architect, drafting prose for a novel.
+/** Exact previously shipped text used to upgrade untouched saved templates. */
+export const PROSE_TEMPLATE_PREVIOUS = `You are Story Architect, drafting prose for a novel.
 
 ## Novel
 Title: {{project_title}}
@@ -120,6 +129,15 @@ Approximate target length: {{target_words}} words.
 
 ## Additional instructions
 {{additional_instructions}}`;
+
+export const PROSE_TEMPLATE_DEFAULT = PROSE_TEMPLATE_PREVIOUS.replace(
+  '- Write finished prose only: no chapter heading, notes, outlines, or commentary around the text.',
+  `- Write in the project's requested voice. Ground scenes in clear actions, specific details, and dialogue that reveals character or moves the scene forward.
+- Vary paragraph length to suit the scene and the project's style. Group related actions and reactions, and give isolated short paragraphs a clear purpose.
+- Let a strong image, action, or exchange carry its meaning. Avoid repeating an implication in narration or piling several comparisons onto the same moment.
+- Dramatize the chapter's key turn in the scene. Let the reader see the action, exchange, discovery, or choice that earns it, and keep later payoffs for their planned chapters.
+- Write finished prose only: no chapter heading, notes, outlines, or commentary around the text.`,
+);
 
 export const IMAGE_PROMPT_SYSTEM = `You are an art director for a novel's character portraits. Turn the supplied story details into one concrete image-generation prompt.
 
