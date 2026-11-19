@@ -82,7 +82,9 @@ export function SettingsPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [editor, setEditor] = useState<ConnectionEditor | null>(null);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState<string | null>(null);
+  const [connectionActions, setConnectionActions] = useState<
+    Record<string, 'test' | 'refresh' | undefined>
+  >({});
   const [testResults, setTestResults] = useState<
     Record<string, { ok: boolean; message: string }>
   >({});
@@ -194,7 +196,7 @@ export function SettingsPage({
   };
 
   const test = async (connection: ConnectionPublic) => {
-    setTesting(connection.id);
+    setConnectionActions((current) => ({ ...current, [connection.id]: 'test' }));
     setError(null);
     try {
       const result = await api.testConnection(connection.id);
@@ -209,15 +211,18 @@ export function SettingsPage({
         [connection.id]: { ok: false, message: errorText(err) },
       }));
     } finally {
-      setTesting(null);
+      setConnectionActions((current) => ({ ...current, [connection.id]: undefined }));
     }
   };
 
   const refreshModels = async (connection: ConnectionPublic) => {
-    setTesting(connection.id);
+    setConnectionActions((current) => ({ ...current, [connection.id]: 'refresh' }));
     setError(null);
     try {
       const result = await api.refreshModels(connection.id);
+      setConnections((current) =>
+        current.map((entry) => (entry.id === connection.id ? result.connection : entry)),
+      );
       setTestResults((current) => ({
         ...current,
         [connection.id]: {
@@ -225,15 +230,29 @@ export function SettingsPage({
           message: `Discovered ${result.models.length} model${result.models.length === 1 ? '' : 's'}.`,
         },
       }));
-      await refreshConnections();
     } catch (err) {
       setTestResults((current) => ({
         ...current,
         [connection.id]: { ok: false, message: errorText(err) },
       }));
     } finally {
-      setTesting(null);
+      setConnectionActions((current) => ({ ...current, [connection.id]: undefined }));
     }
+  };
+
+  const renderRefreshModels = (connection: ConnectionPublic, label = 'Refresh models') => {
+    const action = connectionActions[connection.id];
+    return (
+      <button
+        type="button"
+        className="button button-ghost button-small"
+        onClick={() => refreshModels(connection)}
+        disabled={action !== undefined}
+      >
+        {action === 'refresh' ? <Spinner /> : null}
+        {action === 'refresh' ? 'Refreshing models…' : label}
+      </button>
+    );
   };
 
   const removeConnection = async (connection: ConnectionPublic) => {
@@ -379,18 +398,12 @@ export function SettingsPage({
                           <button
                             className="button button-small"
                             onClick={() => test(connection)}
-                            disabled={testing === connection.id}
+                            disabled={connectionActions[connection.id] !== undefined}
                           >
-                            {testing === connection.id ? <Spinner /> : null}
+                            {connectionActions[connection.id] === 'test' ? <Spinner /> : null}
                             Test
                           </button>
-                          <button
-                            className="button button-ghost button-small"
-                            onClick={() => refreshModels(connection)}
-                            disabled={testing === connection.id}
-                          >
-                            Refresh models
-                          </button>
+                          {renderRefreshModels(connection)}
                           <button className="button button-ghost button-small" onClick={() => openEdit(connection)}>
                             Edit
                           </button>
@@ -421,6 +434,17 @@ export function SettingsPage({
                   </p>
                 </div>
               </header>
+              {connections.filter((connection) => connection.kind === 'openrouter').map((connection) => {
+                const result = testResults[connection.id];
+                return (
+                  <div className="row-actions" key={connection.id}>
+                    {renderRefreshModels(connection, `Refresh models for ${connection.name}`)}
+                    {result ? (
+                      <Banner tone={result.ok ? 'success' : 'danger'}>{result.message}</Banner>
+                    ) : null}
+                  </div>
+                );
+              })}
               <RoleEditor roles={roles} connections={connections} scope="global" onSave={saveRoles} />
             </div>
           ) : null}
